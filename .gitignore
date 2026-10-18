@@ -1,0 +1,36 @@
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Banco de dados local (SQLite) e temporários de parsing
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+_tmp_notas/
+
+# Dados de trabalho (notas e exports)
+*.pdf
+*.csv
+*.xlsx
+!requirements.txt
+
+# Editores / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Capturas do mapeamento (contem dados financeiros pessoais)
+ref_exemplo/
+ANALISE_REFERENCIA.md
