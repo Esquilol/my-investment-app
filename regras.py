@@ -233,7 +233,7 @@ def resultados_realizados(operacoes: pd.DataFrame) -> pd.DataFrame:
     """
     Converte as operações em **resultados realizados** (eventos tributáveis).
 
-    * Futuros e termo: o próprio ajuste da nota já é o resultado do dia.
+    * Futuros e termo: o ajuste do dia é o resultado, menos as despesas da nota.
     * À vista / opções / ouro: a venda realiza o resultado, calculado contra o
       **preço médio ponderado com as taxas de corretagem somadas ao custo**.
     * Quantidades compradas e vendidas do mesmo ticker no mesmo dia são
@@ -256,6 +256,8 @@ def resultados_realizados(operacoes: pd.DataFrame) -> pd.DataFrame:
     registros: list[dict] = []
 
     # --- Futuros / termo: cada ajuste já é um resultado realizado -----------
+    # O ajuste da nota é bruto; as despesas da nota (corretagem, emolumentos,
+    # I.S.S.) entram como custo, como nos demais mercados.
     derivativos = df["mercado"].isin(["FUTURO", "TERMO"])
     for _, row in df[derivativos].iterrows():
         if pd.isna(row.get("resultado")):
@@ -264,7 +266,7 @@ def resultados_realizados(operacoes: pd.DataFrame) -> pd.DataFrame:
             row,
             day_trade=bool(row.get("day_trade")),
             quantidade=row.get("quantidade") or 0.0,
-            resultado=float(row["resultado"]),
+            resultado=float(row["resultado"]) - float(row.get("taxas") or 0.0),
             vendas=0.0,
         ))
 

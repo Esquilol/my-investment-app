@@ -14,6 +14,7 @@ documentados em ``ANALISE_REFERENCIA.md``.
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -213,6 +214,56 @@ def teste_deduplicacao(pdfs: list[Path]) -> None:
         conexao.close()          # libera o arquivo para o Windows remover a pasta
 
 
+# ---------------------------------------------------------------------------
+# 6. Futuros — ajuste do dia líquido das despesas
+# ---------------------------------------------------------------------------
+
+_REF_RESULTADOS = (Path(__file__).with_name("ref_exemplo")
+                   / "network" / "api" / "0097_GET_api_results.json")
+
+
+def teste_futuros_referencia(pdfs: list[Path]) -> None:
+    """
+    Confere os futuros de Set/2026 contra os dados de referência.
+
+    Regra validada: o resultado do futuro é o **ajuste do dia menos as
+    despesas da nota** (corretagem, emolumentos e I.S.S.). O "Total das
+    despesas" impresso na nota BM&F deixa o I.S.S. de fora, por isso ele é
+    somado em ``parser._extrair_despesas``.
+    """
+    print("\n6. Futuros: ajuste do dia líquido de despesas (Set/2026)")
+    if not pdfs or not _REF_RESULTADOS.exists():
+        print("  [-----] PDFs ou dados de referência ausentes — teste ignorado")
+        return
+
+    corpo = json.loads(_REF_RESULTADOS.read_text(encoding="utf-8"))
+    referencias: dict[str, float] = {}
+    for item in corpo["response"]["body"]["Results"]:
+        if item["MonthYear"] == "set/2026":
+            ticker = item["Ticker"]
+            referencias[ticker] = referencias.get(ticker, 0.0) + float(item["TotalProfit"] or 0)
+
+    with tempfile.TemporaryDirectory() as pasta:
+        conexao = conectar(Path(pasta) / "futuros.db")
+        for arquivo in pdfs:
+            salvar_notas(conexao, extract_notas(str(arquivo), arquivo=arquivo.name))
+        operacoes = carregar_operacoes(conexao)
+        conexao.close()
+
+    futuros = operacoes[operacoes["mercado"] == "FUTURO"]
+    resultados = resultados_realizados(operacoes)
+    conferidos = 0
+    for ticker in sorted(futuros["ticker"].unique()):
+        if ticker not in referencias:
+            continue
+        conferidos += 1
+        obtido = float(resultados.loc[resultados["ticker"] == ticker, "resultado"].sum())
+        _checar(f"{ticker} (Set/2026) líquido de despesas", round(obtido, 2),
+                round(referencias[ticker], 2), tolerancia=0.05)
+
+    _checar("tickers de futuro conferidos", conferidos > 0, True)
+
+
 def main() -> int:
     print("=" * 78)
     print("VALIDAÇÃO DO MOTOR FISCAL — Gestor de Investimentos B3")
@@ -225,6 +276,7 @@ def main() -> int:
 
     pdfs = sorted(Path(r"C:\Users\Esquilo\Downloads").glob("NotaCorretagem_01-09-26_30-09-26*.pdf"))
     teste_deduplicacao(pdfs)
+    teste_futuros_referencia(pdfs)
 
     print("\n" + "=" * 78)
     if _falhas:

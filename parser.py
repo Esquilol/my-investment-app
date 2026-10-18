@@ -203,9 +203,17 @@ def _extrair_despesas(bloco: str) -> float:
     # BM&F: "Total das despesas" seguido da linha de valores
     m = re.search(r"Total das despesas\s*\n?\s*(?P<linha>[^\n]*)", bloco)
     if m:
-        valor = _last_valor_dc(m.group("linha"))
-        if valor is not None:
-            return valor
+        # Linha: + Outros Custos | I.S.S | Ajuste de posição |
+        #        Ajuste day trade | Total das despesas
+        valores = re.findall(r"([\d.]+,\d{2})", m.group("linha"))
+        if valores:
+            total = _parse_br_number(valores[-1])
+            if total is not None:
+                # O I.S.S. fica fora do "Total das despesas" impresso, mas
+                # integra o custo da operação (conferido contra os dados de
+                # referência: nota 122982/09-09-2026, I.S.S. de 1,22).
+                iss = _parse_br_number(valores[1]) if len(valores) >= 2 else 0.0
+                return total + (iss or 0.0)
 
     # B3 RV: "Total corretagem / Despesas 3,25"
     m = re.search(r"Total corretagem\s*/\s*Despesas\s+([\d.]+,\d{2})", bloco)

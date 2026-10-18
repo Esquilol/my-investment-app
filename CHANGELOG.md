@@ -38,7 +38,8 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 ### Adicionado — Validação (`validar.py`)
 - Suíte sem dependência de pytest, executável com `python validar.py` (exit code 0/1).
 - Cobre: classificação de ativos, reconciliação com os dados de referência (Set/2026),
-  isenção, compensação entre meses e deduplicação com os 4 PDFs reais.
+  isenção, compensação entre meses, deduplicação com os 4 PDFs reais e a
+  reconciliação dos futuros (teste 6, `ajuste do dia − despesas da nota`).
 - Resultado atual: **todas as verificações passam** (`EXIT=0`), incluindo
   `IRRFFinal = 192,65` e `IRRFBase = 205,79` idênticos aos dados de referência.
 
@@ -58,6 +59,15 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 ### Corrigido
 - `validar.py` retornava exit code 1 no Windows por não fechar a conexão SQLite antes
   da remoção do diretório temporário — corrigido com `conexao.close()`.
+- **Futuros não descontavam as despesas** (`regras.py`): o resultado realizado usava o
+  ajuste **bruto** da nota. Agora o ajuste entra líquido de corretagem/emolumentos,
+  como nos demais mercados. `WDO V26`: -50,00 → **-50,57**.
+- **I.S.S. ficava fora do "Total das despesas"** da nota BM&F (`parser.py`): o valor
+  impresso não inclui o I.S.S., que é somado agora em `_extrair_despesas`. Nota
+  122982 (09/09/2026): despesas 27,36 → **28,58**. Era o resíduo de R$ 1,19 que
+  impedia o fechamento da reconciliação.
+- Resultado: os futuros de Set/2026 passaram a bater com os dados de referência **dia
+  a dia** — `WIN V26` 384,84 × 384,87 e `WDO V26` exato.
 
 ## Base
 - Projeto construído a partir do mapeamento de **27 telas** de um sistema de
