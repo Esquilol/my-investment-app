@@ -32,13 +32,14 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - Saldo de **IRRF a compensar** (`ir_day`, `ir_swing`) lido e gravado junto com os
   saldos de prejuízo.
 
-### Adicionado — Interface (`app.py` v3)
-- Reescrita com **8 abas**: Upload de Notas, Visão Geral, Extrato, Meu Patrimônio,
-  Apuração de IR, DARF, Proventos e Relatórios.
-- Aba **Apuração de IR** com edição dos saldos iniciais de prejuízo **e de IRRF**
+### Adicionado — Interface
+- Reescrita com **8 páginas navegáveis** (`st.navigation`): Upload de Notas,
+  Visão Geral, Extrato, Meu Patrimônio, Apuração de IR, DARF, Proventos e
+  Relatórios.
+- Página **Apuração de IR** com edição dos saldos iniciais de prejuízo **e de IRRF**
   por bucket, transporte calculado para o mês seguinte e detalhamento por
   mercado/categoria (campos `Results*`).
-- Aba **DARF** com competência, composição, dados para o Sicalc, código de receita
+- Página **DARF** com competência, composição, dados para o Sicalc, código de receita
   `6015` e vencimento calculado no último dia útil do mês seguinte.
 
 ### Adicionado — Validação (`validar.py`)
@@ -51,10 +52,17 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   `IRRFFinal = 192,65` e `IRRFBase = 205,79` idênticos aos dados de referência.
 
 ### Alterado
-- `README.md` reescrito: 8 abas, arquitetura, regras fiscais, validação e deploy.
+- `README.md` reescrito: 8 páginas, arquitetura, regras fiscais, validação e deploy.
 - `.gitignore`: passou a ignorar `*.db`, `*.db-journal`, `*.sqlite*` e `_tmp_notas/`.
 - `app.py`: removida a dívida técnica `__import__("regras")` — `classificar_grupo`
   agora é importada no topo do módulo.
+- **`app.py` dividido em dois módulos**: as abas foram substituídas por
+  páginas navegáveis e todo o conteúdo (utilitários, carga dos dados e as 8
+  funções `pagina_*`) foi movido para o novo `paginas.py`. O `app.py` ficou
+  reduzido à entrada: `set_page_config`, `paginas.carregar()` e o
+  `st.navigation([...]).run()`. Motivo: com páginas baseadas em `callable`, o
+  `AppTest.switch_page` não funciona — mantendo cada `pagina_*` como função, as 8
+  páginas continuam testáveis isoladamente.
 
 ### Removido
 - Ferramenta interna de mapeamento de telas e API retirada do projeto; as capturas

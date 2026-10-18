@@ -7,9 +7,9 @@ O projeto foi construído a partir do mapeamento de um sistema de referência
 (ver `ANALISE_REFERENCIA.md` e `ref_exemplo/`), reproduzindo o fluxo
 nota de corretagem → extrato de operações → apuração mensal → DARF.
 
-## Funcionalidades (8 abas)
+## Funcionalidades (8 páginas)
 
-| Aba | O que faz |
+| Página | O que faz |
 | --- | --- |
 | 📁 **Upload de Notas** | Importa PDFs de notas de corretagem com deduplicação por número de nota; mostra o resumo da importação e permite limpar os dados. |
 | 📊 **Visão Geral** | Painel inicial: totais de resultado, patrimônio em custódia, evolução e últimos negócios. |
@@ -40,7 +40,8 @@ nota de corretagem → extrato de operações → apuração mensal → DARF.
 
 ```
 .
-├── app.py            # Interface Streamlit (8 abas)
+├── app.py            # Entrada Streamlit (configura a página e monta o menu)
+├── paginas.py        # Conteúdo das 8 páginas navegáveis e carga dos dados
 ├── parser.py         # Extrator de operações das notas em PDF (pdfplumber)
 ├── persistencia.py   # Camada SQLite (notas, operações, prejuízos, proventos)
 ├── regras.py         # Motor fiscal (classificação, preço médio, apuração mensal)
@@ -53,7 +54,7 @@ nota de corretagem → extrato de operações → apuração mensal → DARF.
 Fluxo de dados:
 
 ```
-PDF  →  parser.py  →  persistencia.py (dados.db)  →  regras.py  →  app.py
+PDF  →  parser.py  →  persistencia.py (dados.db)  →  regras.py  →  paginas.py  →  app.py
 ```
 
 ## Instalação
