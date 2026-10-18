@@ -180,11 +180,53 @@ def teste_compensacao() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. Deduplicação por número de nota
+# 5. IRRF retido: compensação e transporte entre meses
+# ---------------------------------------------------------------------------
+
+def teste_irrf_compensacao() -> None:
+    """
+    O IRRF retido que excede o IR apurado não pode ser descartado: ele fica
+    acumulado e abate o IR das competências seguintes (campos ``IRRFNextMonth*``
+    e ``IRRFPrevious*`` do relatório de referência).
+    """
+    print("\n5. IRRF retido: compensação entre meses")
+    resultados = pd.concat([
+        _frame_resultados([("OPTION", "Swing Trade", 1000.0, 50000.0)], mes="2026-08"),
+        _frame_resultados([("OPTION", "Swing Trade", 1000.0, 50000.0)], mes="2026-09"),
+    ], ignore_index=True)
+    # ago: IRRF retido de 200 sobre um IR de 150 -> sobram 50 para setembro
+    notas = pd.concat([
+        _notas(irrf_day=0.0, irrf_swing=200.0, mes="2026-08"),
+        _notas(irrf_day=0.0, irrf_swing=0.0, mes="2026-09"),
+    ], ignore_index=True)
+
+    tabela, saldos = apurar_mensal(resultados, notas, None)
+    agosto, setembro = tabela.iloc[0], tabela.iloc[1]
+
+    _checar("ago: IR apurado 150 (15%)", agosto["IRRFBaseSwingTrade"], 150.0)
+    _checar("ago: IRRF retido 200", agosto["IRRFMonthlySwingTrade"], 200.0)
+    _checar("ago: nada a pagar", agosto["IRRFFinal"], 0.0)
+    _checar("ago: IRRF a transportar 50", agosto["IRRFNextMonthSwingTrade"], 50.0)
+    _checar("set: IRRF anterior 50", setembro["IRRFPreviousSwingTrade"], 50.0)
+    _checar("set: IRRF compensado 50", setembro["IRRFUsedSwingTrade"], 50.0)
+    _checar("set: IR a pagar 100 (150 - 50)", setembro["IRRFFinal"], 100.0)
+    _checar("saldo de IRRF final zerado", saldos["ir_swing"], 0.0)
+
+    # saldo inicial de IRRF informado manualmente também é usado
+    _, saldos_iniciais = apurar_mensal(
+        _frame_resultados([("OPTION", "Swing Trade", 1000.0, 50000.0)], mes="2026-09"),
+        None,
+        {"ir_swing": 60.0},
+    )
+    _checar("IRRF inicial 60 transportado", saldos_iniciais["ir_swing"], 0.0)
+
+
+# ---------------------------------------------------------------------------
+# 6. Deduplicação por número de nota
 # ---------------------------------------------------------------------------
 
 def teste_deduplicacao(pdfs: list[Path]) -> None:
-    print("\n5. Deduplicação de notas repetidas")
+    print("\n6. Deduplicação de notas repetidas")
     if not pdfs:
         print("  [-----] PDFs de exemplo não encontrados — teste ignorado")
         return
@@ -215,7 +257,7 @@ def teste_deduplicacao(pdfs: list[Path]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6. Futuros — ajuste do dia líquido das despesas
+# 7. Futuros — ajuste do dia líquido das despesas
 # ---------------------------------------------------------------------------
 
 _REF_RESULTADOS = (Path(__file__).with_name("ref_exemplo")
@@ -231,7 +273,7 @@ def teste_futuros_referencia(pdfs: list[Path]) -> None:
     despesas" impresso na nota BM&F deixa o I.S.S. de fora, por isso ele é
     somado em ``parser._extrair_despesas``.
     """
-    print("\n6. Futuros: ajuste do dia líquido de despesas (Set/2026)")
+    print("\n7. Futuros: ajuste do dia líquido de despesas (Set/2026)")
     if not pdfs or not _REF_RESULTADOS.exists():
         print("  [-----] PDFs ou dados de referência ausentes — teste ignorado")
         return
@@ -273,6 +315,7 @@ def main() -> int:
     teste_reconciliacao_referencia()
     teste_isencao()
     teste_compensacao()
+    teste_irrf_compensacao()
 
     pdfs = sorted(Path(r"C:\Users\Esquilo\Downloads").glob("NotaCorretagem_01-09-26_30-09-26*.pdf"))
     teste_deduplicacao(pdfs)

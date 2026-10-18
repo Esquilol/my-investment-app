@@ -21,7 +21,10 @@ Fórmulas confirmadas contra os dados de Setembro/2026:
     IRRFBaseDayTrade   = 0,20 * BaseCalcDayTrade
     IRRFBaseSwingTrade = 0,15 * BaseCalcSwingTrade
     IRRFBase           = IRRFBaseDayTrade + IRRFBaseSwingTrade
-    IRRFFinal          = IRRFBase - (IRRF retido no mês)
+    IRRFFinal          = IRRFBase - IRRF retido no mês - IRRF anterior (>= 0)
+
+O IRRF retido que excede o IR apurado não é perdido: fica acumulado para as
+competências seguintes, separado por bucket (Day Trade x Swing Trade).
 
 Uso:
     from regras import classificar_grupo, resultados_realizados, apurar_mensal
@@ -345,7 +348,14 @@ def resultados_realizados(operacoes: pd.DataFrame) -> pd.DataFrame:
 
 BUCKETS = ("DayTrade", "SwingTrade", "FII")
 
-SALDOS_INICIAIS_PADRAO: dict[str, float] = {b: 0.0 for b in BUCKETS}
+#: Bucket tributário -> chave do saldo de IRRF retido acumulado a compensar
+#: (espelho de ``PreviousLoss.IRDayTrade`` / ``IRSwingTrade`` no relatório).
+IRRF_POR_BUCKET = {"DayTrade": "ir_day", "SwingTrade": "ir_swing"}
+
+SALDOS_INICIAIS_PADRAO: dict[str, float] = {
+    **{b: 0.0 for b in BUCKETS},
+    **{chave: 0.0 for chave in IRRF_POR_BUCKET.values()},
+}
 
 # Colunas da tabela mensal, na ordem do relatório de apuração
 COLUNAS_APURACAO = (
@@ -356,7 +366,10 @@ COLUNAS_APURACAO = (
         "PreviousAcumulatedLossDayTrade", "PreviousAcumulatedLossSwingTrade",
         "BaseCalcDayTrade", "BaseCalcSwingTrade",
         "IRRFBaseDayTrade", "IRRFBaseSwingTrade", "IRRFBase",
-        "IRRFMonthlyDayTrade", "IRRFMonthlySwingTrade",
+        "IRRFMonthlyDayTrade", "IRRFPreviousDayTrade",
+        "IRRFUsedDayTrade", "IRRFNextMonthDayTrade",
+        "IRRFMonthlySwingTrade", "IRRFPreviousSwingTrade",
+        "IRRFUsedSwingTrade", "IRRFNextMonthSwingTrade",
         "ResultsFII", "PreviousAcumulatedLossFII", "BaseCalcFII",
         "IRRFBaseFII", "IRRFMonthlyFII",
         "IRRFFinal", "DARFFinal", "ExemptionMessage",
@@ -395,11 +408,13 @@ def apurar_mensal(resultados: pd.DataFrame,
     notas : DataFrame com ``numero``, ``corretora``, ``data``, ``irrf`` e
         ``categoria_irrf`` ("DayTrade"/"SwingTrade") — usado no IRRF retido.
     saldos_iniciais : saldo de prejuízo a compensar por bucket
-        (``DayTrade``, ``SwingTrade``, ``FII``). Valores negativos = prejuízo.
+        (``DayTrade``, ``SwingTrade``, ``FII``; valores negativos = prejuízo) e
+        IRRF retido acumulado de meses anteriores (``ir_day``, ``ir_swing``).
 
     Retorna
     -------
-    (tabela_mensal, saldos_finais)
+    (tabela_mensal, saldos_finais), com ``saldos_finais`` já contendo o prejuízo
+    e o IRRF que passam para o mês seguinte.
     """
     saldos = dict(SALDOS_INICIAIS_PADRAO)
     if saldos_iniciais:
@@ -435,6 +450,7 @@ def apurar_mensal(resultados: pd.DataFrame,
             linha[f"Results{mercado}{sufixo}"] = round(float(valor), 2)
 
         ir_total = 0.0
+        ir_devido = 0.0
         for bucket in BUCKETS:
             grupo_bucket = tributavel[tributavel["bucket"] == bucket]
             resultado_bucket = float(grupo_bucket["resultado"].sum())
@@ -454,18 +470,42 @@ def apurar_mensal(resultados: pd.DataFrame,
             else:
                 irr = 0.0
 
+            # IRRF retido: o do próprio mês e o acumulado de meses anteriores
+            # abatem o IR apurado; o que sobra fica para o mês seguinte em vez
+            # de se perder (é a "compensação" do IRRF entre competências).
+            chave_irrf = IRRF_POR_BUCKET.get(bucket)
+            retido_mes = float(retido.get(bucket, 0.0))
+            if chave_irrf:
+                retido_anterior = saldos.get(chave_irrf, 0.0)
+                usado_anterior = min(retido_anterior, max(irr - retido_mes, 0.0))
+                devido = max(irr - retido_mes - retido_anterior, 0.0)
+                saldos[chave_irrf] = round(
+                    retido_anterior - usado_anterior + max(retido_mes - irr, 0.0), 2
+                )
+                proximo_irrf = saldos[chave_irrf]
+            else:
+                retido_anterior = usado_anterior = 0.0
+                proximo_irrf = 0.0
+                devido = irr
+
             if bucket == "DayTrade":
                 linha["ResultsDayTrade"] = round(resultado_bucket, 2)
                 linha["PreviousAcumulatedLossDayTrade"] = round(anterior, 2)
                 linha["BaseCalcDayTrade"] = round(base, 2)
                 linha["IRRFBaseDayTrade"] = round(irr, 2)
-                linha["IRRFMonthlyDayTrade"] = round(retido["DayTrade"], 2)
+                linha["IRRFMonthlyDayTrade"] = round(retido_mes, 2)
+                linha["IRRFPreviousDayTrade"] = round(retido_anterior, 2)
+                linha["IRRFUsedDayTrade"] = round(usado_anterior, 2)
+                linha["IRRFNextMonthDayTrade"] = round(proximo_irrf, 2)
             elif bucket == "SwingTrade":
                 linha["ResultsSwingTrade"] = round(resultado_bucket, 2)
                 linha["PreviousAcumulatedLossSwingTrade"] = round(anterior, 2)
                 linha["BaseCalcSwingTrade"] = round(base, 2)
                 linha["IRRFBaseSwingTrade"] = round(irr, 2)
-                linha["IRRFMonthlySwingTrade"] = round(retido["SwingTrade"], 2)
+                linha["IRRFMonthlySwingTrade"] = round(retido_mes, 2)
+                linha["IRRFPreviousSwingTrade"] = round(retido_anterior, 2)
+                linha["IRRFUsedSwingTrade"] = round(usado_anterior, 2)
+                linha["IRRFNextMonthSwingTrade"] = round(proximo_irrf, 2)
             else:  # FII
                 linha["ResultsFII"] = round(resultado_bucket, 2)
                 linha["PreviousAcumulatedLossFII"] = round(anterior, 2)
@@ -474,14 +514,12 @@ def apurar_mensal(resultados: pd.DataFrame,
                 linha["IRRFMonthlyFII"] = round(retido.get("FII", 0.0), 2)
 
             ir_total += irr
-
-        retido_total = sum(retido.values())
-        ir_final = max(ir_total - retido_total, 0.0)
+            ir_devido += devido
 
         linha["IRRFBase"] = round(ir_total, 2)
-        linha["IRRFFinal"] = round(ir_final, 2)
-        linha["DARFFinal"] = round(ir_final, 2)
-        linha["ExemptionMessage"] = "DARF a pagar" if ir_final > 0 else "Isento"
+        linha["IRRFFinal"] = round(ir_devido, 2)
+        linha["DARFFinal"] = round(ir_devido, 2)
+        linha["ExemptionMessage"] = "DARF a pagar" if ir_devido > 0 else "Isento"
         linhas.append(linha)
 
     tabela = pd.DataFrame(linhas)
@@ -545,7 +583,7 @@ def posicao_atual(operacoes: pd.DataFrame) -> pd.DataFrame:
 
 __all__ = [
     "GRUPOS_FEE", "GrupoFee", "ROTULO_MERCADO", "ALIQUOTA_DAY_TRADE",
-    "CODIGO_RECEITA_DARF", "BUCKETS", "SALDOS_INICIAIS_PADRAO",
+    "CODIGO_RECEITA_DARF", "BUCKETS", "IRRF_POR_BUCKET", "SALDOS_INICIAIS_PADRAO",
     "COLUNAS_APURACAO", "COLUNAS_RESULTADO",
     "aliquota", "bucket_tributario", "classificar_grupo",
     "resultados_realizados", "apurar_mensal", "posicao_atual",

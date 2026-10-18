@@ -78,7 +78,13 @@ RESUMO_IR = {
     "BaseCalcSwingTrade": "Base de cálculo (ST)",
     "IRRFBase": "IR apurado",
     "IRRFMonthlyDayTrade": "IRRF retido (DT)",
+    "IRRFPreviousDayTrade": "IRRF anterior (DT)",
+    "IRRFUsedDayTrade": "IRRF compensado (DT)",
+    "IRRFNextMonthDayTrade": "IRRF a transportar (DT)",
     "IRRFMonthlySwingTrade": "IRRF retido (ST)",
+    "IRRFPreviousSwingTrade": "IRRF anterior (ST)",
+    "IRRFUsedSwingTrade": "IRRF compensado (ST)",
+    "IRRFNextMonthSwingTrade": "IRRF a transportar (ST)",
     "IRRFFinal": "IR a pagar",
     "ExemptionMessage": "Situação",
 }
@@ -388,10 +394,12 @@ with aba_patrimonio:
 with aba_ir:
     st.subheader("Apuração de Imposto de Renda")
 
-    with st.expander("⚙️ Prejuízos anteriores a compensar", expanded=False):
+    with st.expander("⚙️ Saldos iniciais a compensar", expanded=False):
         st.caption(
             "Informe o saldo acumulado de prejuízo (valores negativos) e o IRRF "
-            "pago em meses anteriores. É o ponto de partida da compensação."
+            "retido em meses anteriores que ainda não foi compensado. É o ponto "
+            "de partida da apuração: daí em diante o prejuízo e o IRRF são "
+            "transportados mês a mês automaticamente."
         )
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -404,15 +412,36 @@ with aba_ir:
             prej_fii = st.number_input("Prejuízo FII", value=float(prejuizos["FII"]),
                                        step=100.0, format="%.2f")
 
+        col4, col5 = st.columns(2)
+        with col4:
+            irrf_day = st.number_input("IRRF a compensar — Day Trade",
+                                       value=float(prejuizos.get("ir_day") or 0.0),
+                                       step=10.0, format="%.2f")
+        with col5:
+            irrf_swing = st.number_input("IRRF a compensar — Swing Trade",
+                                         value=float(prejuizos.get("ir_swing") or 0.0),
+                                         step=10.0, format="%.2f")
+
         if st.button("Salvar saldos"):
             gravar_prejuizos(conexao, {
                 "data": prejuizos.get("data"),
                 "DayTrade": prej_day,
                 "SwingTrade": prej_swing,
                 "FII": prej_fii,
+                "ir_day": irrf_day,
+                "ir_swing": irrf_swing,
             })
             st.success("Saldos atualizados.")
             st.rerun()
+
+        st.caption(
+            "Transporte para o mês seguinte (calculado): "
+            f"prejuízo DT {_moeda(saldos_finais.get('DayTrade', 0.0))} · "
+            f"prejuízo ST {_moeda(saldos_finais.get('SwingTrade', 0.0))} · "
+            f"prejuízo FII {_moeda(saldos_finais.get('FII', 0.0))} · "
+            f"IRRF DT {_moeda(saldos_finais.get('ir_day', 0.0))} · "
+            f"IRRF ST {_moeda(saldos_finais.get('ir_swing', 0.0))}"
+        )
 
     if tabela_ir.empty:
         st.info("Nenhuma operação com resultado realizada. A apuração aparece após importar notas.")
@@ -447,7 +476,8 @@ with aba_ir:
             "Day Trade: 20% sem isenção. Swing Trade: 15% (FII/FIAGRO: 20%), com "
             "isenção quando as vendas do grupo no mês ficam dentro do limite de "
             "R$ 20.000,00 (ações/BDR/ouro) ou R$ 35.000,00 (ativos dos EUA). "
-            "Prejuízos são compensados por categoria, mês a mês."
+            "Prejuízos e IRRF retido são compensados por categoria, mês a mês — "
+            "o que não for usado fica acumulado para as competências seguintes."
         )
 
 
