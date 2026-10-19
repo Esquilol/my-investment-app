@@ -16,6 +16,7 @@ documentados em ``ANALISE_REFERENCIA.md``.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -284,6 +285,12 @@ def teste_deduplicacao(pdfs: list[Path]) -> None:
 _REF_RESULTADOS = (Path(__file__).with_name("ref_exemplo")
                    / "network" / "api" / "0097_GET_api_results.json")
 
+# Pasta com as notas de corretagem reais. Fora do repositório: só serve para
+# os testes de integração que dependem de PDFs (ignorados se ela não existir).
+# Sobrescreva com a variável de ambiente ``NOTAS_DIR`` se as notas estiverem
+# em outro lugar.
+_NOTAS_DIR = Path(os.environ.get("NOTAS_DIR", Path.home() / "Downloads" / "Notas"))
+
 
 def teste_futuros_referencia(pdfs: list[Path]) -> None:
     """
@@ -293,6 +300,10 @@ def teste_futuros_referencia(pdfs: list[Path]) -> None:
     despesas da nota** (corretagem, emolumentos e I.S.S.). O "Total das
     despesas" impresso na nota BM&F deixa o I.S.S. de fora, por isso ele é
     somado em ``parser._extrair_despesas``.
+
+    O teste importa **todo** o histórico disponível (e depois filtra Set/2026):
+    as posições de futuro atravessam o mês, então apurar setembro só com as
+    notas de setembro distorce o resultado.
     """
     print("\n7. Futuros: ajuste do dia líquido de despesas (Set/2026)")
     if not pdfs or not _REF_RESULTADOS.exists():
@@ -314,14 +325,14 @@ def teste_futuros_referencia(pdfs: list[Path]) -> None:
         operacoes = carregar_operacoes(conexao, dono)
         conexao.close()
 
-    futuros = operacoes[operacoes["mercado"] == "FUTURO"]
     resultados = resultados_realizados(operacoes)
+    setembro = resultados[resultados["mes"] == "2026-09"]
     conferidos = 0
-    for ticker in sorted(futuros["ticker"].unique()):
+    for ticker in sorted(setembro["ticker"].unique()):
         if ticker not in referencias:
             continue
         conferidos += 1
-        obtido = float(resultados.loc[resultados["ticker"] == ticker, "resultado"].sum())
+        obtido = float(setembro.loc[setembro["ticker"] == ticker, "resultado"].sum())
         _checar(f"{ticker} (Set/2026) líquido de despesas", round(obtido, 2),
                 round(referencias[ticker], 2), tolerancia=0.05)
 
@@ -536,9 +547,9 @@ def main() -> int:
     teste_login()
     teste_saas()
 
-    pdfs = sorted(Path(r"C:\Users\Esquilo\Downloads").glob("NotaCorretagem_01-09-26_30-09-26*.pdf"))
+    pdfs = sorted(_NOTAS_DIR.glob("NotaCorretagem_01-09-26_30-09-26*.pdf"))
     teste_deduplicacao(pdfs)
-    teste_futuros_referencia(pdfs)
+    teste_futuros_referencia(sorted(_NOTAS_DIR.glob("*.pdf")))
 
     print("\n" + "=" * 78)
     if _falhas:
