@@ -25,6 +25,8 @@ import secrets
 import sqlite3
 from datetime import datetime, timedelta
 
+import streamlit as st
+
 import persistencia as bd
 
 #: Algoritmo identificado no registro gravado.
@@ -37,14 +39,29 @@ ITERACOES = 200_000
 TAMANHO_MINIMO = 6
 
 # ---------------------------------------------------------------------------
-# Credencial padrão do administrador — ATENÇÃO
+# Credencial padrão do administrador
 # ---------------------------------------------------------------------------
-# Enquanto o app não tiver tela de "promover administrador", o primeiro usuário
-# criado no banco é este. Troque a senha em **Minha Conta** (ou apague o
-# ``dados.db``) antes de expor o sistema publicamente.
-ADMIN_PADRAO_USUARIO = "jhon"
-ADMIN_PADRAO_SENHA = "321415"
-ADMIN_PADRAO_EMAIL = "jhon@local"
+# A senha NÃO fica no código. Ela vem de ``st.secrets["admin"]["senha"]`` — no
+# Streamlit Cloud, defina em *App settings → Secrets*; localmente, em
+# ``.streamlit/secrets.toml`` (fora do versionamento). Sem a senha configurada,
+# o administrador simplesmente não é semeado.
+#
+#     # .streamlit/secrets.toml
+#     [admin]
+#     usuario = "jhon"
+#     email   = "jhon@local"
+#     senha   = "troque-esta-senha"
+def _segredo_admin(campo: str, padrao: str | None = None) -> str | None:
+    """Lê uma credencial do administrador em ``st.secrets['admin']``."""
+    try:
+        return str(st.secrets["admin"][campo])
+    except Exception:  # sem arquivo/segredo configurado
+        return padrao
+
+
+ADMIN_PADRAO_USUARIO = _segredo_admin("usuario", "jhon")
+ADMIN_PADRAO_EMAIL = _segredo_admin("email", "jhon@local")
+ADMIN_PADRAO_SENHA = _segredo_admin("senha")
 
 #: Validade do token de recuperação de senha.
 VALIDADE_TOKEN_HORAS = 1

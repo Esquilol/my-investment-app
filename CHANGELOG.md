@@ -118,7 +118,18 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - Resultado atual: **todas as verificações passam** (`EXIT=0`), incluindo
   `IRRFFinal = 192,65` e `IRRFBase = 205,79` idênticos aos dados de referência.
 
+### Segurança
+- A senha do administrador **deixou de ficar no código**: `auth.py` agora lê as
+  credenciais de `st.secrets["admin"]` (Streamlit Cloud: *App settings → Secrets*;
+  local: `.streamlit/secrets.toml`, fora do versionamento). Sem `senha` configurada,
+  o administrador não é semeado e o app segue funcionando sem painel administrativo.
+- Histórico do Git reescrito para remover um e-mail pessoal que havia sido gravado
+  em um commit de `.devcontainer` (autoria normalizada para o `noreply` do GitHub).
+
 ### Alterado
+- `requirements.txt`: removido `playwright`, que não era importado em lugar nenhum
+  (resquício da ferramenta de mapeamento) e deixava o build do Streamlit Cloud
+  pesado.
 - `README.md` reescrito: 10 páginas do investidor + 5 do admin, planos, acesso,
   arquitetura, regras fiscais, validação e deploy.
 - `.gitignore`: passou a ignorar `*.db`, `*.db-journal`, `*.sqlite*` e `_tmp_notas/`.

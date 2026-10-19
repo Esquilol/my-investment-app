@@ -142,10 +142,23 @@ e **Recuperar senha**.
 
 ### Administrador
 
-O primeiro administrador é **semeado automaticamente** na criação do banco, com o
-usuário padrão **`jhon`** (definido em `auth.py` como `ADMIN_PADRAO_*`). Ele nasce
+O primeiro administrador é **semeado automaticamente** na criação do banco. Ele nasce
 no plano PRO e com `is_admin = 1`, e é o **único** com acesso ao painel
 administrativo.
+
+As credenciais **não ficam no código**: vêm de `st.secrets["admin"]`. No Streamlit
+Cloud, defina em **App settings → Secrets**; localmente, em
+`.streamlit/secrets.toml` (fora do versionamento):
+
+```toml
+[admin]
+usuario = "jhon"
+email   = "jhon@local"
+senha   = "troque-esta-senha"
+```
+
+Sem `senha` configurada, o administrador **não** é semeado (e o app funciona
+normalmente, só sem painel administrativo).
 
 > 🔒 **Troque a senha do administrador logo no primeiro login** (em **Minha Conta**)
 > e mantenha o `dados.db` fora do versionamento — ele já está no `.gitignore`.
@@ -187,7 +200,34 @@ páginas de contas, assinaturas, pagamentos e cupons.
 
 ## Deploy
 
-- **Streamlit Community Cloud**: aponte o repositório e o arquivo `app.py`.
+### Streamlit Community Cloud (streamlit.app)
+
+O repositório é público, então basta apontá-lo no painel:
+
+1. Entre em <https://share.streamlit.io> com a conta do **GitHub**.
+2. **Create app** → **Deploy a public app from GitHub**.
+3. Preencha **Repository** `Esquilol/my-investment-app`, **Branch** `main` e
+   **Main file path** `app.py`.
+4. Em **Advanced settings**, escolha **Python 3.12** e cole os *Secrets* do
+   administrador:
+
+   ```toml
+   [admin]
+   usuario = "jhon"
+   email   = "jhon@local"
+   senha   = "troque-esta-senha"
+   ```
+
+5. **Deploy**. A cada `git push` na `main` o app é reconstruído automaticamente.
+
+> ⚠️ **Atenção — persistência.** O `dados.db` fica no disco do container, que é
+> recriado a cada reinício/redeploy: **contas, notas, assinaturas, pagamentos e
+> cupons não sobrevivem a um restart**. É ótimo para demonstração; para uso real,
+> troque a camada SQLite por um banco hospedado (ex.: Postgres/Supabase ou
+> Turso/libSQL).
+
+### Outras opções
+
 - **Render**: crie um *Web Service* com o comando
   `streamlit run app.py --server.port $PORT --server.address 0.0.0.0`.
 - **Replit**: importe o repositório e rode `streamlit run app.py`.
