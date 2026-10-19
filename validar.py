@@ -2,8 +2,8 @@
 validar.py
 ----------
 Verificação automática do motor fiscal (``regras.py``), da persistência
-(``persistencia.py``), da importação de proventos (``proventos.py``) e do
-login local (``auth.py``).
+(``persistencia.py``), da importação de proventos (``proventos.py``), da
+autenticação (``auth.py``) e das regras SaaS (``saas.py``).
 
 Não depende de ``pytest`` — basta executar:
 
@@ -22,7 +22,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from auth import definir_senha, gerar_hash, tem_usuario, verificar_senha
+import auth
+import persistencia as bd
+import saas
+from auth import gerar_hash
 from parser import extract_notas
 from persistencia import (
     carregar_notas,
@@ -42,6 +45,12 @@ from regras import (
 )
 
 _falhas: list[str] = []
+
+
+def _primeiro_usuario(conexao) -> int:
+    """Id do usuário semeado automaticamente por :func:`conectar` (admin)."""
+    return int(conexao.execute("SELECT MIN(id) FROM usuarios").fetchone()[0])
+
 
 
 def _checar(descricao: str, obtido, esperado, tolerancia: float = 0.011) -> None:
@@ -244,21 +253,23 @@ def teste_deduplicacao(pdfs: list[Path]) -> None:
     with tempfile.TemporaryDirectory() as pasta:
         banco = Path(pasta) / "teste.db"
         conexao = conectar(banco)
+        dono = _primeiro_usuario(conexao)
 
         for arquivo in pdfs:
-            salvar_notas(conexao, extract_notas(str(arquivo), arquivo=arquivo.name))
-        total_notas = len(carregar_notas(conexao))
-        total_ops = len(carregar_operacoes(conexao))
+            salvar_notas(conexao, extract_notas(str(arquivo), arquivo=arquivo.name), dono)
+        total_notas = len(carregar_notas(conexao, dono))
+        total_ops = len(carregar_operacoes(conexao, dono))
 
         # reimporta tudo: nada deve ser somado de novo
         for arquivo in pdfs:
-            salvar_notas(conexao, extract_notas(str(arquivo), arquivo=arquivo.name))
-        _checar("notas após reimportação", len(carregar_notas(conexao)), total_notas)
-        _checar("operações após reimportação", len(carregar_operacoes(conexao)), total_ops)
+            salvar_notas(conexao, extract_notas(str(arquivo), arquivo=arquivo.name), dono)
+        _checar("notas após reimportação", len(carregar_notas(conexao, dono)), total_notas)
+        _checar("operações após reimportação", len(carregar_operacoes(conexao, dono)), total_ops)
 
-        _checar("operações sem data (parser)", int(carregar_operacoes(conexao)["data"].isna().sum()), 0)
+        _checar("operações sem data (parser)",
+                int(carregar_operacoes(conexao, dono)["data"].isna().sum()), 0)
 
-        operacoes = carregar_operacoes(conexao)
+        operacoes = carregar_operacoes(conexao, dono)
         resultados = resultados_realizados(operacoes)
         _checar("resultados realizados gerados", len(resultados) > 0, True)
         _checar("nenhum resultado nulo", int(resultados["resultado"].isna().sum()), 0)
@@ -297,9 +308,10 @@ def teste_futuros_referencia(pdfs: list[Path]) -> None:
 
     with tempfile.TemporaryDirectory() as pasta:
         conexao = conectar(Path(pasta) / "futuros.db")
+        dono = _primeiro_usuario(conexao)
         for arquivo in pdfs:
-            salvar_notas(conexao, extract_notas(str(arquivo), arquivo=arquivo.name))
-        operacoes = carregar_operacoes(conexao)
+            salvar_notas(conexao, extract_notas(str(arquivo), arquivo=arquivo.name), dono)
+        operacoes = carregar_operacoes(conexao, dono)
         conexao.close()
 
     futuros = operacoes[operacoes["mercado"] == "FUTURO"]
@@ -358,50 +370,154 @@ def teste_proventos() -> None:
 
         # Deduplicação: reimportar o mesmo extrato não duplica.
         conexao = conectar(destino / "teste.db")
+        dono = _primeiro_usuario(conexao)
         try:
             _checar("proventos gravados",
-                    salvar_proventos(conexao, tabela.to_dict("records")), 2)
+                    salvar_proventos(conexao, dono, tabela.to_dict("records")), 2)
             _checar("reimportação não duplica",
-                    salvar_proventos(conexao, tabela.to_dict("records")), 0)
-            _checar("proventos no banco", len(carregar_proventos(conexao)), 2)
+                    salvar_proventos(conexao, dono, tabela.to_dict("records")), 0)
+            _checar("proventos no banco", len(carregar_proventos(conexao, dono)), 2)
         finally:
             conexao.close()
 
 
 def teste_login() -> None:
-    print("\n9. Login local: hash da senha e sessão")
+    print("\n9. Autenticação: cadastro, login, senha e recuperação")
     with tempfile.TemporaryDirectory() as pasta:
         conexao = conectar(Path(pasta) / "teste.db")
         try:
-            _checar("sem usuário no início", tem_usuario(conexao), False)
-
-            definir_senha(conexao, "investidor", "segredo123")
-            _checar("usuário criado", tem_usuario(conexao), True)
-            _checar("senha correta aceita",
-                    verificar_senha(conexao, "investidor", "segredo123"), True)
+            administrador = conexao.execute(
+                "SELECT usuario, hash FROM usuarios WHERE is_admin = 1").fetchone()
+            _checar("admin padrão semeado", administrador["usuario"],
+                    auth.ADMIN_PADRAO_USUARIO)
+            _checar("senha não gravada em claro",
+                    auth.ADMIN_PADRAO_SENHA in administrador["hash"], False)
+            _checar("hash no formato PBKDF2", administrador["hash"].split("$")[0],
+                    "pbkdf2_sha256")
+            _checar("login do admin pelo usuário",
+                    auth.autenticar(conexao, "jhon", "321415") is not None, True)
+            _checar("login do admin pelo e-mail",
+                    auth.autenticar(conexao, "jhon@local", "321415") is not None, True)
             _checar("senha errada recusada",
-                    verificar_senha(conexao, "investidor", "segredo124"), False)
-            _checar("usuário errado recusado",
-                    verificar_senha(conexao, "outro", "segredo123"), False)
+                    auth.autenticar(conexao, "jhon", "errada"), None)
 
-            registro = conexao.execute(
-                "SELECT hash FROM usuarios WHERE id = 1").fetchone()["hash"]
-            _checar("senha não gravada em claro", "segredo123" in registro, False)
-            _checar("hash reconhecido pelo formato",
-                    registro.split("$")[0], "pbkdf2_sha256")
+            _checar("validação recusa e-mail inválido",
+                    auth.validar_cadastro("maria", "invalido", "segredo1", "segredo1"),
+                    "Informe um e-mail válido.")
+            _checar("validação recusa senhas diferentes",
+                    auth.validar_cadastro("maria", "m@x.com", "segredo1", "segredo2"),
+                    "As senhas não conferem.")
+            _checar("validação aceita cadastro válido",
+                    auth.validar_cadastro("maria", "m@x.com", "segredo1", "segredo1"),
+                    None)
 
-            mesmo = gerar_hash("segredo123", sal=b"0123456789abcdef")
-            _checar("hash determinístico com o mesmo sal", mesmo,
-                    gerar_hash("segredo123", sal=b"0123456789abcdef"))
-            _checar("sal diferente gera hash diferente",
-                    gerar_hash("segredo123", sal=b"0123456789abcdef")
-                    != gerar_hash("segredo123", sal=b"fedcba9876543210"), True)
+            novo_id = auth.criar_conta(conexao, "maria", "maria@x.com", "segredo1")
+            _checar("conta criada no plano gratuito",
+                    bd.obter_usuario(conexao, novo_id)["plano_codigo"], "free")
+            _checar("login da conta nova",
+                    auth.autenticar(conexao, "maria", "segredo1") is not None, True)
 
-            definir_senha(conexao, "investidor", "novaSenha456")
+            try:
+                auth.criar_conta(conexao, "maria", "outro@x.com", "segredo1")
+                duplicou = True
+            except ValueError:
+                duplicou = False
+            _checar("usuário duplicado recusado", duplicou, False)
+
+            _checar("determinismo do hash com o mesmo sal",
+                    gerar_hash("segredo1", sal=b"0123456789abcdef"),
+                    gerar_hash("segredo1", sal=b"0123456789abcdef"))
+            _checar("sais diferentes geram hashes diferentes",
+                    gerar_hash("segredo1", sal=b"0123456789abcdef")
+                    != gerar_hash("segredo1", sal=b"fedcba9876543210"), True)
+
+            _checar("troca de senha com senha atual correta",
+                    auth.alterar_senha(conexao, novo_id, "segredo1", "novaSenha456"), True)
             _checar("senha antiga invalidada",
-                    verificar_senha(conexao, "investidor", "segredo123"), False)
+                    auth.autenticar(conexao, "maria", "segredo1"), None)
             _checar("nova senha aceita",
-                    verificar_senha(conexao, "investidor", "novaSenha456"), True)
+                    auth.autenticar(conexao, "maria", "novaSenha456") is not None, True)
+            _checar("troca com senha atual errada recusada",
+                    auth.alterar_senha(conexao, novo_id, "errada", "outra123"), False)
+
+            _checar("e-mail desconhecido não gera token",
+                    auth.gerar_token_recuperacao(conexao, "ninguem@x.com"), None)
+            token = auth.gerar_token_recuperacao(conexao, "maria@x.com")
+            _checar("token de recuperação gerado", bool(token), True)
+            _checar("token errado recusado",
+                    auth.redefinir_senha(conexao, "maria@x.com", "000000", "zerada12"), False)
+            _checar("redefinição com token válido",
+                    auth.redefinir_senha(conexao, "maria@x.com", token, "final123"), True)
+            _checar("senha redefinida aceita",
+                    auth.autenticar(conexao, "maria", "final123") is not None, True)
+        finally:
+            conexao.close()
+
+
+# ---------------------------------------------------------------------------
+# 10. SaaS: planos, limites, cupons e checkout
+# ---------------------------------------------------------------------------
+
+def teste_saas() -> None:
+    print("\n10. SaaS: planos, limites, cupons e checkout")
+    with tempfile.TemporaryDirectory() as pasta:
+        conexao = conectar(Path(pasta) / "teste.db")
+        try:
+            admin = _primeiro_usuario(conexao)
+            _checar("admin semeado no plano PRO", saas.eh_pro(conexao, admin), True)
+            _checar("PRO tem notas ilimitadas", saas.limite_notas(conexao, admin), -1)
+            _checar("PRO exporta Excel", saas.pode_exportar_excel(conexao, admin), True)
+
+            uid = auth.criar_conta(conexao, "joao", "joao@x.com", "segredo1")
+            _checar("free tem limite de 20 notas", saas.limite_notas(conexao, uid), 20)
+            _checar("free pode importar até o limite",
+                    saas.pode_importar(conexao, uid, 20)[0], True)
+            _checar("free bloqueado acima do limite",
+                    saas.pode_importar(conexao, uid, 21)[0], False)
+            _checar("free não exporta Excel", saas.pode_exportar_excel(conexao, uid), False)
+
+            bd.criar_cupom(conexao, "bemvindo10", 10.0)
+            ok, cupom, _ = saas.validar_cupom(conexao, "BEMVINDO10")
+            _checar("cupom válido reconhecido", ok, True)
+            _checar("percentual do cupom", float(cupom["desconto_pct"]), 10.0)
+            _checar("cupom inexistente recusado",
+                    saas.validar_cupom(conexao, "NAOEXISTE")[0], False)
+
+            bd.definir_cupom_ativo(conexao, int(cupom["id"]), False)
+            _checar("cupom desativado recusado",
+                    saas.validar_cupom(conexao, "BEMVINDO10")[0], False)
+            bd.definir_cupom_ativo(conexao, int(cupom["id"]), True)
+
+            pro = bd.obter_plano(conexao, "pro")
+            valores = saas.calcular_preco(pro, cupom)
+            _checar("preço cheio do PRO", valores["original"], 29.90)
+            _checar("desconto de 10%", valores["desconto"], 2.99)
+            _checar("preço final com cupom", valores["final"], 26.91)
+
+            resultado = saas.assinar(conexao, uid, "pro", forma="Pix",
+                                     codigo_cupom="BEMVINDO10")
+            _checar("assinatura ativada", saas.eh_pro(conexao, uid), True)
+            _checar("nota fiscal emitida", resultado["nota_fiscal"].startswith("NF-"), True)
+            _checar("limite ilimitado após assinar", saas.limite_notas(conexao, uid), -1)
+            _checar("uso do cupom registrado",
+                    conexao.execute("SELECT usos FROM cupons WHERE codigo = 'BEMVINDO10'")
+                    .fetchone()[0], 1)
+
+            try:
+                saas.assinar(conexao, uid, "free")
+                recusou = False
+            except ValueError:
+                recusou = True
+            _checar("checkout do plano gratuito recusado", recusou, True)
+
+            bd.cancelar_assinatura(conexao, uid)
+            _checar("cancelamento devolve ao gratuito", saas.eh_pro(conexao, uid), False)
+
+            m = saas.metricas(conexao)
+            _checar("métricas: total de usuários", m["usuarios_total"], 2)
+            _checar("métricas: pagos/free",
+                    (m["usuarios_pagos"], m["usuarios_free"]), (1, 1))
+            _checar("faturamento contabilizado", round(m["faturamento"], 2), 26.91)
         finally:
             conexao.close()
 
@@ -418,6 +534,7 @@ def main() -> int:
     teste_irrf_compensacao()
     teste_proventos()
     teste_login()
+    teste_saas()
 
     pdfs = sorted(Path(r"C:\Users\Esquilo\Downloads").glob("NotaCorretagem_01-09-26_30-09-26*.pdf"))
     teste_deduplicacao(pdfs)

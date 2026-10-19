@@ -1,27 +1,36 @@
 """
 app.py
 ------
-Ponto de entrada do painel: configura a página, carrega o estado do banco e
-monta o menu lateral (``st.navigation``). O conteúdo de cada página está em
-``paginas.py``.
+Ponto de entrada do painel: configura a página, faz o **gate de autenticação**
+(entrar / criar conta / recuperar senha) e monta o menu lateral com
+``st.navigation``.
+
+O conteúdo de cada página fica em ``paginas.py`` (área do investidor) e
+``admin.py`` (painel administrativo, restrito a ``is_admin``). As regras de
+negócio do SaaS estão em ``saas.py`` e a persistência em ``persistencia.py``.
 
 Execução local (no Windows, chamar o Streamlit como módulo evita problemas de PATH):
 
     python -m streamlit run app.py
 
-Páginas:
-    1) **Upload de Notas**  — importe as notas de corretagem em PDF.
-    2) **Visão Geral**      — patrimônio, evolução e últimos negócios.
-    3) **Extrato**          — todas as operações, com filtros.
-    4) **Meu Patrimônio**   — posição em custódia e preço médio.
-    5) **Apuração de IR**   — tabela mensal com isenção e compensação.
-    6) **DARF**             — valor a recolher por competência.
-    7) **Proventos**        — dividendos, JCP, rendimentos e amortizações.
-    8) **Relatórios**       — exportação em CSV/Excel.
+Páginas do investidor:
+    1) **Upload de Notas**     — importe as notas de corretagem em PDF.
+    2) **Visão Geral**         — patrimônio, evolução e últimos negócios.
+    3) **Extrato**             — todas as operações, com filtros.
+    4) **Meu Patrimônio**      — posição em custódia e preço médio.
+    5) **Apuração de IR**      — tabela mensal com isenção e compensação.
+    6) **DARF**                — valor a recolher por competência.
+    7) **Proventos**           — dividendos, JCP, rendimentos e amortizações.
+    8) **Relatórios**          — exportação em CSV/Excel.
+    9) **Planos e Assinatura** — planos, cupom e checkout.
+   10) **Minha Conta**         — perfil e troca de senha.
 
-As operações ficam gravadas em ``dados.db`` (SQLite), com deduplicação por
-número de nota. As regras fiscais estão em ``regras.py`` e a persistência em
-``persistencia.py``.
+Páginas do administrador (apenas ``is_admin``):
+    * **Visão Geral**   — métricas de cadastros, planos e faturamento.
+    * **Contas**        — cadastros com filtros e ativação/inativação.
+    * **Assinaturas**   — planos vigentes, faturas e status.
+    * **Pagamentos**    — métodos de pagamento e notas fiscais.
+    * **Cupons**        — criação, listagem e desativação de cupons.
 
 Observação: os valores apurados são uma estimativa técnica. Não substituem a
 apuração oficial (GCAP/DIRPF) nem a orientação de um contador.
@@ -31,9 +40,11 @@ from __future__ import annotations
 
 import streamlit as st
 
+import admin
 import auth
 import paginas
-from persistencia import conectar
+import saas
+from persistencia import obter_usuario
 
 st.set_page_config(
     page_title="Gestor de Investimentos B3",
@@ -42,53 +53,143 @@ st.set_page_config(
 )
 
 
-def tela_login() -> None:
-    """Formulário de entrada: cria a senha no primeiro uso ou pede para autenticar."""
-    conexao = conectar()
-    st.title("\U0001F512 Gestor de Investimentos B3")
+# ---------------------------------------------------------------------------
+# Autenticação
+# ---------------------------------------------------------------------------
 
-    if not auth.tem_usuario(conexao):
-        st.subheader("Definir senha de acesso")
-        st.caption(
-            "Primeiro acesso: defina a senha que protegerá o app neste computador. "
-            "A senha é gravada apenas como hash (PBKDF2) no ``dados.db`` local."
-        )
-        with st.form("form_criar_senha"):
-            usuario = st.text_input("Usuário", value="investidor")
-            senha = st.text_input("Nova senha", type="password")
-            confirmacao = st.text_input("Confirme a senha", type="password")
-            if st.form_submit_button("Criar senha", type="primary"):
-                if len(senha) < auth.TAMANHO_MINIMO:
-                    st.error(f"Use ao menos {auth.TAMANHO_MINIMO} caracteres.")
-                elif senha != confirmacao:
-                    st.error("As senhas não conferem.")
-                else:
-                    auth.definir_senha(conexao, usuario, senha)
-                    st.session_state["autenticado"] = True
-                    st.rerun()
-        return
+def _entrar(usuario) -> None:
+    """Grava a sessão autenticada e recarrega a página."""
+    st.session_state.update(
+        autenticado=True,
+        usuario_id=int(usuario["id"]),
+        usuario=usuario["usuario"],
+        is_admin=bool(usuario["is_admin"]),
+    )
+    st.rerun()
 
-    st.subheader("Entrar")
+
+def _aba_entrar(conexao) -> None:
     with st.form("form_login"):
-        usuario = st.text_input("Usuário", value="investidor")
-        senha = st.text_input("Senha", type="password")
+        login = st.text_input("Usuário ou e-mail", key="login_usuario")
+        senha = st.text_input("Senha", type="password", key="login_senha")
         if st.form_submit_button("Entrar", type="primary"):
-            if auth.verificar_senha(conexao, usuario, senha):
-                st.session_state["autenticado"] = True
-                st.rerun()
+            usuario = auth.autenticar(conexao, login, senha)
+            if usuario is None:
+                st.error("Usuário/e-mail ou senha inválidos — ou conta inativa.")
             else:
-                st.error("Usuário ou senha inválidos.")
+                _entrar(usuario)
 
+
+def _aba_criar_conta(conexao) -> None:
+    st.caption("Sua conta começa no **plano Gratuito**. Você pode assinar o PRO quando quiser.")
+    with st.form("form_cadastro"):
+        usuario = st.text_input("Usuário", key="cad_usuario",
+                                placeholder="ex.: maria.silva")
+        email = st.text_input("E-mail", key="cad_email")
+        senha = st.text_input("Senha", type="password", key="cad_senha")
+        confirmacao = st.text_input("Confirme a senha", type="password", key="cad_confirmacao")
+        if st.form_submit_button("Criar conta", type="primary"):
+            erro = auth.validar_cadastro(usuario, email, senha, confirmacao)
+            if erro:
+                st.error(erro)
+                return
+            try:
+                novo_id = auth.criar_conta(conexao, usuario, email, senha)
+            except ValueError as erro_banco:
+                st.error(str(erro_banco))
+            else:
+                st.success("Conta criada! Bem-vindo(a) ao plano Gratuito.")
+                _entrar({"id": novo_id, "usuario": usuario.strip(), "is_admin": 0})
+
+
+def _aba_recuperar(conexao) -> None:
+    st.caption(
+        "A recuperação é **simulada**: como o app ainda não envia e-mails, o "
+        "código é exibido aqui na tela. Gere o código e informe no formulário "
+        "de redefinição ao lado."
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        with st.form("form_gerar_codigo"):
+            email = st.text_input("E-mail cadastrado", key="rec_email")
+            if st.form_submit_button("Gerar código"):
+                token = auth.gerar_token_recuperacao(conexao, email)
+                if token is None:
+                    st.error("Não há conta com esse e-mail.")
+                else:
+                    st.success(
+                        f"Código de recuperação: **{token}** "
+                        f"(válido por {auth.VALIDADE_TOKEN_HORAS} hora)."
+                    )
+    with col2:
+        with st.form("form_redefinir"):
+            email = st.text_input("E-mail", key="red_email")
+            codigo = st.text_input("Código de recuperação", key="red_codigo")
+            nova = st.text_input("Nova senha", type="password", key="red_nova")
+            confirmacao = st.text_input("Confirme a nova senha", type="password",
+                                        key="red_confirmacao")
+            if st.form_submit_button("Redefinir senha", type="primary"):
+                if len(nova) < auth.TAMANHO_MINIMO:
+                    st.error(f"A senha deve ter ao menos {auth.TAMANHO_MINIMO} caracteres.")
+                elif nova != confirmacao:
+                    st.error("As senhas não conferem.")
+                elif auth.redefinir_senha(conexao, email, codigo, nova):
+                    st.success("Senha redefinida. Já pode entrar com a nova senha.")
+                else:
+                    st.error("Código inválido ou expirado.")
+
+
+def tela_autenticacao() -> None:
+    """Tela de entrada com login, cadastro e recuperação de senha."""
+    conexao = paginas.obter_conexao()
+    st.title("\U0001F512 Gestor de Investimentos B3")
+    st.caption(
+        "Entre na sua conta ou crie uma agora. As senhas são gravadas apenas "
+        "como **hash PBKDF2** no ``dados.db`` local — nunca em claro."
+    )
+    aba_entrar, aba_criar, aba_recuperar = st.tabs(
+        ["Entrar", "Criar conta", "Recuperar senha"])
+    with aba_entrar:
+        _aba_entrar(conexao)
+    with aba_criar:
+        _aba_criar_conta(conexao)
+    with aba_recuperar:
+        _aba_recuperar(conexao)
+
+
+# ---------------------------------------------------------------------------
+# Gate de acesso e navegação
+# ---------------------------------------------------------------------------
 
 if not st.session_state.get("autenticado"):
-    tela_login()
+    tela_autenticacao()
     st.stop()
 
-st.sidebar.button(
-    "Sair",
-    on_click=lambda: st.session_state.update(autenticado=False),
-    icon="\U0001F513",
-)
+conexao = paginas.obter_conexao()
+usuario_id = int(st.session_state["usuario_id"])
+
+# Revalida a sessão a cada execução: uma conta desativada pelo administrador
+# derruba o usuário na hora, e o perfil/período do plano são relidos do banco.
+usuario_atual = obter_usuario(conexao, usuario_id)
+if usuario_atual is None or not usuario_atual["ativo"]:
+    st.session_state.clear()
+    st.warning("Sua conta foi desativada. Procure o suporte para mais informações.")
+    st.stop()
+
+st.session_state["is_admin"] = bool(usuario_atual["is_admin"])
+
+with st.sidebar:
+    st.markdown(f"#### \U0001F464 {usuario_atual['usuario']}")
+    if saas.eh_pro(conexao, usuario_id):
+        st.success(f"\U0001F48E Plano **{saas.rotulo_plano(conexao, usuario_id)}**")
+    else:
+        st.info(f"\U0001F193 Plano **{saas.rotulo_plano(conexao, usuario_id)}**")
+    if st.session_state["is_admin"]:
+        st.caption("\U0001F6E1\uFE0F Perfil: Administrador")
+    st.divider()
+    if st.button("Sair", icon="\U0001F513", width="stretch"):
+        st.session_state.clear()
+        st.rerun()
 
 st.title("\U0001F4C8 Gestor de Investimentos B3")
 st.caption(
@@ -96,10 +197,11 @@ st.caption(
     "automaticamente. Dados gravados localmente em SQLite (com deduplicação por nota)."
 )
 
-paginas.carregar()
+paginas.carregar(usuario_id)
 
-navegacao = st.navigation([
-    st.Page(paginas.pagina_upload, title="Upload de Notas", icon="\U0001F4C1", default=True),
+paginas_investidor = [
+    st.Page(paginas.pagina_upload, title="Upload de Notas",
+            icon="\U0001F4C1", default=True),
     st.Page(paginas.pagina_visao, title="Visão Geral", icon="\U0001F4CA"),
     st.Page(paginas.pagina_extrato, title="Extrato", icon="\U0001F9FE"),
     st.Page(paginas.pagina_patrimonio, title="Meu Patrimônio", icon="\U0001F4BC"),
@@ -107,5 +209,24 @@ navegacao = st.navigation([
     st.Page(paginas.pagina_darf, title="DARF", icon="\U0001F9EE"),
     st.Page(paginas.pagina_proventos, title="Proventos", icon="\U0001F4B5"),
     st.Page(paginas.pagina_relatorios, title="Relatórios", icon="\U0001F4E5"),
-])
+    st.Page(paginas.pagina_planos, title="Planos e Assinatura", icon="\U0001F4B3"),
+    st.Page(paginas.pagina_conta, title="Minha Conta", icon="\U0001F464"),
+]
+
+paginas_admin = [
+    st.Page(admin.pagina_dashboard, title="Visão Geral", icon="\U0001F4CA"),
+    st.Page(admin.pagina_contas, title="Contas", icon="\U0001F465"),
+    st.Page(admin.pagina_assinaturas, title="Assinaturas", icon="\U0001F4CB"),
+    st.Page(admin.pagina_pagamentos, title="Pagamentos", icon="\U0001F4B3"),
+    st.Page(admin.pagina_cupons, title="Cupons", icon="\U0001F39F\uFE0F"),
+]
+
+if st.session_state["is_admin"]:
+    navegacao = st.navigation({
+        "Painel do investidor": paginas_investidor,
+        "Administração": paginas_admin,
+    })
+else:
+    navegacao = st.navigation(paginas_investidor)
+
 navegacao.run()

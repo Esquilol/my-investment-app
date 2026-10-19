@@ -5,6 +5,32 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Não publicado]
 
+### Adicionado — SaaS: contas, planos e painel administrativo
+- **App multiusuário**: cada pessoa cria a própria conta, entra no plano **Gratuito**
+  e pode assinar o **PRO**. Há ainda um **painel administrativo** restrito.
+- **Planos** (`PLANOS_PADRAO`): **Gratuito** (até 20 notas importadas, sem exportação
+  em Excel) e **PRO** (R$ 29,90/mês, notas ilimitadas, exportação em Excel). O
+  cadastro entra sempre no Gratuito.
+- **`saas.py`** (novo) — regras do SaaS: `plano_do_usuario`, `eh_pro`, `rotulo_plano`,
+  `limite_notas`, `pode_importar`, `pode_exportar_excel`, `validar_cupom`,
+  `calcular_preco`, `assinar` (gera **pagamento** e **nota fiscal**
+  `NF-AAAAMM-00001`), `cancelar_assinatura`, `metricas`, `definir_status_usuario` e
+  `definir_admin`.
+- **`admin.py`** (novo) — painel administrativo com 5 páginas: **Visão Geral**
+  (cadastros, PRO × gratuitos, faturamento e ticket médio), **Contas** (filtros
+  Gratuito / Assinante / Ativo / Inativo, troca de plano e ativação/inativação),
+  **Assinaturas** (status e cancelamento), **Pagamentos** (métodos Pix/cartão e notas
+  fiscais) e **Cupons** (criar, listar e ativar/desativar).
+- **Checkout simulado**: planos, forma de pagamento (Pix/cartão), **cupom de
+  desconto** percentual (com validade e limite de usos) e ativação da assinatura.
+  Nenhuma cobrança real é feita.
+- **Páginas novas do investidor**: **Planos e Assinatura** e **Minha Conta**.
+- **Administrador padrão** (`jhon`) **semeado** na criação do banco, já no plano PRO
+  e com `is_admin = 1`.
+- **Controle de acesso por rota**: as páginas de `admin.py` só entram em
+  `st.navigation` quando `is_admin` é verdadeiro — para um usuário comum elas não
+  existem no menu.
+
 ### Adicionado — Motor fiscal (`regras.py`)
 - Tabela `GRUPOS_FEE` com 23 grupos de ativos,
   com `AssetGroupIRRF`, `Exemption`, `ExemptionValue` e `FeePercent`.
@@ -22,8 +48,15 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - `posicao_atual(operacoes)`: posição em custódia com quantidade e preço médio.
 
 ### Adicionado — Persistência (`persistencia.py`)
-- Camada SQLite (`dados.db`) com 5 tabelas: `notas`, `operacoes`,
-  `prejuizos_anteriores`, `proventos` e `usuarios`.
+- Camada SQLite (`dados.db`) **multiusuário** com `PRAGMA foreign_keys` e
+  `PRAGMA user_version`; esquema v2 com as tabelas de dados do investidor
+  (`notas`, `operacoes`, `prejuizos_anteriores`, `proventos`) e as tabelas do SaaS
+  (`usuarios`, `planos`, `assinaturas`, `pagamentos`, `cupons`, `cupons_usos`,
+  `notas_fiscais`, `config_pagamento`).
+- **Migração automática** do banco monousuário anterior (`_migrar`): recria as
+  tabelas com `usuario_id`, copia os dados existentes e promove o usuário mais
+  antigo a administrador; `_semear` cria os planos e o administrador padrão.
+- Todas as consultas do investidor são **escopadas por `usuario_id`**.
 - **Deduplicação**: `notas` tem `UNIQUE(corretora, numero)` e `operacoes` usa hash
   único; reimportar PDFs sobrepostos não duplica registros.
 - `salvar_notas`, `carregar_operacoes`, `carregar_notas`, `resumo_importacao`,
@@ -50,13 +83,19 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - A senha **não é gravada em claro**; a comparação usa `secrets.compare_digest`
   (tempo constante). A credencial fica na tabela `usuarios` do `dados.db`, que
   está no `.gitignore`.
-- Um único usuário (uso pessoal). No primeiro acesso o app pede para definir a
-  senha; depois, exige usuário e senha. Botão **Sair** na barra lateral.
+- **Multiusuário**: `validar_cadastro`, `criar_conta`, `autenticar` (por usuário ou
+  e-mail), `alterar_senha` e `gerar_token_recuperacao` / `redefinir_senha` (código
+  de 6 caracteres válido por 1 hora, com recuperação **simulada**). Botão **Sair**
+  na barra lateral.
 
 ### Adicionado — Interface
-- Reescrita com **8 páginas navegáveis** (`st.navigation`): Upload de Notas,
-  Visão Geral, Extrato, Meu Patrimônio, Apuração de IR, DARF, Proventos e
-  Relatórios.
+- Reescrita com **páginas navegáveis** (`st.navigation`): 10 do **investidor**
+  (Upload de Notas, Visão Geral, Extrato, Meu Patrimônio, Apuração de IR, DARF,
+  Proventos, Relatórios, Planos e Assinatura, Minha Conta) e 5 do **administrador**.
+- **Gate de autenticação** com as abas **Entrar**, **Criar conta** e **Recuperar
+  senha**; a sessão é revalidada a cada execução (conta desativada derruba o acesso).
+- **Indicador de plano** na barra lateral (🆓 Gratuito / 💎 PRO) e identificação do
+  perfil de administrador.
 - Página **Apuração de IR** com edição dos saldos iniciais de prejuízo **e de IRRF**
   por bucket, transporte calculado para o mês seguinte e detalhamento por
   mercado/categoria (campos `Results*`).
@@ -64,31 +103,36 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   `6015` e vencimento calculado no último dia útil do mês seguinte.
 - Página **Proventos** com importação de extrato (CSV/XLSX), lançamento manual,
   resumo por tipo (com o IRRF do JCP) e gráfico mensal.
-- **Proteção por login**: o app só mostra as páginas após a autenticação; o
-  primeiro acesso define a senha e há botão **Sair**.
+- Página **Planos e Assinatura** (checkout simulado, com cupom) e **Minha Conta**
+  (perfil e troca de senha).
 
 ### Adicionado — Validação (`validar.py`)
 - Suíte sem dependência de pytest, executável com `python validar.py` (exit code 0/1).
 - Cobre: classificação de ativos, reconciliação com os dados de referência (Set/2026),
   isenção, compensação entre meses, compensação de IRRF entre meses, deduplicação
   com os 4 PDFs reais, a reconciliação dos futuros (teste 7, `ajuste do dia −
-  despesas da nota`), a importação de proventos com o IRRF de JCP (teste 8) e o
-  login local (teste 9, hash e verificação da senha).
+  despesas da nota`), a importação de proventos com o IRRF de JCP (teste 8), a
+  **autenticação** (teste 9: cadastro, login por usuário e por e-mail, hash PBKDF2,
+  troca de senha e recuperação) e as **regras do SaaS** (teste 10: planos, limites,
+  cupons, preço, checkout e métricas).
 - Resultado atual: **todas as verificações passam** (`EXIT=0`), incluindo
   `IRRFFinal = 192,65` e `IRRFBase = 205,79` idênticos aos dados de referência.
 
 ### Alterado
-- `README.md` reescrito: 8 páginas, arquitetura, regras fiscais, validação e deploy.
+- `README.md` reescrito: 10 páginas do investidor + 5 do admin, planos, acesso,
+  arquitetura, regras fiscais, validação e deploy.
 - `.gitignore`: passou a ignorar `*.db`, `*.db-journal`, `*.sqlite*` e `_tmp_notas/`.
 - `app.py`: removida a dívida técnica `__import__("regras")` — `classificar_grupo`
   agora é importada no topo do módulo.
 - **`app.py` dividido em dois módulos**: as abas foram substituídas por
-  páginas navegáveis e todo o conteúdo (utilitários, carga dos dados e as 8
+  páginas navegáveis e todo o conteúdo (utilitários, carga dos dados e as
   funções `pagina_*`) foi movido para o novo `paginas.py`. O `app.py` ficou
-  reduzido à entrada: `set_page_config`, `paginas.carregar()` e o
+  reduzido à entrada: gate de autenticação, `paginas.carregar()` e o
   `st.navigation([...]).run()`. Motivo: com páginas baseadas em `callable`, o
-  `AppTest.switch_page` não funciona — mantendo cada `pagina_*` como função, as 8
+  `AppTest.switch_page` não funciona — mantendo cada `pagina_*` como função, as
   páginas continuam testáveis isoladamente.
+- `use_container_width=True` substituído por `width="stretch"` (depreciado no
+  Streamlit 1.66).
 
 ### Removido
 - Ferramenta interna de mapeamento de telas e API retirada do projeto; as capturas

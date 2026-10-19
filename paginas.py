@@ -21,9 +21,13 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import streamlit as st
 
+import auth
+import saas
 from parser import extract_notas
 from persistencia import (
     adicionar_provento,
+    assinatura_ativa,
+    cancelar_assinatura,
     carregar_notas,
     carregar_operacoes,
     carregar_proventos,
@@ -31,6 +35,11 @@ from persistencia import (
     gravar_prejuizos,
     ler_prejuizos,
     limpar_dados,
+    listar_notas_fiscais,
+    listar_pagamentos,
+    listar_planos,
+    obter_plano,
+    obter_usuario,
     remover_provento,
     resumo_importacao,
     salvar_notas,
@@ -100,6 +109,11 @@ def _conexao():
     return conectar()
 
 
+def obter_conexao():
+    """Conexão com o banco, compartilhada por todas as páginas do app."""
+    return _conexao()
+
+
 def _moeda(valor: float) -> str:
     """Formata um número no padrão brasileiro: R$ 1.234,56."""
     return f"R$ {float(valor or 0.0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -146,6 +160,7 @@ def _nome_mes(mes: str) -> str:
 # ---------------------------------------------------------------------------
 
 conexao = None
+usuario_id = None
 operacoes = None
 notas = None
 proventos = None
@@ -157,16 +172,17 @@ posicao = None
 tem_dados = False
 
 
-def carregar() -> None:
-    """Lê o banco SQLite e recalcula os agregados usados por todas as páginas."""
-    global conexao, operacoes, notas, proventos, prejuizos
+def carregar(identificador: int) -> None:
+    """Lê o banco SQLite do usuário e recalcula os agregados das páginas."""
+    global conexao, usuario_id, operacoes, notas, proventos, prejuizos
     global resultados, tabela_ir, saldos_finais, posicao, tem_dados
 
+    usuario_id = int(identificador)
     conexao = _conexao()
 
-    operacoes = carregar_operacoes(conexao)
-    notas = carregar_notas(conexao)
-    proventos = carregar_proventos(conexao)
+    operacoes = carregar_operacoes(conexao, usuario_id)
+    notas = carregar_notas(conexao, usuario_id)
+    proventos = carregar_proventos(conexao, usuario_id)
 
     if not operacoes.empty:
         operacoes["data"] = pd.to_datetime(operacoes["data"], errors="coerce")
@@ -180,7 +196,7 @@ def carregar() -> None:
     if not notas.empty:
         notas["data"] = pd.to_datetime(notas["data"], errors="coerce")
 
-    prejuizos = ler_prejuizos(conexao)
+    prejuizos = ler_prejuizos(conexao, usuario_id)
     resultados = resultados_realizados(operacoes)
     tabela_ir, saldos_finais = apurar_mensal(resultados, notas, prejuizos)
     posicao = posicao_atual(operacoes)
@@ -194,6 +210,12 @@ def carregar() -> None:
 
 def pagina_upload() -> None:
     st.subheader("Enviar notas de corretagem")
+
+    if saas.limite_notas(conexao, usuario_id) >= 0:
+        st.caption(
+            f"Plano **{saas.rotulo_plano(conexao, usuario_id)}** — limite de "
+            f"{saas.limite_notas(conexao, usuario_id)} notas importadas."
+        )
 
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -218,7 +240,12 @@ def pagina_upload() -> None:
                 st.warning(f"Nenhuma operação reconhecida em {arquivo.name}.")
                 continue
 
-            novas, ops = salvar_notas(conexao, lidas)
+            permitido, aviso = saas.pode_importar(conexao, usuario_id, len(lidas))
+            if not permitido:
+                st.error(aviso)
+                break
+
+            novas, ops = salvar_notas(conexao, lidas, usuario_id)
             notas_novas += novas
             operacoes_novas += ops
             arquivos_novos += 1
@@ -233,14 +260,14 @@ def pagina_upload() -> None:
 
     st.divider()
 
-    contagem = resumo_importacao(conexao)
+    contagem = resumo_importacao(conexao, usuario_id)
     m1, m2, m3 = st.columns(3)
     m1.metric("Notas importadas", contagem["notas"])
     m2.metric("Operações", contagem["operacoes"])
     m3.metric("Arquivos processados", contagem["arquivos"])
 
     if st.button("🗑️ Limpar operações importadas"):
-        limpar_dados(conexao)
+        limpar_dados(conexao, usuario_id)
         st.rerun()
 
     if notas.empty:
@@ -251,7 +278,7 @@ def pagina_upload() -> None:
         visao_notas["data"] = visao_notas["data"].dt.strftime("%d/%m/%Y")
         visao_notas.columns = ["Nota", "Corretora", "Data", "Arquivo",
                               "Despesas", "IRRF", "Categoria IRRF"]
-        st.dataframe(visao_notas, use_container_width=True, hide_index=True)
+        st.dataframe(visao_notas, width="stretch", hide_index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +316,7 @@ def pagina_visao() -> None:
         ultimos = operacoes.sort_values("data", ascending=False).head(15)
         st.dataframe(
             ultimos[["data", "ticker", "tipo", "quantidade", "preco", "mercado", "nota"]],
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )
 
 
@@ -336,7 +363,7 @@ def pagina_extrato() -> None:
 
         colunas = ["data", "tipo", "ticker", "grupo", "mercado", "quantidade",
                    "preco", "valor_total", "taxas", "resultado", "nota", "corretora"]
-        st.dataframe(filtro[colunas], use_container_width=True, hide_index=True)
+        st.dataframe(filtro[colunas], width="stretch", hide_index=True)
 
         st.download_button(
             "⬇️ Baixar extrato filtrado (CSV)",
@@ -361,7 +388,7 @@ def pagina_patrimonio() -> None:
         c2.metric("Custo total", _moeda(posicao["Custo Total"].sum()))
         c3.metric("Grupos distintos", posicao["Grupo"].nunique())
 
-        st.dataframe(posicao, use_container_width=True, hide_index=True)
+        st.dataframe(posicao, width="stretch", hide_index=True)
 
         st.markdown("**Custo por grupo de ativos**")
         st.bar_chart(posicao.groupby("Grupo")["Custo Total"].sum())
@@ -408,7 +435,7 @@ def pagina_ir() -> None:
                                          step=10.0, format="%.2f")
 
         if st.button("Salvar saldos"):
-            gravar_prejuizos(conexao, {
+            gravar_prejuizos(conexao, usuario_id, {
                 "data": prejuizos.get("data"),
                 "DayTrade": prej_day,
                 "SwingTrade": prej_swing,
@@ -442,7 +469,7 @@ def pagina_ir() -> None:
 
         visao = tabela_ir[list(RESUMO_IR)].rename(columns=RESUMO_IR).copy()
         visao["Mês"] = visao["Mês"].map(_nome_mes)
-        st.dataframe(visao, use_container_width=True, hide_index=True)
+        st.dataframe(visao, width="stretch", hide_index=True)
 
         st.markdown("**Resultados por mercado (campos `Results*`)**")
         detalhe = tabela_ir[tabela_ir["mes"].isin(
@@ -454,7 +481,7 @@ def pagina_ir() -> None:
         else:
             st.dataframe(
                 detalhe[["mes"] + DETALHE_MERCADO],
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
 
         st.caption(
@@ -521,7 +548,7 @@ def pagina_darf() -> None:
                     linha["IRRFMonthlyDayTrade"] + linha["IRRFMonthlySwingTrade"])},
                 {"Item": "IR a recolher", "Valor": linha["DARFFinal"]},
             ])
-            st.dataframe(composicao, use_container_width=True, hide_index=True)
+            st.dataframe(composicao, width="stretch", hide_index=True)
 
         st.download_button(
             "⬇️ Baixar apuração do período (CSV)",
@@ -569,7 +596,7 @@ def pagina_proventos() -> None:
                         st.caption(f"{ignoradas} linha(s) ignorada(s) por falta de "
                                    "ticker ou de data reconhecível.")
                     if st.button(f"Importar {len(tabela)} provento(s)", type="primary"):
-                        novas = salvar_proventos(conexao, tabela.to_dict("records"))
+                        novas = salvar_proventos(conexao, usuario_id, tabela.to_dict("records"))
                         st.session_state["proventos_importados"] = (novas, len(tabela) - novas)
                         st.rerun()
 
@@ -598,7 +625,7 @@ def pagina_proventos() -> None:
             if not ticker_provento.strip():
                 st.error("Informe o ticker do provento.")
             else:
-                adicionar_provento(conexao, data_provento.isoformat(),
+                adicionar_provento(conexao, usuario_id, data_provento.isoformat(),
                                    ticker_provento.strip(), tipo_provento,
                                    quantidade_provento, valor_provento)
                 st.rerun()
@@ -655,7 +682,7 @@ def pagina_proventos() -> None:
         ),
     )
     if st.button("Remover selecionado"):
-        remover_provento(conexao, remover)
+        remover_provento(conexao, usuario_id, remover)
         st.rerun()
 
 
@@ -679,30 +706,186 @@ def pagina_relatorios() -> None:
                 data=_to_csv(operacoes[colunas_extrato]),
                 file_name=f"operacoes_{date.today():%Y%m%d}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
         with col2:
-            st.download_button(
-                "⬇️ Consolidado (Excel)",
-                data=_to_excel({
-                    "operacoes": operacoes[colunas_extrato],
-                    "posicao": posicao,
-                    "apuracao_ir": tabela_ir,
-                    "resultados": resultados,
-                    "notas": notas,
-                    "proventos": proventos,
-                }),
-                file_name=f"relatorio_{date.today():%Y%m%d}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
+            if saas.pode_exportar_excel(conexao, usuario_id):
+                st.download_button(
+                    "⬇️ Consolidado (Excel)",
+                    data=_to_excel({
+                        "operacoes": operacoes[colunas_extrato],
+                        "posicao": posicao,
+                        "apuracao_ir": tabela_ir,
+                        "resultados": resultados,
+                        "notas": notas,
+                        "proventos": proventos,
+                    }),
+                    file_name=f"relatorio_{date.today():%Y%m%d}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch",
+                )
+            else:
+                st.info(
+                    "A exportação consolidada em **Excel** faz parte do plano "
+                    "PRO. Assine em **Planos e Assinatura** para liberar."
+                )
 
         st.divider()
         st.markdown("**Prévia — Apuração de IR**")
         if tabela_ir.empty:
             st.caption("Sem apuração no período.")
         else:
-            st.dataframe(tabela_ir, use_container_width=True, hide_index=True)
+            st.dataframe(tabela_ir, width="stretch", hide_index=True)
 
         st.markdown("**Prévia — Operações**")
-        st.dataframe(operacoes[colunas_extrato], use_container_width=True, hide_index=True)
+        st.dataframe(operacoes[colunas_extrato], width="stretch", hide_index=True)
+
+
+# ---------------------------------------------------------------------------
+# Página 9 — Planos e Assinatura (checkout)
+# ---------------------------------------------------------------------------
+
+def pagina_planos() -> None:
+    st.subheader("\U0001F4B3 Planos e assinatura")
+
+    if saas.eh_pro(conexao, usuario_id):
+        st.success(f"Você é assinante do plano **{saas.rotulo_plano(conexao, usuario_id)}**.")
+    else:
+        st.info(f"Você está no plano **{saas.rotulo_plano(conexao, usuario_id)}**.")
+
+    st.markdown("**Planos disponíveis**")
+    planos = listar_planos(conexao)
+    if planos.empty:
+        st.warning("Nenhum plano configurado.")
+        return
+
+    colunas = st.columns(len(planos))
+    for coluna, (_, plano) in zip(colunas, planos.iterrows()):
+        with coluna:
+            st.markdown(f"#### {plano['nome']}")
+            preco = ("Grátis" if float(plano["preco_mensal"]) <= 0
+                     else f"{_moeda(plano['preco_mensal'])}/mês")
+            st.metric("Mensalidade", preco)
+            limite = ("ilimitadas" if int(plano["limite_notas"]) < 0
+                      else str(int(plano["limite_notas"])))
+            st.caption(f"Notas: **{limite}**")
+            st.caption("Exportação em Excel: "
+                       + ("**sim**" if plano["exporta_excel"] else "não"))
+            if plano["descricao"]:
+                st.caption(plano["descricao"])
+
+    st.divider()
+
+    pro = obter_plano(conexao, "pro")
+    if pro is None:
+        st.warning("Plano PRO não configurado.")
+    elif not saas.eh_pro(conexao, usuario_id):
+        st.markdown("**Assinar o PRO**")
+        st.caption("Checkout **simulado** — nenhuma cobrança real é efetuada.")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            forma = st.selectbox("Forma de pagamento", saas.FORMAS_PAGAMENTO,
+                                 key="ck_forma")
+        with col2:
+            meses = st.number_input("Meses", min_value=1, max_value=24, value=1,
+                                    step=1, key="ck_meses")
+        with col3:
+            codigo_cupom = st.text_input("Cupom de desconto (opcional)",
+                                         key="ck_cupom").strip().upper()
+
+        cupom = None
+        if codigo_cupom:
+            ok, cupom, mensagem = saas.validar_cupom(conexao, codigo_cupom)
+            (st.success if ok else st.error)(mensagem)
+
+        valores = saas.calcular_preco(pro, cupom)
+        total = valores["final"] * int(meses)
+        st.caption(
+            f"Plano {_moeda(valores['original'])}/mês · desconto "
+            f"{valores['percentual']:.0f}% ({_moeda(valores['desconto'])}) · "
+            f"por mês **{_moeda(valores['final'])}** · total ({int(meses)} mês(es)) "
+            f"**{_moeda(total)}**"
+        )
+
+        if st.button("Confirmar assinatura", type="primary"):
+            try:
+                resultado = saas.assinar(conexao, usuario_id, "pro", forma=forma,
+                                         codigo_cupom=codigo_cupom or None,
+                                         meses=int(meses))
+            except ValueError as erro:
+                st.error(str(erro))
+            else:
+                st.success(
+                    f"Assinatura confirmada! Plano **{resultado['plano']}**, "
+                    f"valor {_moeda(resultado['final'])}, forma {resultado['forma']}, "
+                    f"nota fiscal **{resultado['nota_fiscal']}**. "
+                    f"Referência do pagamento: {resultado['referencia']}."
+                )
+                st.rerun()
+
+    assinatura = assinatura_ativa(conexao, usuario_id)
+    if assinatura is not None:
+        st.divider()
+        st.markdown("**Assinatura vigente**")
+        a1, a2, a3, a4 = st.columns(4)
+        a1.metric("Plano", assinatura["plano_nome"] or assinatura["plano_codigo"])
+        a2.metric("Início", assinatura["inicio"])
+        a3.metric("Renova até", assinatura["fim"])
+        a4.metric("Valor", _moeda(assinatura["valor_pago"]))
+        if st.button("Cancelar assinatura"):
+            cancelar_assinatura(conexao, usuario_id)
+            st.success("Assinatura cancelada. Você voltou ao plano Gratuito.")
+            st.rerun()
+
+    st.divider()
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Meus pagamentos**")
+        pagamentos = listar_pagamentos(conexao, usuario_id)
+        if pagamentos.empty:
+            st.caption("Nenhum pagamento registrado.")
+        else:
+            st.dataframe(pagamentos, width="stretch", hide_index=True)
+    with col2:
+        st.markdown("**Minhas notas fiscais**")
+        notas_fiscais = listar_notas_fiscais(conexao, usuario_id)
+        if notas_fiscais.empty:
+            st.caption("Nenhuma nota fiscal emitida.")
+        else:
+            st.dataframe(notas_fiscais, width="stretch", hide_index=True)
+
+
+# ---------------------------------------------------------------------------
+# Página 10 — Minha Conta
+# ---------------------------------------------------------------------------
+
+def pagina_conta() -> None:
+    st.subheader("\U0001F464 Minha conta")
+
+    usuario = obter_usuario(conexao, usuario_id)
+    if usuario is None:
+        st.error("Conta não encontrada.")
+        return
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Usuário", usuario["usuario"])
+    c2.metric("Plano", saas.rotulo_plano(conexao, usuario_id))
+    c3.metric("Perfil", "Administrador" if usuario["is_admin"] else "Investidor")
+    st.caption(f"E-mail: {usuario['email']} · Cadastro em {(usuario['criado_em'] or '')[:10]}")
+
+    st.divider()
+    st.markdown("**Alterar senha**")
+    with st.form("form_alterar_senha"):
+        senha_atual = st.text_input("Senha atual", type="password", key="ct_atual")
+        nova = st.text_input("Nova senha", type="password", key="ct_nova")
+        confirmacao = st.text_input("Confirme a nova senha", type="password",
+                                    key="ct_confirmacao")
+        if st.form_submit_button("Alterar senha", type="primary"):
+            if len(nova) < auth.TAMANHO_MINIMO:
+                st.error(f"A senha deve ter ao menos {auth.TAMANHO_MINIMO} caracteres.")
+            elif nova != confirmacao:
+                st.error("As senhas não conferem.")
+            elif auth.alterar_senha(conexao, usuario_id, senha_atual, nova):
+                st.success("Senha alterada com sucesso.")
+            else:
+                st.error("Senha atual incorreta.")

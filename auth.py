@@ -1,38 +1,61 @@
 """
 auth.py
 -------
-Login **local** com senha, sem dependências externas.
+Cadastro, autenticação e perfil dos usuários, com senha protegida por
+**PBKDF2-HMAC-SHA256** e sal aleatório por usuário.
 
-A senha não é gravada em claro: o banco guarda apenas o *hash* PBKDF2-HMAC-SHA256
-com sal aleatório por usuário, no formato ``algoritmo$iteracoes$sal$hash``. A
-verificação usa ``secrets.compare_digest`` para não vazar informação por tempo de
-comparação.
+A senha nunca é gravada em claro: o banco guarda apenas o *hash* no formato
+``algoritmo$iteracoes$sal$hash``. A conferência usa ``secrets.compare_digest``
+para não vazar informação por tempo de comparação.
 
-Como é um app de uso pessoal, há **um único usuário** (linha de ``id = 1`` na
-tabela ``usuarios``). O banco (``dados.db``) fica fora do versionamento, de modo
-que a credencial nunca vai para o repositório.
+A recuperação de senha é **simulada** (não há envio de e-mail): o app gera um
+token de uso único e o exibe na tela, para ser informado no formulário de
+redefinição.
 
 Uso:
-    from auth import tem_usuario, definir_senha, verificar_senha
+    from auth import criar_conta, autenticar, alterar_senha
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
 import sqlite3
+from datetime import datetime, timedelta
+
+import persistencia as bd
 
 #: Algoritmo identificado no registro gravado.
 ALGORITMO = "pbkdf2_sha256"
 
-#: Número de iterações do PBKDF2. Alto o bastante para encarecer a força bruta
-#: e baixo o bastante para não travar o login em máquina comum.
+#: Número de iterações do PBKDF2 (encarece a força bruta sem travar o login).
 ITERACOES = 200_000
 
 #: Tamanho mínimo aceito para a senha.
 TAMANHO_MINIMO = 6
 
+# ---------------------------------------------------------------------------
+# Credencial padrão do administrador — ATENÇÃO
+# ---------------------------------------------------------------------------
+# Enquanto o app não tiver tela de "promover administrador", o primeiro usuário
+# criado no banco é este. Troque a senha em **Minha Conta** (ou apague o
+# ``dados.db``) antes de expor o sistema publicamente.
+ADMIN_PADRAO_USUARIO = "jhon"
+ADMIN_PADRAO_SENHA = "321415"
+ADMIN_PADRAO_EMAIL = "jhon@local"
+
+#: Validade do token de recuperação de senha.
+VALIDADE_TOKEN_HORAS = 1
+
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_USUARIO = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
+
+
+# ---------------------------------------------------------------------------
+# Hash da senha
+# ---------------------------------------------------------------------------
 
 def gerar_hash(senha: str, sal: bytes | None = None,
                iteracoes: int = ITERACOES) -> str:
@@ -56,32 +79,99 @@ def conferir_senha(senha: str, registro: str) -> bool:
     return hmac.compare_digest(derivado.hex(), esperado_hex)
 
 
-def tem_usuario(conexao: sqlite3.Connection) -> bool:
-    """Indica se já existe uma senha configurada."""
-    return conexao.execute("SELECT 1 FROM usuarios WHERE id = 1").fetchone() is not None
+# ---------------------------------------------------------------------------
+# Validações
+# ---------------------------------------------------------------------------
+
+def validar_cadastro(usuario: str, email: str, senha: str,
+                     confirmacao: str) -> str | None:
+    """Retorna a mensagem de erro, ou ``None`` se o cadastro estiver válido."""
+    if not _USUARIO.match(usuario.strip()):
+        return ("Usuário deve ter de 3 a 32 caracteres, usando letras, números, "
+                "ponto, hífen ou sublinhado.")
+    if not _EMAIL.match(email.strip()):
+        return "Informe um e-mail válido."
+    if len(senha) < TAMANHO_MINIMO:
+        return f"A senha deve ter ao menos {TAMANHO_MINIMO} caracteres."
+    if senha != confirmacao:
+        return "As senhas não conferem."
+    return None
 
 
-def definir_senha(conexao: sqlite3.Connection, usuario: str, senha: str) -> None:
-    """Cria (ou substitui) a credencial de acesso."""
-    from datetime import datetime
+# ---------------------------------------------------------------------------
+# Contas
+# ---------------------------------------------------------------------------
 
-    conexao.execute(
-        "INSERT INTO usuarios (id, usuario, hash, criado_em) VALUES (1, ?, ?, ?) "
-        "ON CONFLICT(id) DO UPDATE SET usuario = excluded.usuario, "
-        "hash = excluded.hash, criado_em = excluded.criado_em",
-        (usuario.strip() or "investidor", gerar_hash(senha),
-         datetime.now().isoformat(timespec="seconds")),
-    )
-    conexao.commit()
+def criar_conta(conexao: sqlite3.Connection, usuario: str, email: str,
+                senha: str, is_admin: bool = False) -> int:
+    """Cadastra um usuário (senha em hash) e devolve o ``id``."""
+    return bd.criar_usuario(conexao, usuario, email, gerar_hash(senha),
+                            is_admin=is_admin, plano_codigo="free")
 
 
-def verificar_senha(conexao: sqlite3.Connection, usuario: str, senha: str) -> bool:
-    """Confere usuário e senha contra o registro gravado."""
+def autenticar(conexao: sqlite3.Connection, login: str, senha: str):
+    """
+    Autentica por usuário **ou** e-mail.
+
+    Devolve a linha do usuário (sem o hash) quando as credenciais conferem e a
+    conta está ativa; caso contrário, ``None``.
+    """
+    linha = bd.obter_por_login(conexao, login or "")
+    if linha is None or not conferir_senha(senha or "", linha["hash"]):
+        return None
+    if not linha["ativo"]:
+        return None
+    return bd.obter_usuario(conexao, linha["id"])
+
+
+def alterar_senha(conexao: sqlite3.Connection, usuario_id: int, senha_atual: str,
+                  nova_senha: str) -> bool:
+    """Troca a senha do usuário, exigindo a senha atual."""
     linha = conexao.execute(
-        "SELECT usuario, hash FROM usuarios WHERE id = 1"
-    ).fetchone()
-    if linha is None:
+        "SELECT hash FROM usuarios WHERE id = ?", (int(usuario_id),)).fetchone()
+    if linha is None or not conferir_senha(senha_atual or "", linha["hash"]):
         return False
-    if usuario.strip().casefold() != str(linha["usuario"]).casefold():
+    bd.atualizar_usuario(conexao, usuario_id, hash=gerar_hash(nova_senha))
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Recuperação de senha (simulada)
+# ---------------------------------------------------------------------------
+
+def gerar_token_recuperacao(conexao: sqlite3.Connection, email: str) -> str | None:
+    """
+    Cria um token de uso único para redefinir a senha.
+
+    Como não há envio de e-mail, o token é devolvido aqui e deve ser exibido ao
+    usuário pelo app. Devolve ``None`` se o e-mail não estiver cadastrado.
+    """
+    usuario = bd.obter_por_email(conexao, email or "")
+    if usuario is None:
+        return None
+    token = secrets.token_hex(3).upper()
+    expira = (datetime.now() + timedelta(hours=VALIDADE_TOKEN_HORAS)).isoformat(
+        timespec="seconds")
+    bd.atualizar_usuario(conexao, usuario["id"], reset_token=token, reset_expira=expira)
+    return token
+
+
+def redefinir_senha(conexao: sqlite3.Connection, email: str, token: str,
+                    nova_senha: str) -> bool:
+    """Redefine a senha quando o token confere e ainda não expirou."""
+    usuario = bd.obter_por_email(conexao, email or "")
+    if usuario is None:
         return False
-    return conferir_senha(senha, linha["hash"])
+    linha = conexao.execute(
+        "SELECT reset_token, reset_expira FROM usuarios WHERE id = ?",
+        (int(usuario["id"]),)).fetchone()
+    if not linha or not linha["reset_token"]:
+        return False
+    if not hmac.compare_digest(str(linha["reset_token"]),
+                               str(token or "").strip().upper()):
+        return False
+    if linha["reset_expira"] and datetime.fromisoformat(linha["reset_expira"]) < datetime.now():
+        return False
+    bd.atualizar_usuario(conexao, usuario["id"], hash=gerar_hash(nova_senha),
+                         reset_token=None, reset_expira=None)
+    return True
