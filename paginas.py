@@ -260,6 +260,31 @@ def _texto_progresso(indice: int, total: int) -> str:
     return f"{indice} de {total} nota(s) processada(s) — {round(indice / total * 100)}%"
 
 
+def _dias_sem_nota(df: pd.DataFrame) -> list[date]:
+    """Dias úteis sem nota entre a primeira e a última nota importada.
+
+    Serve de alerta: um dia sem nota no meio do histórico pode ser um
+    feriado, um dia sem negócios — ou uma nota que ficou de fora do envio,
+    o que distorce a apuração (posições e prejuízos atravessam o mês).
+    """
+    if df is None or df.empty or "data" not in df.columns:
+        return []
+
+    datas = pd.to_datetime(df["data"], errors="coerce").dropna()
+    if datas.empty:
+        return []
+
+    com_nota = set(datas.dt.date)
+    faltando: list[date] = []
+    dia = min(com_nota)
+    ultimo = max(com_nota)
+    while dia <= ultimo:
+        if dia.weekday() < 5 and dia not in com_nota:   # sábado = 5, domingo = 6
+            faltando.append(dia)
+        dia += timedelta(days=1)
+    return faltando
+
+
 def _botao_darf(rotulo: str = "Emitir DARF", chave: str = "btn_darf") -> None:
     """Botão que leva direto à página de emissão do DARF."""
     if st.button(rotulo, type="primary", icon=":material/receipt_long:",
@@ -316,6 +341,18 @@ def _cartao_conclusao(resultado: dict) -> None:
         f"**Concluído** — {resultado['arquivos']} arquivo(s) processado(s), "
         f"{resultado['notas']} nota(s) e {resultado['operacoes']} operação(ões)."
     )
+
+    faltando = _dias_sem_nota(notas)
+    if faltando:
+        amostra = ", ".join(dia.strftime("%d/%m") for dia in faltando[:8])
+        resto = f" e mais {len(faltando) - 8}" if len(faltando) > 8 else ""
+        st.warning(
+            f"{len(faltando)} dia(s) útil(eis) sem nota entre "
+            f"{faltando[0]:%d/%m/%Y} e {faltando[-1]:%d/%m/%Y}: {amostra}{resto}. "
+            "Confira se não ficou nenhuma nota de fora — feriados e dias sem "
+            "negócios aparecem aqui também."
+        )
+
     esquerda, direita = st.columns([2, 1])
     with esquerda:
         st.markdown("Sua apuração está pronta. Emita o DARF em um clique.")

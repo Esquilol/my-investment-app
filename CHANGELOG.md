@@ -122,6 +122,25 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   composição do DARF) passaram a exibir **verde para valores positivos** e
   **vermelho para negativos**, com o auxiliar `paginas._colorir`.
 
+### Alterado — Compensação do IRRF em pool único
+- O IRRF retido no mês (Day Trade + Swing Trade) e o acumulado de meses anteriores
+  passaram a abater o IR apurado **sem separação por bucket**, como no relatório de
+  referência: a retenção de Day Trade de um mês já reduz o DARF do próprio mês,
+  mesmo sem imposto de Day Trade a compensar.
+- O que excede o IR apurado **não se perde**: permanece acumulado no bucket de
+  origem (`IRRFNextMonthDayTrade` / `IRRFNextMonthSwingTrade`) para as competências
+  seguintes. O **FII continua com DARF próprio**, sem ser reduzido pelo IRRF de
+  Day Trade/Swing Trade.
+- Efeito: **Ago/2026 = R$ 137,41** e **Set/2026 = R$ 192,65**, centavo a centavo
+  iguais ao relatório de referência (antes divergia 0,09 entre os meses).
+
+### Adicionado — Aviso de dias sem nota no upload
+- O cartão de conclusão do upload passou a alertar quando há **dias úteis sem nota
+  dentro do período importado** (helper `paginas._dias_sem_nota`), listando as datas
+  e lembrando que feriados e dias sem negócios também aparecem no aviso. Motivo:
+  posições e prejuízos atravessam o mês, então uma nota fora do envio distorce a
+  apuração.
+
 ### Adicionado — Gestão das notas importadas
 - O upload **detecta notas repetidas** — tanto no mesmo envio (o mesmo PDF duas
   vezes) quanto as que já estão no banco — e as **ignora sem erro**, informando
@@ -137,10 +156,14 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - Cobre: classificação de ativos, reconciliação com os dados de referência (Set/2026),
   isenção, compensação entre meses, compensação de IRRF entre meses, deduplicação
   com os 4 PDFs reais, a reconciliação dos futuros (teste 7, `ajuste do dia −
-  despesas da nota`), a importação de proventos com o IRRF de JCP (teste 8), a
+  despesas da nota`, usando **todo o histórico** — as posições de futuro atravessam
+  o mês), a importação de proventos com o IRRF de JCP (teste 8), a
   **autenticação** (teste 9: cadastro, login por usuário e por e-mail, hash PBKDF2,
   troca de senha e recuperação) e as **regras do SaaS** (teste 10: planos, limites,
   cupons, preço, checkout e métricas).
+- Os testes que dependem de PDFs reais leem a pasta `~/Downloads/Notas` (ajustável
+  pela variável de ambiente `NOTAS_DIR`) e são ignorados quando ela não existe —
+  nenhuma nota de corretagem entra no repositório.
 - Resultado atual: **todas as verificações passam** (`EXIT=0`), incluindo
   `IRRFFinal = 192,65` e `IRRFBase = 205,79` idênticos aos dados de referência.
 

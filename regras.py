@@ -23,8 +23,11 @@ Fórmulas confirmadas contra os dados de Setembro/2026:
     IRRFBase           = IRRFBaseDayTrade + IRRFBaseSwingTrade
     IRRFFinal          = IRRFBase - IRRF retido no mês - IRRF anterior (>= 0)
 
-O IRRF retido que excede o IR apurado não é perdido: fica acumulado para as
-competências seguintes, separado por bucket (Day Trade x Swing Trade).
+O IRRF retido (day trade + swing trade) forma um **pool único** por
+competência: ele abate o IR apurado sem separação por bucket, como no
+relatório de referência. O que excede o IR apurado não é perdido: fica
+acumulado no bucket de origem (``ir_day``/``ir_swing``) para as competências
+seguintes.
 
 Uso:
     from regras import classificar_grupo, resultados_realizados, apurar_mensal
@@ -434,6 +437,21 @@ def _irrf_retido_mes(notas: pd.DataFrame | None, mes: str) -> dict[str, float]:
     return retido
 
 
+def _consumir(pool: dict[str, float], limite: float) -> dict[str, float]:
+    """
+    Consome até ``limite`` de um pool de IRRF, na ordem das chaves.
+
+    Devolve quanto saiu de cada chave; o que não couber no limite permanece
+    no pool (é o IRRF que passa para a competência seguinte).
+    """
+    consumido: dict[str, float] = {}
+    restante = limite
+    for chave, valor in pool.items():
+        consumido[chave] = min(max(valor, 0.0), max(restante, 0.0))
+        restante -= consumido[chave]
+    return consumido
+
+
 def apurar_mensal(resultados: pd.DataFrame,
                   notas: pd.DataFrame | None = None,
                   saldos_iniciais: dict[str, float] | None = None
@@ -489,7 +507,7 @@ def apurar_mensal(resultados: pd.DataFrame,
             linha[f"Results{mercado}{sufixo}"] = round(float(valor), 2)
 
         ir_total = 0.0
-        ir_devido = 0.0
+        ir_deduzivel = 0.0
         for bucket in BUCKETS:
             grupo_bucket = tributavel[tributavel["bucket"] == bucket]
             resultado_bucket = float(grupo_bucket["resultado"].sum())
@@ -509,42 +527,16 @@ def apurar_mensal(resultados: pd.DataFrame,
             else:
                 irr = 0.0
 
-            # IRRF retido: o do próprio mês e o acumulado de meses anteriores
-            # abatem o IR apurado; o que sobra fica para o mês seguinte em vez
-            # de se perder (é a "compensação" do IRRF entre competências).
-            chave_irrf = IRRF_POR_BUCKET.get(bucket)
-            retido_mes = float(retido.get(bucket, 0.0))
-            if chave_irrf:
-                retido_anterior = saldos.get(chave_irrf, 0.0)
-                usado_anterior = min(retido_anterior, max(irr - retido_mes, 0.0))
-                devido = max(irr - retido_mes - retido_anterior, 0.0)
-                saldos[chave_irrf] = round(
-                    retido_anterior - usado_anterior + max(retido_mes - irr, 0.0), 2
-                )
-                proximo_irrf = saldos[chave_irrf]
-            else:
-                retido_anterior = usado_anterior = 0.0
-                proximo_irrf = 0.0
-                devido = irr
-
             if bucket == "DayTrade":
                 linha["ResultsDayTrade"] = round(resultado_bucket, 2)
                 linha["PreviousAcumulatedLossDayTrade"] = round(anterior, 2)
                 linha["BaseCalcDayTrade"] = round(base, 2)
                 linha["IRRFBaseDayTrade"] = round(irr, 2)
-                linha["IRRFMonthlyDayTrade"] = round(retido_mes, 2)
-                linha["IRRFPreviousDayTrade"] = round(retido_anterior, 2)
-                linha["IRRFUsedDayTrade"] = round(usado_anterior, 2)
-                linha["IRRFNextMonthDayTrade"] = round(proximo_irrf, 2)
             elif bucket == "SwingTrade":
                 linha["ResultsSwingTrade"] = round(resultado_bucket, 2)
                 linha["PreviousAcumulatedLossSwingTrade"] = round(anterior, 2)
                 linha["BaseCalcSwingTrade"] = round(base, 2)
                 linha["IRRFBaseSwingTrade"] = round(irr, 2)
-                linha["IRRFMonthlySwingTrade"] = round(retido_mes, 2)
-                linha["IRRFPreviousSwingTrade"] = round(retido_anterior, 2)
-                linha["IRRFUsedSwingTrade"] = round(usado_anterior, 2)
-                linha["IRRFNextMonthSwingTrade"] = round(proximo_irrf, 2)
             else:  # FII
                 linha["ResultsFII"] = round(resultado_bucket, 2)
                 linha["PreviousAcumulatedLossFII"] = round(anterior, 2)
@@ -553,8 +545,36 @@ def apurar_mensal(resultados: pd.DataFrame,
                 linha["IRRFMonthlyFII"] = round(retido.get("FII", 0.0), 2)
 
             ir_total += irr
-            ir_devido += devido
+            if bucket in IRRF_POR_BUCKET:
+                ir_deduzivel += irr
 
+        # --- IRRF retido: pool único da competência -----------------------
+        # O IRRF retido no mês (day trade + swing trade) e o acumulado de
+        # meses anteriores abatem o IR apurado **sem separação por bucket**,
+        # como no relatório de referência: a retenção de day trade de um mês
+        # sem imposto de day trade a compensar já reduz o DARF do próprio mês.
+        # O que excede o IR apurado não se perde: fica acumulado no bucket de
+        # origem (``ir_day``/``ir_swing``) para as competências seguintes.
+        retido_mes = {b: float(retido.get(b, 0.0)) for b in IRRF_POR_BUCKET}
+        acumulado = {b: float(saldos.get(c, 0.0)) for b, c in IRRF_POR_BUCKET.items()}
+        disponivel = sum(acumulado.values()) + sum(retido_mes.values())
+
+        usado = min(disponivel, ir_deduzivel)
+        usado_acumulado = _consumir(acumulado, usado)
+        usado_no_mes = _consumir(retido_mes, usado - sum(usado_acumulado.values()))
+
+        for bucket, chave in IRRF_POR_BUCKET.items():
+            saldos[chave] = round(
+                acumulado[bucket] - usado_acumulado[bucket]
+                + retido_mes[bucket] - usado_no_mes[bucket], 2
+            )
+            linha[f"IRRFMonthly{bucket}"] = round(retido_mes[bucket], 2)
+            linha[f"IRRFPrevious{bucket}"] = round(acumulado[bucket], 2)
+            linha[f"IRRFUsed{bucket}"] = round(usado_acumulado[bucket], 2)
+            linha[f"IRRFNextMonth{bucket}"] = round(saldos[chave], 2)
+
+        # O FII tem DARF próprio: não é reduzido pelo IRRF de day trade/swing.
+        ir_devido = (ir_total - ir_deduzivel) + max(ir_deduzivel - disponivel, 0.0)
         linha["IRRFBase"] = round(ir_total, 2)
         linha["IRRFFinal"] = round(ir_devido, 2)
         linha["DARFFinal"] = round(ir_devido, 2)
