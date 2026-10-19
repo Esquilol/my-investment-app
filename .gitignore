@@ -35,3 +35,6 @@ Thumbs.db
 # Capturas do mapeamento (contem dados financeiros pessoais)
 ref_exemplo/
 ANALISE_REFERENCIA.md
+
+# Script de clonagem/mapeamento (uso local, nao versionado)
+site_cloner.py

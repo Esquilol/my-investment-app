@@ -720,6 +720,29 @@ def limpar_dados(conexao: sqlite3.Connection, usuario_id: int) -> None:
     conexao.commit()
 
 
+def remover_notas(conexao: sqlite3.Connection, usuario_id: int,
+                  chaves: list[tuple[str, str]]) -> int:
+    """
+    Apaga as notas indicadas e as operações que vieram delas.
+
+    ``chaves`` é uma lista de ``(corretora, número da nota)`` — a mesma chave
+    que identifica a nota na importação. Retorna quantas notas foram removidas.
+    """
+    removidas = 0
+    for corretora, numero in chaves:
+        cur = conexao.execute(
+            "DELETE FROM notas WHERE usuario_id = ? AND corretora = ? AND numero = ?",
+            (int(usuario_id), str(corretora), str(numero)),
+        )
+        removidas += cur.rowcount
+        conexao.execute(
+            "DELETE FROM operacoes WHERE usuario_id = ? AND corretora = ? AND nota = ?",
+            (int(usuario_id), str(corretora), str(numero)),
+        )
+    conexao.commit()
+    return removidas
+
+
 def carregar_operacoes(conexao: sqlite3.Connection, usuario_id: int) -> pd.DataFrame:
     """DataFrame com as operações do usuário."""
     return pd.read_sql_query(
@@ -896,7 +919,8 @@ __all__ = [
     "registrar_uso_cupom",
     "registrar_nota_fiscal", "listar_notas_fiscais",
     "obter_config_pagamento", "gravar_config_pagamento",
-    "salvar_notas", "limpar_dados", "carregar_operacoes", "carregar_notas",
+    "salvar_notas", "limpar_dados", "remover_notas",
+    "carregar_operacoes", "carregar_notas",
     "resumo_importacao", "contar_notas",
     "ler_prejuizos", "gravar_prejuizos",
     "carregar_proventos", "salvar_proventos", "adicionar_provento", "remover_provento",

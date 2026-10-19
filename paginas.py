@@ -41,6 +41,7 @@ from persistencia import (
     listar_planos,
     obter_plano,
     obter_usuario,
+    remover_notas,
     remover_provento,
     resumo_importacao,
     salvar_notas,
@@ -260,6 +261,12 @@ def _cartao_conclusao(resultado: dict) -> None:
     for erro in resultado["erros"]:
         st.error(erro)
 
+    if resultado["repetidas"]:
+        st.info(
+            f"{resultado['repetidas']} nota(s) já importada(s) foram ignoradas "
+            "automaticamente — nada foi somado em dobro."
+        )
+
     if not resultado["arquivos"]:
         st.info("Nenhuma nota nova importada neste envio.")
         return
@@ -317,9 +324,13 @@ def pagina_upload() -> None:
                  disabled=not arquivos):
         total = len(arquivos)
         barra = st.progress(0.0, text=f"0 de {total} nota(s) processada(s) — 0%")
-        resultado = {"notas": 0, "operacoes": 0, "arquivos": 0,
+        resultado = {"notas": 0, "operacoes": 0, "arquivos": 0, "repetidas": 0,
                      "erros": [], "avisos": []}
         interrompido = False
+        ja_importadas = (
+            set(zip(notas["corretora"].astype(str), notas["numero"].astype(str)))
+            if not notas.empty else set()
+        )
 
         for indice, arquivo in enumerate(arquivos, start=1):
             try:
@@ -334,13 +345,29 @@ def pagina_upload() -> None:
                 barra.progress(indice / total, text=_texto_progresso(indice, total))
                 continue
 
-            permitido, aviso = saas.pode_importar(conexao, usuario_id, len(lidas))
+            ineditas = []
+            for nota in lidas:
+                chave = (str(nota.corretora), str(nota.numero))
+                if chave in ja_importadas:
+                    resultado["repetidas"] += 1
+                    continue
+                ja_importadas.add(chave)
+                ineditas.append(nota)
+
+            if not ineditas:
+                resultado["avisos"].append(
+                    f"{arquivo.name}: nota(s) já importada(s) — ignorado(s) sem erro."
+                )
+                barra.progress(indice / total, text=_texto_progresso(indice, total))
+                continue
+
+            permitido, aviso = saas.pode_importar(conexao, usuario_id, len(ineditas))
             if not permitido:
                 resultado["erros"].append(aviso)
                 interrompido = True
                 break
 
-            novas, ops = salvar_notas(conexao, lidas, usuario_id)
+            novas, ops = salvar_notas(conexao, ineditas, usuario_id)
             resultado["notas"] += novas
             resultado["operacoes"] += ops
             resultado["arquivos"] += 1
@@ -367,13 +394,57 @@ def pagina_upload() -> None:
 
     if notas.empty:
         tema.vazio("Nenhuma nota importada ainda. Envie um PDF para começar.")
-    else:
-        tema.secao("Notas importadas")
-        visao_notas = notas.copy()
-        visao_notas["data"] = visao_notas["data"].dt.strftime("%d/%m/%Y")
-        visao_notas.columns = ["Nota", "Corretora", "Data", "Arquivo",
-                              "Despesas", "IRRF", "Categoria IRRF"]
-        st.dataframe(visao_notas, width="stretch", hide_index=True)
+        return
+
+    tema.secao("Notas importadas")
+
+    mensagem = st.session_state.pop("aviso_notas", None)
+    if mensagem:
+        st.success(mensagem)
+
+    visao_notas = notas.reset_index(drop=True)
+    visao_notas["data"] = visao_notas["data"].dt.strftime("%d/%m/%Y")
+    visao_notas = visao_notas.rename(columns={
+        "numero": "Nota", "corretora": "Corretora", "data": "Data",
+        "arquivo": "Arquivo", "despesas": "Despesas", "irrf": "IRRF",
+        "categoria_irrf": "Categoria IRRF",
+    })
+
+    esquerda, direita = st.columns(2)
+    with esquerda:
+        if st.button("Selecionar todas", icon=":material/select_all:", width="stretch"):
+            st.session_state["sel_notas"] = {
+                "selection": {"rows": list(range(len(visao_notas))), "columns": []},
+            }
+    with direita:
+        if st.button("Limpar seleção", icon=":material/deselect:", width="stretch"):
+            st.session_state["sel_notas"] = {
+                "selection": {"rows": [], "columns": []},
+            }
+
+    evento = st.dataframe(
+        visao_notas,
+        width="stretch",
+        hide_index=True,
+        key="sel_notas",
+        on_select="rerun",
+        selection_mode="multi-row",
+    )
+    selecionadas = list(evento.selection.rows)
+    st.caption(f"{len(selecionadas)} de {len(visao_notas)} nota(s) selecionada(s).")
+
+    if st.button("Apagar selecionadas", icon=":material/delete:", type="primary",
+                 width="stretch", disabled=not selecionadas):
+        chaves = [
+            (str(visao_notas.at[i, "Corretora"]), str(visao_notas.at[i, "Nota"]))
+            for i in selecionadas
+        ]
+        removidas = remover_notas(conexao, usuario_id, chaves)
+        st.session_state["sel_notas"] = {"selection": {"rows": [], "columns": []}}
+        st.session_state["aviso_notas"] = (
+            f"{removidas} nota(s) apagada(s) — as operações delas saíram do cálculo."
+        )
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------

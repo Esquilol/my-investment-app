@@ -106,6 +106,16 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - Página **Planos e Assinatura** (checkout simulado, com cupom) e **Minha Conta**
   (perfil e troca de senha).
 
+### Adicionado — Gestão das notas importadas
+- O upload **detecta notas repetidas** — tanto no mesmo envio (o mesmo PDF duas
+  vezes) quanto as que já estão no banco — e as **ignora sem erro**, informando
+  quantas foram puladas: nada é somado em dobro.
+- A tabela **Notas importadas** passou a ser selecionável: **Selecionar todas**,
+  **Limpar seleção** e **Apagar selecionadas**, que remove as notas escolhidas e
+  as operações que vieram delas.
+- `persistencia.remover_notas(conexao, usuario_id, chaves)`: apaga notas e
+  operações por `(corretora, número da nota)`, mantendo o isolamento por usuário.
+
 ### Adicionado — Validação (`validar.py`)
 - Suíte sem dependência de pytest, executável com `python validar.py` (exit code 0/1).
 - Cobre: classificação de ativos, reconciliação com os dados de referência (Set/2026),
