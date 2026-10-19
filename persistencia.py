@@ -12,7 +12,7 @@ arquivos (verificado: 33 notas únicas em 4 PDFs, com 24 repetidas).
 Também guarda:
 
 * o saldo de prejuízo anterior a compensar (item 2);
-* os proventos/lançamentos informados manualmente.
+* os proventos, importados de um extrato em CSV/XLSX ou lançados à mão.
 
 Uso:
     from persistencia import conectar, salvar_notas, carregar_operacoes
@@ -263,11 +263,57 @@ def gravar_prejuizos(conexao: sqlite3.Connection, dados: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def carregar_proventos(conexao: sqlite3.Connection) -> pd.DataFrame:
-    """Proventos informados manualmente."""
+    """Proventos importados do extrato ou lançados manualmente."""
     return pd.read_sql_query(
         "SELECT id, data, ticker, tipo, quantidade, valor FROM proventos ORDER BY data",
         conexao,
     )
+
+
+def salvar_proventos(conexao: sqlite3.Connection, registros) -> int:
+    """
+    Grava proventos deduplicando por ``(data, ticker, tipo, quantidade, valor)``.
+
+    Reimportar o mesmo extrato não duplica linhas: para cada chave, só as
+    ocorrências que excedem as já gravadas são inseridas — o mesmo critério de
+    contagem usado nas operações. Retorna quantas linhas foram gravadas.
+    """
+    contagem: dict[tuple, int] = {}
+    for linha in conexao.execute(
+        "SELECT data, ticker, tipo, quantidade, valor, COUNT(*) AS total "
+        "FROM proventos GROUP BY data, ticker, tipo, quantidade, valor"
+    ):
+        existente = (
+            str(linha["data"]),
+            str(linha["ticker"]).strip().upper(),
+            str(linha["tipo"]),
+            round(float(linha["quantidade"]), 8),
+            round(float(linha["valor"]), 2),
+        )
+        contagem[existente] = contagem.get(existente, 0) + int(linha["total"])
+
+    gravados = 0
+    for registro in registros:
+        chave = (
+            str(registro["data"]),
+            str(registro["ticker"]).strip().upper(),
+            str(registro["tipo"]),
+            round(float(registro["quantidade"]), 8),
+            round(float(registro["valor"]), 2),
+        )
+        if contagem.get(chave, 0) > 0:
+            contagem[chave] -= 1                 # linha já existia no banco
+            continue
+
+        conexao.execute(
+            "INSERT INTO proventos (data, ticker, tipo, quantidade, valor) "
+            "VALUES (?, ?, ?, ?, ?)",
+            chave,
+        )
+        gravados += 1
+
+    conexao.commit()
+    return gravados
 
 
 def adicionar_provento(conexao: sqlite3.Connection, data: str, ticker: str,
@@ -290,5 +336,5 @@ __all__ = [
     "CAMINHO_PADRAO", "conectar", "salvar_notas", "limpar_dados",
     "carregar_operacoes", "carregar_notas", "resumo_importacao",
     "ler_prejuizos", "gravar_prejuizos",
-    "carregar_proventos", "adicionar_provento", "remover_provento",
+    "carregar_proventos", "salvar_proventos", "adicionar_provento", "remover_provento",
 ]

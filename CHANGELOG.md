@@ -27,10 +27,22 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - **Deduplicação**: `notas` tem `UNIQUE(corretora, numero)` e `operacoes` usa hash
   único; reimportar PDFs sobrepostos não duplica registros.
 - `salvar_notas`, `carregar_operacoes`, `carregar_notas`, `resumo_importacao`,
-  `ler_prejuizos`, `gravar_prejuizos`, `carregar_proventos`, `adicionar_provento`,
-  `remover_provento` e `limpar_dados`.
+  `ler_prejuizos`, `gravar_prejuizos`, `salvar_proventos`, `carregar_proventos`,
+  `adicionar_provento`, `remover_provento` e `limpar_dados`.
+- `salvar_proventos` **deduplica por contagem** de
+  `(data, ticker, tipo, quantidade, valor)`: reimportar o mesmo extrato não duplica.
 - Saldo de **IRRF a compensar** (`ir_day`, `ir_swing`) lido e gravado junto com os
   saldos de prejuízo.
+
+### Adicionado — Proventos (`proventos.py`)
+- Importação do extrato de proventos em **CSV/XLSX** sem digitação manual: as
+  colunas de data, ativo, tipo, quantidade e valor são localizadas por
+  **sinônimos** de cabeçalho, e os números aceitam o padrão brasileiro
+  (`1.234,56`) e o símbolo `R$`.
+- Datas convertidas para `AAAA-MM-DD`; tipos normalizados
+  (Dividendo, JCP, Rendimento, Amortização, Bonificação, Aluguel, Sobras).
+- `irrf_jcp(valor)`: IRRF de JCP a 15%, tratado como **tributação exclusiva** —
+  definitivo e **fora do DARF 6015** do IR mensal da renda variável.
 
 ### Adicionado — Interface
 - Reescrita com **8 páginas navegáveis** (`st.navigation`): Upload de Notas,
@@ -41,13 +53,15 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   mercado/categoria (campos `Results*`).
 - Página **DARF** com competência, composição, dados para o Sicalc, código de receita
   `6015` e vencimento calculado no último dia útil do mês seguinte.
+- Página **Proventos** com importação de extrato (CSV/XLSX), lançamento manual,
+  resumo por tipo (com o IRRF do JCP) e gráfico mensal.
 
 ### Adicionado — Validação (`validar.py`)
 - Suíte sem dependência de pytest, executável com `python validar.py` (exit code 0/1).
 - Cobre: classificação de ativos, reconciliação com os dados de referência (Set/2026),
   isenção, compensação entre meses, compensação de IRRF entre meses, deduplicação
-  com os 4 PDFs reais e a reconciliação dos futuros (teste 7, `ajuste do dia −
-  despesas da nota`).
+  com os 4 PDFs reais, a reconciliação dos futuros (teste 7, `ajuste do dia −
+  despesas da nota`) e a importação de proventos com o IRRF de JCP (teste 8).
 - Resultado atual: **todas as verificações passam** (`EXIT=0`), incluindo
   `IRRFFinal = 192,65` e `IRRFBase = 205,79` idênticos aos dados de referência.
 

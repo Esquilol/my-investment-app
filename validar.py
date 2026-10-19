@@ -1,8 +1,8 @@
 """
 validar.py
 ----------
-Verificação automática do motor fiscal (``regras.py``) e da persistência
-(``persistencia.py``).
+Verificação automática do motor fiscal (``regras.py``), da persistência
+(``persistencia.py``) e da importação de proventos (``proventos.py``).
 
 Não depende de ``pytest`` — basta executar:
 
@@ -22,7 +22,15 @@ from pathlib import Path
 import pandas as pd
 
 from parser import extract_notas
-from persistencia import conectar, carregar_notas, carregar_operacoes, salvar_notas
+from persistencia import (
+    carregar_notas,
+    carregar_operacoes,
+    carregar_proventos,
+    conectar,
+    salvar_notas,
+    salvar_proventos,
+)
+from proventos import irrf_jcp, ler_planilha
 from regras import (
     ROTULO_MERCADO,
     apurar_mensal,
@@ -306,6 +314,58 @@ def teste_futuros_referencia(pdfs: list[Path]) -> None:
     _checar("tickers de futuro conferidos", conferidos > 0, True)
 
 
+def teste_proventos() -> None:
+    print("\n8. Proventos: importação do extrato e IRRF de JCP")
+    with tempfile.TemporaryDirectory() as pasta:
+        destino = Path(pasta)
+
+        # CSV no layout de uma corretora: cabeçalhos por sinônimo, número no
+        # padrão brasileiro e um rodapé de total, que deve ser descartado.
+        csv = destino / "proventos.csv"
+        csv.write_text(
+            "Data;Ativo;Tipo de Evento;Quantidade;Valor Líquido\n"
+            "15/09/2026;MXRF11;RENDIMENTO;100;1.234,56\n"
+            "20/09/2026;PETR4;Juros sobre Capital Próprio;1000;1.000,00\n"
+            "Total;;;1100;2.234,56\n",
+            encoding="utf-8",
+        )
+        tabela, ignoradas = ler_planilha(csv)
+        _checar("linhas válidas do CSV", len(tabela), 2)
+        _checar("rodapé de total descartado", ignoradas, 1)
+        _checar("data convertida para AAAA-MM-DD", tabela.loc[0, "data"], "2026-09-15")
+        _checar("ticker em maiúsculas", tabela.loc[0, "ticker"], "MXRF11")
+        _checar("número no padrão brasileiro", round(float(tabela.loc[0, "valor"]), 2), 1234.56)
+        _checar("tipo reconhecido pelo sinônimo", tabela.loc[1, "tipo"], "JCP")
+
+        # XLSX: outra extensão, outros rótulos de coluna e valor com "R$".
+        xlsx = destino / "proventos.xlsx"
+        pd.DataFrame({
+            "Data do Pagamento": ["01/10/2026"],
+            "Código": ["BBAS3"],
+            "Tipo": ["Dividendo"],
+            "Valor (R$)": ["R$ 500,00"],
+        }).to_excel(xlsx, index=False)
+        tabela_xlsx, _ = ler_planilha(xlsx)
+        _checar("linhas válidas do XLSX", len(tabela_xlsx), 1)
+        _checar("valor com símbolo de moeda", round(float(tabela_xlsx.loc[0, "valor"]), 2), 500.0)
+        _checar("quantidade ausente vira zero", float(tabela_xlsx.loc[0, "quantidade"]), 0.0)
+
+        # JCP: 15% retidos na fonte, com tributação exclusiva.
+        _checar("IRRF de JCP (15% de 1.000)", irrf_jcp(1000.0), 150.0)
+        _checar("IRRF de JCP sem valor", irrf_jcp(0.0), 0.0)
+
+        # Deduplicação: reimportar o mesmo extrato não duplica.
+        conexao = conectar(destino / "teste.db")
+        try:
+            _checar("proventos gravados",
+                    salvar_proventos(conexao, tabela.to_dict("records")), 2)
+            _checar("reimportação não duplica",
+                    salvar_proventos(conexao, tabela.to_dict("records")), 0)
+            _checar("proventos no banco", len(carregar_proventos(conexao)), 2)
+        finally:
+            conexao.close()
+
+
 def main() -> int:
     print("=" * 78)
     print("VALIDAÇÃO DO MOTOR FISCAL — Gestor de Investimentos B3")
@@ -316,6 +376,7 @@ def main() -> int:
     teste_isencao()
     teste_compensacao()
     teste_irrf_compensacao()
+    teste_proventos()
 
     pdfs = sorted(Path(r"C:\Users\Esquilo\Downloads").glob("NotaCorretagem_01-09-26_30-09-26*.pdf"))
     teste_deduplicacao(pdfs)

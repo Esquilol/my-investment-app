@@ -34,7 +34,9 @@ from persistencia import (
     remover_provento,
     resumo_importacao,
     salvar_notas,
+    salvar_proventos,
 )
+from proventos import TIPOS, irrf_jcp, ler_planilha
 from regras import (
     CODIGO_RECEITA_DARF,
     apurar_mensal,
@@ -46,7 +48,11 @@ from regras import (
 
 CORRETORAS = ["Genial", "XP", "Clear", "Genérico"]
 
-TIPOS_PROVENTO = ["Dividendo", "JCP", "Rendimento", "Amortização", "Bonificação"]
+#: Rótulos das colunas da página de proventos.
+ROTULOS_PROVENTO = {
+    "data": "Data", "ticker": "Ticker", "tipo": "Tipo",
+    "quantidade": "Quantidade", "valor": "Valor", "irrf": "IRRF na fonte",
+}
 
 # Rótulos da tabela mensal de apuração
 RESUMO_IR = {
@@ -537,6 +543,44 @@ def pagina_darf() -> None:
 def pagina_proventos() -> None:
     st.subheader("Proventos recebidos")
 
+    # -- Importação do extrato ---------------------------------------------
+    with st.expander("Importar extrato de proventos (CSV ou XLSX)",
+                     expanded=proventos.empty):
+        st.caption(
+            "As notas de corretagem não trazem proventos. Baixe o extrato de "
+            "proventos na corretora ou na Área do Investidor da B3 e carregue aqui: "
+            "as colunas de data, ativo, tipo, quantidade e valor são identificadas "
+            "automaticamente, e reimportar o mesmo extrato não duplica os lançamentos."
+        )
+        arquivo = st.file_uploader("Extrato de proventos", type=["csv", "xlsx", "xls"],
+                                   key="arquivo_proventos")
+        if arquivo is not None:
+            try:
+                tabela, ignoradas = ler_planilha(arquivo)
+            except Exception as erro:  # noqa: BLE001
+                st.error(f"Falha ao ler {arquivo.name}: {erro}")
+            else:
+                if tabela.empty:
+                    st.warning("Nenhum provento válido encontrado no arquivo.")
+                else:
+                    st.dataframe(tabela.rename(columns=ROTULOS_PROVENTO),
+                                 width="stretch", hide_index=True)
+                    if ignoradas:
+                        st.caption(f"{ignoradas} linha(s) ignorada(s) por falta de "
+                                   "ticker ou de data reconhecível.")
+                    if st.button(f"Importar {len(tabela)} provento(s)", type="primary"):
+                        novas = salvar_proventos(conexao, tabela.to_dict("records"))
+                        st.session_state["proventos_importados"] = (novas, len(tabela) - novas)
+                        st.rerun()
+
+    if st.session_state.get("proventos_importados"):
+        novas, repetidas = st.session_state.pop("proventos_importados")
+        aviso = f"{novas} provento(s) importado(s)."
+        if repetidas:
+            aviso += f" {repetidas} já constavam no banco e foram ignorados."
+        st.success(aviso)
+
+    # -- Lançamento manual -------------------------------------------------
     with st.form("form_provento", clear_on_submit=True):
         col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 1])
         with col1:
@@ -544,7 +588,7 @@ def pagina_proventos() -> None:
         with col2:
             ticker_provento = st.text_input("Ticker", placeholder="MXRF11")
         with col3:
-            tipo_provento = st.selectbox("Tipo", TIPOS_PROVENTO)
+            tipo_provento = st.selectbox("Tipo", TIPOS)
         with col4:
             quantidade_provento = st.number_input("Quantidade", value=0.0, step=1.0)
         with col5:
@@ -560,39 +604,59 @@ def pagina_proventos() -> None:
                 st.rerun()
 
     if proventos.empty:
-        st.info(
-            "Nenhum provento registrado. As notas de corretagem não trazem "
-            "proventos — informe-os manualmente acima."
-        )
-    else:
-        p1, p2, p3 = st.columns(3)
-        p1.metric("Total recebido", _moeda(proventos["valor"].sum()))
-        p2.metric("Lançamentos", len(proventos))
-        p3.metric("Ativos distintos", proventos["ticker"].nunique())
+        st.info("Nenhum provento registrado ainda.")
+        return
 
-        st.markdown("**Proventos por mês**")
-        por_mes_prov = proventos.copy()
-        por_mes_prov["mes"] = pd.to_datetime(por_mes_prov["data"]).dt.strftime("%Y-%m")
-        st.bar_chart(por_mes_prov.groupby("mes")["valor"].sum())
+    # -- Resumo ------------------------------------------------------------
+    detalhe = proventos.assign(irrf=[
+        irrf_jcp(valor) if tipo == "JCP" else 0.0
+        for tipo, valor in zip(proventos["tipo"], proventos["valor"])
+    ])
+    irrf_total_jcp = detalhe["irrf"].sum()
 
-        st.markdown("**Detalhamento**")
-        st.dataframe(proventos.rename(columns={
-            "data": "Data", "ticker": "Ticker", "tipo": "Tipo",
-            "quantidade": "Quantidade", "valor": "Valor",
-        }), use_container_width=True, hide_index=True)
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("Total recebido", _moeda(proventos["valor"].sum()))
+    p2.metric("Lançamentos", len(proventos))
+    p3.metric("Ativos distintos", proventos["ticker"].nunique())
+    p4.metric("IRRF de JCP (15%)", _moeda(irrf_total_jcp))
+    st.caption(
+        "O IRRF do JCP é retido na fonte com tributação **exclusiva**: é definitivo "
+        "e não entra no DARF 6015 do IR mensal da renda variável — serve para "
+        "informar o rendimento na declaração anual. O cálculo considera o valor "
+        "lançado como bruto; se o extrato trouxer o valor já líquido, informe o bruto."
+    )
 
-        remover = st.selectbox(
-            "Remover lançamento",
-            options=list(proventos["id"]),
-            format_func=lambda i: (
-                f"{proventos.loc[proventos['id'] == i, 'data'].iloc[0]} — "
-                f"{proventos.loc[proventos['id'] == i, 'ticker'].iloc[0]} — "
-                f"{_moeda(proventos.loc[proventos['id'] == i, 'valor'].iloc[0])}"
-            ),
-        )
-        if st.button("Remover selecionado"):
-            remover_provento(conexao, remover)
-            st.rerun()
+    st.markdown("**Por tipo de provento**")
+    por_tipo = proventos.groupby("tipo")["valor"].agg(
+        Lancamentos="count", Valor="sum"
+    ).reset_index()
+    por_tipo["irrf"] = [
+        irrf_jcp(valor) if tipo == "JCP" else 0.0
+        for tipo, valor in zip(por_tipo["tipo"], por_tipo["Valor"])
+    ]
+    st.dataframe(por_tipo.rename(columns=ROTULOS_PROVENTO), width="stretch", hide_index=True)
+
+    st.markdown("**Proventos por mês**")
+    por_mes_prov = proventos.copy()
+    por_mes_prov["mes"] = pd.to_datetime(por_mes_prov["data"]).dt.strftime("%Y-%m")
+    st.bar_chart(por_mes_prov.groupby("mes")["valor"].sum())
+
+    st.markdown("**Detalhamento**")
+    st.dataframe(detalhe.drop(columns=["id"]).rename(columns=ROTULOS_PROVENTO),
+                 width="stretch", hide_index=True)
+
+    remover = st.selectbox(
+        "Remover lançamento",
+        options=list(proventos["id"]),
+        format_func=lambda i: (
+            f"{proventos.loc[proventos['id'] == i, 'data'].iloc[0]} — "
+            f"{proventos.loc[proventos['id'] == i, 'ticker'].iloc[0]} — "
+            f"{_moeda(proventos.loc[proventos['id'] == i, 'valor'].iloc[0])}"
+        ),
+    )
+    if st.button("Remover selecionado"):
+        remover_provento(conexao, remover)
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ nota de corretagem → extrato de operações → apuração mensal → DARF.
 | 💼 **Meu Patrimônio** | Posição em custódia com quantidade, preço médio e custo total por ativo. |
 | 💰 **Apuração de IR** | Tabela mensal com isenção por limite de vendas e compensação de prejuízo entre meses; edição dos saldos iniciais de prejuízo. |
 | 🧮 **DARF** | Valor a recolher por competência, com composição, dados para o Sicalc e código de receita. |
-| 💵 **Proventos** | Registro de dividendos, JCP, rendimentos e amortizações. |
+| 💵 **Proventos** | Importa o extrato de proventos (CSV/XLSX) e lança dividendos, JCP, rendimentos e amortizações à mão; faz o resumo por tipo, com o IRRF do JCP. |
 | 📥 **Relatórios** | Exportação dos dados em **CSV** e **Excel**. |
 
 > ⚠️ Os valores apurados são uma **estimativa técnica** e não substituem a apuração
@@ -34,6 +34,8 @@ nota de corretagem → extrato de operações → apuração mensal → DARF.
   entre meses, carregando o saldo negativo para o mês seguinte.
 - **Preço médio** calculado com as **taxas somadas ao custo**.
 - **IRRF retido na fonte** (dedo-duro) descontado do imposto mensal.
+- **IRRF de JCP**: 15% com **tributação exclusiva** — é definitivo e **não entra**
+  no DARF 6015; serve para informar o rendimento na declaração anual.
 - **DARF** com código de receita **6015** e vencimento no **último dia útil do mês seguinte**.
 
 ## Estrutura do projeto
@@ -44,6 +46,7 @@ nota de corretagem → extrato de operações → apuração mensal → DARF.
 ├── paginas.py        # Conteúdo das 8 páginas navegáveis e carga dos dados
 ├── parser.py         # Extrator de operações das notas em PDF (pdfplumber)
 ├── persistencia.py   # Camada SQLite (notas, operações, prejuízos, proventos)
+├── proventos.py      # Importação do extrato de proventos e IRRF de JCP
 ├── regras.py         # Motor fiscal (classificação, preço médio, apuração mensal)
 ├── validar.py        # Suíte de validação do motor fiscal (sem pytest)
 ├── requirements.txt  # Dependências
@@ -86,8 +89,9 @@ O navegador abrirá em `http://localhost:8501`.
 ## Validação
 
 A suíte `validar.py` confere o motor fiscal contra os números de referência de
-Set/2026 e cobre classificação de ativos, isenção, compensação de prejuízo e
-deduplicação de notas:
+Set/2026 e cobre classificação de ativos, isenção, compensação de prejuízo,
+compensação de IRRF, deduplicação de notas e a importação de proventos com o
+IRRF de JCP:
 
 ```bash
 python validar.py
@@ -98,10 +102,11 @@ Retorna `EXIT=0` quando todas as verificações passam.
 ## Como usar
 
 1. Em **📁 Upload de Notas**, envie os PDFs das notas de corretagem.
-2. Confira a posição em **💼 Meu Patrimônio** e as operações em **🧾 Extrato**.
-3. Em **💰 Apuração de IR**, ajuste os saldos de prejuízo anteriores, se houver.
-4. Em **🧮 DARF**, veja o valor a recolher da competência.
-5. Exporte em **📥 Relatórios** (CSV ou Excel).
+2. Em **💵 Proventos**, importe o extrato de proventos (CSV/XLSX) da corretora.
+3. Confira a posição em **💼 Meu Patrimônio** e as operações em **🧾 Extrato**.
+4. Em **💰 Apuração de IR**, ajuste os saldos de prejuízo anteriores, se houver.
+5. Em **🧮 DARF**, veja o valor a recolher da competência.
+6. Exporte em **📥 Relatórios** (CSV ou Excel).
 
 ## Deploy
 
@@ -113,7 +118,7 @@ Retorna `EXIT=0` quando todas as verificações passam.
 ## Publicar no GitHub
 
 O repositório local já está inicializado e com o commit inicial
-(`feat: motor fiscal, persistencia SQLite e interface com 8 abas`).
+(`feat: motor fiscal, persistencia SQLite e interface com 8 páginas`).
 Antes de publicar, configure sua identidade (usada nos próximos commits):
 
 ```bash
