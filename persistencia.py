@@ -178,6 +178,16 @@ CREATE TABLE IF NOT EXISTS proventos (
     quantidade REAL NOT NULL DEFAULT 0,
     valor      REAL NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS darf_pagamentos (
+    usuario_id     INTEGER NOT NULL,
+    competencia    TEXT    NOT NULL,
+    pago           INTEGER NOT NULL DEFAULT 0,
+    valor_pago     REAL    NOT NULL DEFAULT 0,
+    data_pagamento TEXT,
+    atualizado_em  TEXT,
+    PRIMARY KEY (usuario_id, competencia)
+);
 """
 
 #: Planos semeados na primeira execução. ``limite_notas = -1`` significa ilimitado.
@@ -714,8 +724,8 @@ def salvar_notas(conexao: sqlite3.Connection, notas: list[Nota],
 
 
 def limpar_dados(conexao: sqlite3.Connection, usuario_id: int) -> None:
-    """Apaga notas, operações e proventos **do usuário** (mantém os prejuízos)."""
-    for tabela in ("operacoes", "notas", "proventos"):
+    """Apaga notas, operações, proventos e DARFs pagos **do usuário** (mantém os prejuízos)."""
+    for tabela in ("operacoes", "notas", "proventos", "darf_pagamentos"):
         conexao.execute(f"DELETE FROM {tabela} WHERE usuario_id = ?", (int(usuario_id),))
     conexao.commit()
 
@@ -908,6 +918,57 @@ def remover_provento(conexao: sqlite3.Connection, usuario_id: int,
     conexao.commit()
 
 
+# ---------------------------------------------------------------------------
+# Pagamento do DARF (por usuário e competência)
+# ---------------------------------------------------------------------------
+
+def carregar_darf_pagamentos(conexao: sqlite3.Connection,
+                             usuario_id: int) -> dict[str, dict]:
+    """
+    Controle de pagamento do DARF, por competência (``"AAAA-MM"``).
+
+    Devolve ``{competencia: {"pago", "valor_pago", "data_pagamento"}}``.
+    """
+    linhas = conexao.execute(
+        "SELECT competencia, pago, valor_pago, data_pagamento FROM darf_pagamentos "
+        "WHERE usuario_id = ?",
+        (int(usuario_id),),
+    ).fetchall()
+    return {
+        linha["competencia"]: {
+            "pago": bool(linha["pago"]),
+            "valor_pago": float(linha["valor_pago"] or 0.0),
+            "data_pagamento": linha["data_pagamento"],
+        }
+        for linha in linhas
+    }
+
+
+def gravar_darf_pagamento(conexao: sqlite3.Connection, usuario_id: int,
+                          competencia: str, pago: bool, valor_pago: float = 0.0,
+                          data_pagamento: str | None = None) -> None:
+    """Marca (substituindo) o pagamento do DARF de uma competência."""
+    conexao.execute(
+        "INSERT INTO darf_pagamentos "
+        "(usuario_id, competencia, pago, valor_pago, data_pagamento, atualizado_em) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(usuario_id, competencia) DO UPDATE SET "
+        "  pago = excluded.pago,"
+        "  valor_pago = excluded.valor_pago,"
+        "  data_pagamento = excluded.data_pagamento,"
+        "  atualizado_em = excluded.atualizado_em",
+        (
+            int(usuario_id),
+            str(competencia),
+            int(bool(pago)),
+            float(valor_pago or 0.0),
+            data_pagamento or None,
+            agora(),
+        ),
+    )
+    conexao.commit()
+
+
 __all__ = [
     "CAMINHO_PADRAO", "VERSAO_ESQUEMA", "PLANOS_PADRAO", "agora", "conectar",
     "criar_usuario", "obter_usuario", "obter_por_login", "obter_por_email",
@@ -924,4 +985,5 @@ __all__ = [
     "resumo_importacao", "contar_notas",
     "ler_prejuizos", "gravar_prejuizos",
     "carregar_proventos", "salvar_proventos", "adicionar_provento", "remover_provento",
+    "carregar_darf_pagamentos", "gravar_darf_pagamento",
 ]

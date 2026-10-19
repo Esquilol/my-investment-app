@@ -106,6 +106,22 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - Página **Planos e Assinatura** (checkout simulado, com cupom) e **Minha Conta**
   (perfil e troca de senha).
 
+### Adicionado — Controle de pagamento do DARF
+- A página **DARF** ganhou o painel **Competências**, com a situação de cada mês
+  (**Isento**, **Em aberto**, **Vencido** ou **Pago**) e as colunas de base, IR
+  apurado, IRRF retido, valor a recolher e vencimento.
+- Formulário **Pagamento** por competência: marcar o DARF como **pago**, informar o
+  **valor pago** e a **data do pagamento**. O aviso de vencimento passa a refletir
+  a situação (verde quando pago, vermelho quando vencido).
+- `persistencia.carregar_darf_pagamentos` e `persistencia.gravar_darf_pagamento`:
+  nova tabela `darf_pagamentos` (chave `usuario_id` + `competencia`), com
+  isolamento por usuário; `limpar_dados` também apaga esses registros.
+
+### Alterado — Tabelas com cores condicionais
+- As tabelas de resultado (apuração mensal, detalhamento por mercado, extrato e a
+  composição do DARF) passaram a exibir **verde para valores positivos** e
+  **vermelho para negativos**, com o auxiliar `paginas._colorir`.
+
 ### Adicionado — Gestão das notas importadas
 - O upload **detecta notas repetidas** — tanto no mesmo envio (o mesmo PDF duas
   vezes) quanto as que já estão no banco — e as **ignora sem erro**, informando

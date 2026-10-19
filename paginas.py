@@ -29,10 +29,12 @@ from persistencia import (
     adicionar_provento,
     assinatura_ativa,
     cancelar_assinatura,
+    carregar_darf_pagamentos,
     carregar_notas,
     carregar_operacoes,
     carregar_proventos,
     conectar,
+    gravar_darf_pagamento,
     gravar_prejuizos,
     ler_prejuizos,
     limpar_dados,
@@ -155,6 +157,43 @@ def _nome_mes(mes: str) -> str:
     return f"{nomes[numero_mes]}/{ano}"
 
 
+def _colorir(df: pd.DataFrame, colunas: list[str]):
+    """Aplica verde/vermelho aos valores das colunas indicadas (negativo = vermelho)."""
+    def pintar(valor):
+        if not isinstance(valor, (int, float)) or pd.isna(valor):
+            return ""
+        if float(valor) < 0:
+            return f"color: {tema.VERMELHO}; font-weight: 600"
+        if float(valor) > 0:
+            return f"color: {tema.VERDE}; font-weight: 600"
+        return ""
+
+    estilizador = df.style
+    aplicador = getattr(estilizador, "map", None) or estilizador.applymap
+    return aplicador(pintar, subset=colunas)
+
+
+def _status_darf(competencia: str, recolher: float, pagamento: dict | None) -> str:
+    """Situação da competência: Isento, Pago, Vencido ou Em aberto."""
+    if recolher <= 0:
+        return "Isento"
+    if pagamento and pagamento["pago"]:
+        return "Pago"
+    if date.today() > _vencimento_darf(competencia):
+        return "Vencido"
+    return "Em aberto"
+
+
+def _data_armazenada(texto: str | None) -> date:
+    """Converte a data ISO guardada no banco (ou devolve hoje, se não houver)."""
+    if texto:
+        try:
+            return date.fromisoformat(str(texto)[:10])
+        except ValueError:
+            pass
+    return date.today()
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +210,7 @@ resultados = None
 tabela_ir = None
 saldos_finais = None
 posicao = None
+darf_pagamentos = None
 tem_dados = False
 
 #: Página de DARF registrada em ``app.py``; preenchida após a navegação existir
@@ -181,7 +221,7 @@ PAGINA_DARF = None
 def carregar(identificador: int) -> None:
     """Lê o banco SQLite do usuário e recalcula os agregados das páginas."""
     global conexao, usuario_id, operacoes, notas, proventos, prejuizos
-    global resultados, tabela_ir, saldos_finais, posicao, tem_dados
+    global resultados, tabela_ir, saldos_finais, posicao, darf_pagamentos, tem_dados
 
     usuario_id = int(identificador)
     conexao = _conexao()
@@ -206,6 +246,7 @@ def carregar(identificador: int) -> None:
     resultados = resultados_realizados(operacoes)
     tabela_ir, saldos_finais = apurar_mensal(resultados, notas, prejuizos)
     posicao = posicao_atual(operacoes)
+    darf_pagamentos = carregar_darf_pagamentos(conexao, usuario_id)
 
     tem_dados = not operacoes.empty
 
@@ -545,7 +586,10 @@ def pagina_extrato() -> None:
 
         colunas = ["data", "tipo", "ticker", "grupo", "mercado", "quantidade",
                    "preco", "valor_total", "taxas", "resultado", "nota", "corretora"]
-        st.dataframe(filtro[colunas], width="stretch", hide_index=True)
+        st.dataframe(
+            _colorir(filtro[colunas], ["resultado", "valor_total"]),
+            width="stretch", hide_index=True,
+        )
 
         st.download_button(
             "Baixar extrato filtrado (CSV)",
@@ -666,7 +710,8 @@ def pagina_ir() -> None:
 
         visao = tabela_ir[list(RESUMO_IR)].rename(columns=RESUMO_IR).copy()
         visao["Mês"] = visao["Mês"].map(_nome_mes)
-        st.dataframe(visao, width="stretch", hide_index=True)
+        coloriveis = [c for c in visao.columns if c not in ("Mês", "Situação")]
+        st.dataframe(_colorir(visao, coloriveis), width="stretch", hide_index=True)
 
         tema.secao("Resultados por mercado (campos `Results*`)")
         detalhe = tabela_ir[tabela_ir["mes"].isin(
@@ -676,8 +721,9 @@ def pagina_ir() -> None:
         if detalhe.empty:
             st.caption("Sem resultados por mercado no período.")
         else:
+            detalhe = detalhe[["mes"] + DETALHE_MERCADO].rename(columns={"mes": "Mês"})
             st.dataframe(
-                detalhe[["mes"] + DETALHE_MERCADO],
+                _colorir(detalhe, DETALHE_MERCADO),
                 width="stretch", hide_index=True,
             )
 
@@ -703,72 +749,145 @@ def pagina_darf() -> None:
 
     if tabela_ir.empty:
         tema.vazio("Sem competências apuradas. Importe notas na página **Upload de Notas**.")
+        return
+
+    competencias = list(tabela_ir["mes"])
+
+    # -- Painel de competências, com a situação de pagamento ---------------
+    tema.secao("Competências")
+    resumo = pd.DataFrame([
+        {
+            "Competência": _nome_mes(mes),
+            "Base de cálculo": float(linha["BaseCalcSwingTrade"]) + float(linha["BaseCalcDayTrade"]),
+            "IR apurado": float(linha["IRRFBase"]),
+            "IRRF retido": float(linha["IRRFMonthlyDayTrade"]) + float(linha["IRRFMonthlySwingTrade"]),
+            "Valor a recolher": float(linha["DARFFinal"]),
+            "Vencimento": _vencimento_darf(mes).strftime("%d/%m/%Y"),
+            "Situação": _status_darf(mes, float(linha["DARFFinal"]), darf_pagamentos.get(mes)),
+        }
+        for mes, linha in zip(competencias, tabela_ir.to_dict("records"))
+    ])
+    st.dataframe(
+        _colorir(resumo, ["Base de cálculo", "IR apurado", "IRRF retido", "Valor a recolher"]),
+        width="stretch", hide_index=True,
+    )
+
+    st.divider()
+    competencia = st.selectbox(
+        "Competência", competencias,
+        index=len(competencias) - 1,
+        format_func=_nome_mes,
+    )
+    linha = tabela_ir[tabela_ir["mes"] == competencia].iloc[0]
+    pagamento = darf_pagamentos.get(competencia)
+    recolher = float(linha["DARFFinal"])
+    situacao = _status_darf(competencia, recolher, pagamento)
+
+    tema.kpis([
+        {"rotulo": "Base de cálculo",
+         "valor": _moeda(linha["BaseCalcSwingTrade"] + linha["BaseCalcDayTrade"]),
+         "icone": "\U0001F4CA"},
+        {"rotulo": "IR apurado", "valor": _moeda(linha["IRRFBase"]), "icone": "\U0001F4B0"},
+        {"rotulo": "IRRF retido",
+         "valor": _moeda(linha["IRRFMonthlyDayTrade"] + linha["IRRFMonthlySwingTrade"]),
+         "icone": "\U0001F9FE"},
+        {"rotulo": "Valor a recolher", "valor": _moeda(recolher),
+         "icone": "\U0001F4C5", "tom": "neg" if recolher > 0 else "pos"},
+        {"rotulo": "Situação", "valor": situacao,
+         "icone": "\u2705" if situacao == "Pago" else "\u23F3",
+         "tom": "pos" if situacao in ("Pago", "Isento") else "neg"},
+    ])
+
+    if recolher <= 0:
+        st.success(f"{_nome_mes(competencia)}: {linha['ExemptionMessage']}.")
+    elif situacao == "Pago":
+        st.success(
+            f"{_nome_mes(competencia)}: DARF de {_moeda(pagamento['valor_pago'])} pago em "
+            f"{_data_armazenada(pagamento['data_pagamento']):%d/%m/%Y}."
+        )
+    elif situacao == "Vencido":
+        st.error(
+            f"**{_nome_mes(competencia)}** — recolher {_moeda(recolher)} "
+            f"(vencido em {_vencimento_darf(competencia):%d/%m/%Y})."
+        )
     else:
-        competencias = list(tabela_ir["mes"])
-        competencia = st.selectbox(
-            "Competência", competencias,
-            index=len(competencias) - 1,
-            format_func=_nome_mes,
+        st.warning(
+            f"**{_nome_mes(competencia)}** — recolher {_moeda(recolher)} "
+            f"até {_vencimento_darf(competencia):%d/%m/%Y}."
         )
-        linha = tabela_ir[tabela_ir["mes"] == competencia].iloc[0]
 
-        recolher = float(linha["DARFFinal"])
-        tema.kpis([
-            {"rotulo": "Base de cálculo",
-             "valor": _moeda(linha["BaseCalcSwingTrade"] + linha["BaseCalcDayTrade"]),
-             "icone": "\U0001F4CA"},
-            {"rotulo": "IR apurado", "valor": _moeda(linha["IRRFBase"]), "icone": "\U0001F4B0"},
-            {"rotulo": "IRRF retido",
-             "valor": _moeda(linha["IRRFMonthlyDayTrade"] + linha["IRRFMonthlySwingTrade"]),
-             "icone": "\U0001F9FE"},
-            {"rotulo": "Valor a recolher", "valor": _moeda(recolher),
-             "icone": "\U0001F4C5", "tom": "neg" if recolher > 0 else "pos"},
+    st.divider()
+    col1, col2 = st.columns(2)
+    with col1:
+        tema.secao("Dados para emissão no Sicalc / internet banking")
+        st.code(
+            f"Código de receita: {CODIGO_RECEITA_DARF}\n"
+            f"Período de apuração: {competencia}\n"
+            f"Vencimento: {_vencimento_darf(competencia):%d/%m/%Y}\n"
+            f"Valor: {_moeda(linha['DARFFinal'])}",
+            language="text",
+        )
+    with col2:
+        tema.secao("Composição")
+        composicao = pd.DataFrame([
+            {"Item": "Base de cálculo Day Trade", "Valor": linha["BaseCalcDayTrade"]},
+            {"Item": "Base de cálculo Swing Trade", "Valor": linha["BaseCalcSwingTrade"]},
+            {"Item": "Base de cálculo FII", "Valor": linha["BaseCalcFII"]},
+            {"Item": "IR apurado", "Valor": linha["IRRFBase"]},
+            {"Item": "(-) IRRF retido", "Valor": -(
+                linha["IRRFMonthlyDayTrade"] + linha["IRRFMonthlySwingTrade"])},
+            {"Item": "IR a recolher", "Valor": linha["DARFFinal"]},
         ])
-
-        if float(linha["DARFFinal"]) <= 0:
-            st.success(f"{_nome_mes(competencia)}: {linha['ExemptionMessage']}.")
-        else:
-            st.warning(
-                f"**{_nome_mes(competencia)}** — recolher {_moeda(linha['DARFFinal'])} "
-                f"até {_vencimento_darf(competencia):%d/%m/%Y}."
-            )
-
-        st.divider()
-        col1, col2 = st.columns(2)
-        with col1:
-            tema.secao("Dados para emissão no Sicalc / internet banking")
-            st.code(
-                f"Código de receita: {CODIGO_RECEITA_DARF}\n"
-                f"Período de apuração: {competencia}\n"
-                f"Vencimento: {_vencimento_darf(competencia):%d/%m/%Y}\n"
-                f"Valor: {_moeda(linha['DARFFinal'])}",
-                language="text",
-            )
-        with col2:
-            tema.secao("Composição")
-            composicao = pd.DataFrame([
-                {"Item": "Base de cálculo Day Trade", "Valor": linha["BaseCalcDayTrade"]},
-                {"Item": "Base de cálculo Swing Trade", "Valor": linha["BaseCalcSwingTrade"]},
-                {"Item": "Base de cálculo FII", "Valor": linha["BaseCalcFII"]},
-                {"Item": "IR apurado", "Valor": linha["IRRFBase"]},
-                {"Item": "(-) IRRF retido", "Valor": -(
-                    linha["IRRFMonthlyDayTrade"] + linha["IRRFMonthlySwingTrade"])},
-                {"Item": "IR a recolher", "Valor": linha["DARFFinal"]},
-            ])
-            st.dataframe(composicao, width="stretch", hide_index=True)
-
-        st.download_button(
-            "Baixar apuração do período (CSV)",
-            data=_to_csv(tabela_ir),
-            file_name=f"apuracao_{date.today():%Y%m%d}.csv",
-            mime="text/csv",
-            icon=":material/download:",
+        st.dataframe(
+            _colorir(composicao, ["Valor"]), width="stretch", hide_index=True,
         )
-        st.caption(
-            f"Código de receita {CODIGO_RECEITA_DARF} — ganhos líquidos em operações "
-            "realizadas em bolsas de valores, de mercadorias, de futuros e "
-            "assemelhadas (pessoa física)."
-        )
+
+    # -- Controle de pagamento --------------------------------------------
+    tema.secao("Pagamento")
+    if recolher <= 0:
+        st.caption("Competência isenta: não há DARF a recolher.")
+    else:
+        with st.form(f"form_darf_{competencia}"):
+            col1, col2 = st.columns(2)
+            with col1:
+                pago = st.checkbox(
+                    "DARF pago",
+                    value=bool(pagamento and pagamento["pago"]),
+                    key=f"pago_{competencia}",
+                )
+            with col2:
+                valor_pago = st.number_input(
+                    "Valor pago",
+                    value=float(pagamento["valor_pago"]) if pagamento and pagamento["valor_pago"]
+                    else recolher,
+                    step=1.0, format="%.2f", key=f"valor_{competencia}",
+                )
+            data_pagamento = st.date_input(
+                "Data do pagamento",
+                value=_data_armazenada(pagamento["data_pagamento"] if pagamento else None),
+                key=f"data_{competencia}",
+            )
+            if st.form_submit_button("Salvar pagamento", type="primary",
+                                     icon=":material/save:"):
+                gravar_darf_pagamento(
+                    conexao, usuario_id, competencia, pago, valor_pago,
+                    data_pagamento.isoformat() if pago else None,
+                )
+                st.success("Controle de pagamento atualizado.")
+                st.rerun()
+
+    st.download_button(
+        "Baixar apuração do período (CSV)",
+        data=_to_csv(tabela_ir),
+        file_name=f"apuracao_{date.today():%Y%m%d}.csv",
+        mime="text/csv",
+        icon=":material/download:",
+    )
+    st.caption(
+        f"Código de receita {CODIGO_RECEITA_DARF} — ganhos líquidos em operações "
+        "realizadas em bolsas de valores, de mercadorias, de futuros e "
+        "assemelhadas (pessoa física)."
+    )
 
 
 # ---------------------------------------------------------------------------
