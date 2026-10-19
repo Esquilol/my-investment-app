@@ -237,10 +237,13 @@ def resultados_realizados(operacoes: pd.DataFrame) -> pd.DataFrame:
     Converte as operações em **resultados realizados** (eventos tributáveis).
 
     * Futuros e termo: o ajuste do dia é o resultado, menos as despesas da nota.
-    * À vista / opções / ouro: a venda realiza o resultado, calculado contra o
-      **preço médio ponderado com as taxas de corretagem somadas ao custo**.
+    * À vista / opções / ouro: o resultado é realizado quando a posição é
+      encerrada ou reduzida — na **venda** (posição comprada) ou na **recompra**
+      (posição vendida/"descoberta"), sempre contra o preço médio com as taxas
+      de corretagem somadas ao custo.
     * Quantidades compradas e vendidas do mesmo ticker no mesmo dia são
-      tratadas como **day trade** (quantidade casada).
+      tratadas como **day trade** (quantidade casada), descontando as taxas das
+      duas pernas do resultado.
     """
     if operacoes is None or operacoes.empty:
         return pd.DataFrame(columns=COLUNAS_RESULTADO)
@@ -251,6 +254,7 @@ def resultados_realizados(operacoes: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=COLUNAS_RESULTADO)
 
+    df["taxas"] = pd.to_numeric(df.get("taxas"), errors="coerce").fillna(0.0)
     df["grupo"] = [
         classificar_grupo(t, m) for t, m in zip(df["ticker"], df["mercado"])
     ]
@@ -274,70 +278,105 @@ def resultados_realizados(operacoes: pd.DataFrame) -> pd.DataFrame:
         ))
 
     # --- À vista / opções / ouro -------------------------------------------
-    rv = df[~derivativos]
+    rv = df[~derivativos].copy()
     if not rv.empty:
         dias = rv["data"].dt.date
 
-        # quantidade casada (day trade) por dia/ticker
-        casadas: dict[tuple, float] = {}
-        for (dia, ticker), grupo_dia in rv.groupby([dias, "ticker"]):
-            qtd_c = grupo_dia.loc[grupo_dia["tipo"] == "C", "quantidade"].sum()
-            qtd_v = grupo_dia.loc[grupo_dia["tipo"] == "V", "quantidade"].sum()
+        # Quantidade casada (day trade) e totais de cada lado, por dia/ticker.
+        totais: dict[tuple, dict] = {}
+        for (dia, ticker), grupo_dia in rv.groupby([dias, "ticker"], sort=False):
+            if ticker is None:
+                continue
+            qtd_c = float(grupo_dia.loc[grupo_dia["tipo"] == "C", "quantidade"].sum())
+            qtd_v = float(grupo_dia.loc[grupo_dia["tipo"] == "V", "quantidade"].sum())
             if qtd_c > 0 and qtd_v > 0:
-                casadas[(dia, ticker)] = float(min(qtd_c, qtd_v))
+                totais[(dia, ticker)] = {
+                    "C": qtd_c, "V": qtd_v, "casada": min(qtd_c, qtd_v),
+                }
 
-        # resultado do day trade do dia: preço médio de venda x compra do dia
-        resultado_dia: dict[tuple, float] = {}
-        for (dia, ticker), qtd_casada in casadas.items():
-            grupo_dia = rv[(rv["data"].dt.date == dia) & (rv["ticker"] == ticker)]
+        # Day trade: resultado casado do dia, líquido das taxas das duas pernas.
+        for (dia, ticker), tot in totais.items():
+            casada = tot["casada"]
+            if casada <= 0:
+                continue
+            grupo_dia = rv[(dias == dia) & (rv["ticker"] == ticker)]
             compras = grupo_dia[grupo_dia["tipo"] == "C"]
             vendas = grupo_dia[grupo_dia["tipo"] == "V"]
-            pm_compra = (compras["quantidade"] * compras["preco"]).sum() / compras["quantidade"].sum()
-            pm_venda = (vendas["quantidade"] * vendas["preco"]).sum() / vendas["quantidade"].sum()
-            resultado_dia[(dia, ticker)] = qtd_casada * (pm_venda - pm_compra)
+            pm_compra = (compras["quantidade"] * compras["preco"]).sum() / tot["C"]
+            pm_venda = (vendas["quantidade"] * vendas["preco"]).sum() / tot["V"]
+            taxas = (float(compras["taxas"].sum()) * (casada / tot["C"])
+                     + float(vendas["taxas"].sum()) * (casada / tot["V"]))
+            registros.append(_linha_resultado(
+                grupo_dia.iloc[0], day_trade=True, quantidade=casada,
+                resultado=casada * (pm_venda - pm_compra) - taxas,
+                vendas=casada * pm_venda,
+            ))
 
-        restante_dt = dict(casadas)
-        posicao: dict[str, dict] = {}
-
+        # Perna "swing": o que sobra de cada operação após remover a parcela
+        # casada no day trade.
+        pernas: list[dict] = []
         for _, row in rv.iterrows():
-            ticker = row["ticker"]
-            qtd = float(row["quantidade"] or 0.0)
-            preco = float(row["preco"] or 0.0)
-            taxas = float(row.get("taxas") or 0.0)
+            chave = (row["data"].date(), row["ticker"])
+            tot = totais.get(chave)
+            lado = "C" if row["tipo"] == "C" else "V"
+            fator = ((tot[lado] - tot["casada"]) / tot[lado]) if tot and tot[lado] else 1.0
+            qtd = float(row["quantidade"] or 0.0) * fator
+            if qtd <= 0:
+                continue
+            pernas.append({
+                "data": row["data"],
+                "ticker": row["ticker"],
+                "grupo": row["grupo"],
+                "tipo": row["tipo"],
+                "quantidade": qtd,
+                "preco": float(row["preco"] or 0.0),
+                "taxas": float(row["taxas"]) * fator,
+            })
+
+        # Posição comprada (qtd > 0) ou vendida (qtd < 0): o resultado é
+        # realizado na operação que reduz a posição e é datado nesse dia.
+        posicao: dict[str, dict] = {}
+        for perna in sorted(pernas, key=lambda r: (r["data"], r["tipo"])):
+            ticker = perna["ticker"]
+            qtd = perna["quantidade"]
+            preco = perna["preco"]
+            taxas = perna["taxas"]
             reg = posicao.setdefault(ticker, {"qtd": 0.0, "custo": 0.0})
 
-            if row["tipo"] == "C":
-                reg["qtd"] += qtd
-                reg["custo"] += qtd * preco + taxas      # taxas no custo (item 3)
-                continue
-
-            chave = (row["data"].date(), ticker)
-            qtd_dt = min(qtd, restante_dt.get(chave, 0.0)) if qtd else 0.0
-            restante_dt[chave] = restante_dt.get(chave, 0.0) - qtd_dt
-            qtd_swing = qtd - qtd_dt
-
-            pm = reg["custo"] / reg["qtd"] if reg["qtd"] > 0 else preco
-
-            if qtd_swing > 0:
-                taxa_s = taxas * (qtd_swing / qtd) if qtd else 0.0
-                registros.append(_linha_resultado(
-                    row, day_trade=False, quantidade=qtd_swing,
-                    resultado=qtd_swing * (preco - pm) - taxa_s,
-                    vendas=qtd_swing * preco,
-                ))
-            if qtd_dt > 0:
-                taxa_d = taxas * (qtd_dt / qtd) if qtd else 0.0
-                casada = casadas.get(chave, 0.0)
-                parte = resultado_dia.get(chave, 0.0) * (qtd_dt / casada) if casada else 0.0
-                registros.append(_linha_resultado(
-                    row, day_trade=True, quantidade=qtd_dt,
-                    resultado=parte - taxa_d,
-                    vendas=qtd_dt * preco,
-                ))
-
-            qtd_baixa = min(qtd, reg["qtd"])
-            reg["custo"] -= qtd_baixa * pm
-            reg["qtd"] -= qtd
+            if perna["tipo"] == "C":
+                if reg["qtd"] < 0:                       # recompra (cobre a venda)
+                    coberta = min(qtd, -reg["qtd"])
+                    fracao = coberta / qtd
+                    pm = reg["custo"] / (-reg["qtd"])    # preço médio líquido da venda
+                    registros.append(_linha_resultado(
+                        perna, day_trade=False, quantidade=coberta,
+                        resultado=coberta * (pm - preco) - taxas * fracao,
+                        vendas=coberta * pm,
+                    ))
+                    reg["custo"] -= coberta * pm
+                    reg["qtd"] += coberta
+                    qtd -= coberta
+                    taxas -= taxas * fracao
+                if qtd > 0:                              # compra (abre/aumenta a posição)
+                    reg["custo"] += qtd * preco + taxas
+                    reg["qtd"] += qtd
+            else:
+                if reg["qtd"] > 0:                       # venda (realiza a posição comprada)
+                    vendida = min(qtd, reg["qtd"])
+                    fracao = vendida / qtd
+                    pm = reg["custo"] / reg["qtd"]
+                    registros.append(_linha_resultado(
+                        perna, day_trade=False, quantidade=vendida,
+                        resultado=vendida * (preco - pm) - taxas * fracao,
+                        vendas=vendida * preco,
+                    ))
+                    reg["custo"] -= vendida * pm
+                    reg["qtd"] -= vendida
+                    qtd -= vendida
+                    taxas -= taxas * fracao
+                if qtd > 0:                              # venda descoberta (abre/aumenta)
+                    reg["custo"] += qtd * preco - taxas
+                    reg["qtd"] -= qtd
 
     return pd.DataFrame(registros, columns=COLUNAS_RESULTADO)
 

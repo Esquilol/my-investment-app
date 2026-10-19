@@ -215,10 +215,22 @@ def _extrair_despesas(bloco: str) -> float:
                 iss = _parse_br_number(valores[1]) if len(valores) >= 2 else 0.0
                 return total + (iss or 0.0)
 
-    # B3 RV: "Total corretagem / Despesas 3,25"
+    # B3 RV: o "Total corretagem / Despesas" impresso cobre apenas
+    # Clearing + ISS/PIS/COFINS. As taxas de liquidação/CCP, de registro e os
+    # emolumentos são cobradas à parte e também integram o custo da operação
+    # (conferido contra os dados de referência: nota 11966/31-08-2026,
+    # 0,70 + 1,77 + 0,94 + 4,34 = 7,75).
     m = re.search(r"Total corretagem\s*/\s*Despesas\s+([\d.]+,\d{2})", bloco)
     if m:
-        return _parse_br_number(m.group(1)) or 0.0
+        total = _parse_br_number(m.group(1)) or 0.0
+        for padrao in (
+            r"Taxa de liquida[çc][ãa]o\s*/?\s*CCP\s+([\d.]+,\d{2})",
+            r"Taxa de Registro\s+([\d.]+,\d{2})",
+            r"Emolumentos\s+([\d.]+,\d{2})",
+        ):
+            for valor in re.findall(padrao, bloco):
+                total += _parse_br_number(valor) or 0.0
+        return total
 
     return 0.0
 
@@ -376,7 +388,7 @@ def _ratear_despesas(operacoes: list[Operacao], despesas: float) -> None:
     if total <= 0:
         return
     for op, peso in zip(operacoes, pesos):
-        op.taxas = round(despesas * peso / total, 2)
+        op.taxas = round(despesas * peso / total, 4)
 
 
 def extract_notas(pdf_file: Union[str, BinaryIO],
