@@ -40,7 +40,8 @@ CAMINHO_PADRAO = Path(__file__).with_name("dados.db")
 
 #: Versão do esquema gravada em ``PRAGMA user_version``.
 #: 3 — acrescenta a tabela ``darf_pagamentos``.
-VERSAO_ESQUEMA = 3
+#: 4 — acrescenta ``parametros_fiscais`` e ``monitor_legislacao``.
+VERSAO_ESQUEMA = 4
 
 _ESQUEMA = """
 CREATE TABLE IF NOT EXISTS usuarios (
@@ -189,6 +190,20 @@ CREATE TABLE IF NOT EXISTS darf_pagamentos (
     atualizado_em  TEXT,
     PRIMARY KEY (usuario_id, competencia)
 );
+
+CREATE TABLE IF NOT EXISTS parametros_fiscais (
+    chave         TEXT PRIMARY KEY,
+    valor         TEXT NOT NULL,
+    atualizado_em TEXT
+);
+
+CREATE TABLE IF NOT EXISTS monitor_legislacao (
+    url           TEXT PRIMARY KEY,
+    titulo        TEXT,
+    hash          TEXT,
+    verificado_em TEXT,
+    mudou_em      TEXT
+);
 """
 
 #: Planos semeados na primeira execução. ``limite_notas = -1`` significa ilimitado.
@@ -288,7 +303,7 @@ def _migrar(conexao: sqlite3.Connection) -> None:
 
 
 def _semear(conexao: sqlite3.Connection) -> None:
-    """Cria os planos, a configuração de pagamento e o administrador padrão."""
+    """Cria os planos, a configuração de pagamento, os parâmetros fiscais e o admin."""
     conexao.executemany(
         "INSERT OR IGNORE INTO planos "
         "(codigo, nome, preco_mensal, limite_notas, exporta_excel, descricao) "
@@ -297,6 +312,17 @@ def _semear(conexao: sqlite3.Connection) -> None:
     )
     conexao.execute(
         "INSERT OR IGNORE INTO config_pagamento (id, ambiente) VALUES (1, 'simulado')")
+
+    # Parâmetros do motor fiscal: semeados com os valores de lei vigentes; o
+    # painel administrativo pode alterá-los depois (INSERT OR IGNORE preserva
+    # o que já foi gravado).
+    from regras import PARAMETROS_PADRAO
+
+    conexao.executemany(
+        "INSERT OR IGNORE INTO parametros_fiscais (chave, valor, atualizado_em) "
+        "VALUES (?, ?, ?)",
+        [(chave, str(valor), agora()) for chave, valor in PARAMETROS_PADRAO.items()],
+    )
 
     if conexao.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0] == 0:
         from auth import ADMIN_PADRAO_EMAIL, ADMIN_PADRAO_SENHA, ADMIN_PADRAO_USUARIO, gerar_hash
@@ -992,6 +1018,65 @@ def gravar_darf_pagamento(conexao: sqlite3.Connection, usuario_id: int,
     conexao.commit()
 
 
+# ---------------------------------------------------------------------------
+# Parâmetros fiscais (globais, editáveis no painel administrativo)
+# ---------------------------------------------------------------------------
+
+def carregar_parametros_fiscais(conexao: sqlite3.Connection) -> dict[str, str]:
+    """Parâmetros do motor fiscal gravados no banco (``{chave: valor}``)."""
+    linhas = conexao.execute(
+        "SELECT chave, valor FROM parametros_fiscais").fetchall()
+    return {linha["chave"]: linha["valor"] for linha in linhas}
+
+
+def gravar_parametros_fiscais(conexao: sqlite3.Connection,
+                              dados: dict[str, str]) -> None:
+    """Grava (substituindo) os parâmetros do motor fiscal."""
+    conexao.executemany(
+        "INSERT INTO parametros_fiscais (chave, valor, atualizado_em) "
+        "VALUES (?, ?, ?) "
+        "ON CONFLICT(chave) DO UPDATE SET "
+        "  valor = excluded.valor, atualizado_em = excluded.atualizado_em",
+        [(str(chave), str(valor), agora()) for chave, valor in dados.items()],
+    )
+    conexao.commit()
+
+
+# ---------------------------------------------------------------------------
+# Monitor de legislação
+# ---------------------------------------------------------------------------
+
+def carregar_monitor_legislacao(conexao: sqlite3.Connection) -> dict[str, dict]:
+    """Última verificação conhecida de cada fonte oficial, indexada pela URL."""
+    linhas = conexao.execute("SELECT * FROM monitor_legislacao").fetchall()
+    return {linha["url"]: dict(linha) for linha in linhas}
+
+
+def gravar_monitor_legislacao(conexao: sqlite3.Connection, url: str, titulo: str,
+                              hash_conteudo: str | None, mudou: bool) -> None:
+    """
+    Atualiza a verificação de uma fonte oficial.
+
+    ``mudou_em`` só é reescrito quando há mudança; nas verificações em que nada
+    mudou, a data da última alteração é preservada para o painel poder
+    destacá-la.
+    """
+    momento = agora()
+    conexao.execute(
+        "INSERT INTO monitor_legislacao (url, titulo, hash, verificado_em, mudou_em) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(url) DO UPDATE SET "
+        "  titulo = excluded.titulo,"
+        "  hash = excluded.hash,"
+        "  verificado_em = excluded.verificado_em,"
+        "  mudou_em = CASE WHEN excluded.mudou_em IS NULL "
+        "                  THEN monitor_legislacao.mudou_em "
+        "                  ELSE excluded.mudou_em END",
+        (str(url), titulo, hash_conteudo, momento, momento if mudou else None),
+    )
+    conexao.commit()
+
+
 __all__ = [
     "CAMINHO_PADRAO", "VERSAO_ESQUEMA", "PLANOS_PADRAO", "agora", "conectar",
     "garantir_esquema",
@@ -1010,4 +1095,6 @@ __all__ = [
     "ler_prejuizos", "gravar_prejuizos",
     "carregar_proventos", "salvar_proventos", "adicionar_provento", "remover_provento",
     "carregar_darf_pagamentos", "gravar_darf_pagamento",
+    "carregar_parametros_fiscais", "gravar_parametros_fiscais",
+    "carregar_monitor_legislacao", "gravar_monitor_legislacao",
 ]

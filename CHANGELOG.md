@@ -5,6 +5,37 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Não publicado]
 
+### Adicionado — Parâmetros fiscais editáveis e monitor de legislação
+- **Tabela de cálculo no painel administrativo**: nova página **Parâmetros fiscais**
+  permite editar as alíquotas (day trade, swing trade, FII/FIAGRO), as isenções
+  (ações/BDR/ouro e ativos dos EUA), os meses até o vencimento e o código de receita
+  do DARF. O motor lê os valores vigentes em `regras.PARAMETROS`, então a mudança
+  recai imediatamente sobre as telas de IR e DARF — sem reenviar as notas.
+- **`regras.py`**: `PARAMETROS_FISCAIS` (chave, rótulo, tipo, descrição e padrão),
+  `PARAMETROS_PADRAO`, `aplicar_parametros` (ignora chave/valor inválido, para que um
+  parâmetro corrompido nunca derrube a apuração), `aliquota`, `limite_isencao`,
+  `codigo_receita_darf` e `meses_ate_vencimento`.
+- **`monitor.py`** (novo): acompanha quatro fontes oficiais (Lei 15.270/2025,
+  Lei 11.033/2004, Lei 8.668/1993 e IN RFB 1.585/2015) e guarda um **hash SHA-256**
+  do conteúdo. O botão **Buscar mudanças**, no painel admin, baixa as páginas de novo
+  e avisa quando o texto mudou — o gatilho para revisar a tabela de cálculo.
+  Sem API paga: usa apenas `urllib`.
+- **`persistencia.py`**: esquema **v4** com as tabelas `parametros_fiscais` e
+  `monitor_legislacao`; `carregar_parametros_fiscais`, `gravar_parametros_fiscais`,
+  `carregar_monitor_legislacao` e `gravar_monitor_legislacao`. O `garantir_esquema`
+  aplica as tabelas novas automaticamente no deploy.
+- O painel exibe a **última verificação** de cada fonte, a situação (alterada /
+  sem mudança / não verificada) e um aviso quando a última busca passou de 30 dias.
+
+### Alterado — Moeda brasileira nas tabelas
+- As tabelas de **Apuração de IR**, **DARF** (Competências e Composição), **Extrato** e
+  **Meu Patrimônio** passaram a exibir valores em reais no padrão brasileiro
+  (`R$ 1.234,56`), eliminando os artefatos de ponto flutuante (ex.:
+  `1291.5300000000002`). Zero vira `—`, o que tira as fileiras de `0,00` da leitura.
+- Colunas zeradas em todas as competências são **descartadas** no resumo de IR e na
+  tabela de resultados por mercado; esta última ganhou rótulos legíveis (ex.: "Ações
+  (ST)").
+
 ### Adicionado — SaaS: contas, planos e painel administrativo
 - **App multiusuário**: cada pessoa cria a própria conta, entra no plano **Gratuito**
   e pode assinar o **PRO**. Há ainda um **painel administrativo** restrito.

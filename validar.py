@@ -3,7 +3,8 @@ validar.py
 ----------
 Verificação automática do motor fiscal (``regras.py``), da persistência
 (``persistencia.py``), da importação de proventos (``proventos.py``), da
-autenticação (``auth.py``) e das regras SaaS (``saas.py``).
+autenticação (``auth.py``), das regras SaaS (``saas.py``) e do monitor de
+legislação (``monitor.py``).
 
 Não depende de ``pytest`` — basta executar:
 
@@ -24,24 +25,33 @@ from pathlib import Path
 import pandas as pd
 
 import auth
+import monitor
 import persistencia as bd
 import saas
 from auth import gerar_hash
 from parser import extract_notas
 from persistencia import (
+    carregar_monitor_legislacao,
     carregar_notas,
     carregar_operacoes,
+    carregar_parametros_fiscais,
     carregar_proventos,
     conectar,
+    gravar_monitor_legislacao,
+    gravar_parametros_fiscais,
     salvar_notas,
     salvar_proventos,
 )
 from proventos import irrf_jcp, ler_planilha
 from regras import (
+    PARAMETROS_PADRAO,
     ROTULO_MERCADO,
+    aliquota,
+    aplicar_parametros,
     apurar_mensal,
     bucket_tributario,
     classificar_grupo,
+    limite_isencao,
     resultados_realizados,
 )
 
@@ -533,6 +543,81 @@ def teste_saas() -> None:
             conexao.close()
 
 
+# ---------------------------------------------------------------------------
+# 11. Parâmetros fiscais editáveis e monitor de legislação
+# ---------------------------------------------------------------------------
+
+def teste_parametros_monitor() -> None:
+    """
+    Os parâmetros do motor (alíquotas, isenções, código do DARF) são editáveis
+    no painel administrativo e ficam gravados no banco; o monitor guarda o
+    hash das fontes oficiais para avisar quando o texto mudar.
+    """
+    print("\n11. Parâmetros fiscais editáveis e monitor de legislação")
+
+    try:
+        aplicar_parametros(PARAMETROS_PADRAO)
+        _checar("alíquota de day trade padrão (20%)", aliquota("STOCK", True), 0.20)
+        _checar("alíquota de swing trade padrão (15%)", aliquota("STOCK", False), 0.15)
+        _checar("alíquota de FII padrão (20%)", aliquota("FII", False), 0.20)
+        _checar("isenção de ações padrão (20.000)", limite_isencao("STOCK"), 20000.0)
+        _checar("isenção de ativos EUA padrão (35.000)", limite_isencao("STOCK_USA"), 35000.0)
+        _checar("ETF não tem isenção", limite_isencao("ETF"), 0.0)
+
+        # Alíquota editada recai sobre a apuração.
+        aplicar_parametros({"aliquota_swing_trade": "0.10"})
+        _checar("alíquota editada reflete no motor", aliquota("STOCK", False), 0.10)
+        tabela, _ = apurar_mensal(
+            _frame_resultados([("OPTION", "Swing Trade", 1000.0, 50000.0)]), None, None)
+        _checar("IR apurado com alíquota editada (10%)", tabela.iloc[0]["IRRFFinal"], 100.0)
+
+        # Isenção editada recai sobre a apuração.
+        aplicar_parametros({"isencao_acoes": "5000"})
+        _checar("isenção editada reflete no motor", limite_isencao("STOCK"), 5000.0)
+        fora, _ = apurar_mensal(
+            _frame_resultados([("STOCK", "Swing Trade", 1000.0, 6000.0)]), None, None)
+        _checar("vendas acima da isenção editada tributam", fora.iloc[0]["IRRFFinal"], 100.0)
+        dentro, _ = apurar_mensal(
+            _frame_resultados([("STOCK", "Swing Trade", 1000.0, 4000.0)]), None, None)
+        _checar("vendas dentro da isenção editada são isentas",
+                dentro.iloc[0]["IRRFFinal"], 0.0)
+
+        # Parâmetro inválido é ignorado em vez de derrubar a apuração.
+        aplicar_parametros({"aliquota_day_trade": "abc", "chave_inexistente": "1"})
+        _checar("valor inválido ignorado", aliquota("STOCK", True), 0.20)
+    finally:
+        aplicar_parametros(PARAMETROS_PADRAO)
+    _checar("motor restaurado aos padrões", aliquota("STOCK", False), 0.15)
+
+    with tempfile.TemporaryDirectory() as pasta:
+        conexao = conectar(Path(pasta) / "teste.db")
+        try:
+            _checar("parâmetros semeados no banco",
+                    carregar_parametros_fiscais(conexao).get("codigo_receita_darf"), "6015")
+            gravar_parametros_fiscais(conexao, {"aliquota_swing_trade": "0.10"})
+            _checar("parâmetro gravado e relido",
+                    carregar_parametros_fiscais(conexao)["aliquota_swing_trade"], "0.10")
+
+            _checar("nenhuma verificação registrada ainda",
+                    monitor.ultima_verificacao(conexao), None)
+            gravar_monitor_legislacao(conexao, "http://fonte", "Fonte teste", "abc",
+                                      mudou=True)
+            registro = carregar_monitor_legislacao(conexao)["http://fonte"]
+            _checar("fonte registrada com o hash", registro["hash"], "abc")
+            _checar("mudança datada", bool(registro["mudou_em"]), True)
+            _checar("última verificação devolvida",
+                    monitor.ultima_verificacao(conexao) is not None, True)
+
+            gravar_monitor_legislacao(conexao, "http://fonte", "Fonte teste", "def",
+                                      mudou=False)
+            registro = carregar_monitor_legislacao(conexao)["http://fonte"]
+            _checar("hash atualizado", registro["hash"], "def")
+            _checar("sem mudança preserva a data da última alteração",
+                    bool(registro["mudou_em"]), True)
+        finally:
+            conexao.close()
+
+
 def main() -> int:
     print("=" * 78)
     print("VALIDAÇÃO DO MOTOR FISCAL — Gestor de Investimentos B3")
@@ -546,6 +631,7 @@ def main() -> int:
     teste_proventos()
     teste_login()
     teste_saas()
+    teste_parametros_monitor()
 
     pdfs = sorted(_NOTAS_DIR.glob("NotaCorretagem_01-09-26_30-09-26*.pdf"))
     teste_deduplicacao(pdfs)

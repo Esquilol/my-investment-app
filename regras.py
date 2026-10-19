@@ -111,22 +111,115 @@ ROTULO_MERCADO: dict[str, str] = {
     "EXPENSES": "Expenses",
 }
 
-# Alíquota de day trade (todas as categorias), conforme base observada:
-#   0,20 * 241,17 + 0,15 * 1050,37 = 205,79  ->  IRRFBase de Set/2026
-ALIQUOTA_DAY_TRADE = 0.20
+# ===========================================================================
+# 1b. Parâmetros fiscais (editáveis no painel administrativo)
+# ===========================================================================
 
-# Código de receita do DARF para ganhos líquidos em renda variável (pessoa física)
-CODIGO_RECEITA_DARF = "6015"
+#: Parâmetros do motor fiscal que o painel administrativo permite editar.
+#: Cada item é ``(chave, rótulo, tipo, descrição, padrão)``; a ``chave`` é a
+#: mesma usada na tabela ``parametros_fiscais`` do banco.
+PARAMETROS_FISCAIS = (
+    ("aliquota_day_trade", "Alíquota de day trade", float,
+     "Fração aplicada ao ganho líquido de day trade (0,20 = 20%), sem isenção.",
+     0.20),
+    ("aliquota_swing_trade", "Alíquota de swing trade", float,
+     "Fração aplicada ao ganho líquido das operações comuns — ações, BDR, ouro, "
+     "opções e futuros (0,15 = 15%).", 0.15),
+    ("aliquota_fii", "Alíquota de FII / FIAGRO", float,
+     "Fração aplicada ao ganho de fundos imobiliários (0,20 = 20%), que têm "
+     "DARF próprio e não têm isenção.", 0.20),
+    ("isencao_acoes", "Isenção de vendas — ações, BDR e ouro", float,
+     "Vendas mensais até este valor ficam isentas no swing trade.", 20000.0),
+    ("isencao_eua", "Isenção de vendas — ativos dos EUA", float,
+     "Limite mensal de vendas isentas de ações e ETFs dos EUA.", 35000.0),
+    ("meses_ate_vencimento", "Meses até o vencimento do DARF", int,
+     "Quantos meses após a competência o DARF vence (1 = último dia útil do "
+     "mês seguinte).", 1),
+    ("codigo_receita_darf", "Código de receita do DARF", str,
+     "Código da receita para ganhos líquidos em renda variável (pessoa física).",
+     "6015"),
+)
+
+PARAMETROS_PADRAO: dict[str, float | int | str] = {
+    chave: padrao for chave, _, _, _, padrao in PARAMETROS_FISCAIS
+}
+
+#: Valores em vigor — começam nos padrões e recebem os do banco ao carregar.
+PARAMETROS: dict[str, float | int | str] = dict(PARAMETROS_PADRAO)
+
+_TIPOS_PARAMETRO = {chave: tipo for chave, _, tipo, _, _ in PARAMETROS_FISCAIS}
+
+# Grupos com isenção própria para ativos dos EUA (limite maior que o nacional).
+_GRUPOS_ISENCAO_EUA = ("STOCK_USA", "ETF_USA")
+
+# Alíquota de day trade (todas as categorias) — valor padrão; o vigente fica
+# em ``PARAMETROS`` e pode ser alterado no painel administrativo:
+#   0,20 * 241,17 + 0,15 * 1050,37 = 205,79  ->  IRRFBase de Set/2026
+ALIQUOTA_DAY_TRADE = PARAMETROS_PADRAO["aliquota_day_trade"]
+
+# Código de receita do DARF para ganhos líquidos em renda variável (pessoa
+# física) — valor padrão; o vigente vem de :func:`codigo_receita_darf`.
+CODIGO_RECEITA_DARF = PARAMETROS_PADRAO["codigo_receita_darf"]
+
+
+def aplicar_parametros(valores: dict) -> None:
+    """
+    Aplica ao motor os parâmetros lidos do banco (valores em texto).
+
+    Chaves desconhecidas ou valores inválidos são ignorados, de modo que um
+    parâmetro corrompido nunca derruba a apuração.
+    """
+    for chave, valor in valores.items():
+        tipo = _TIPOS_PARAMETRO.get(chave)
+        if tipo is None or valor is None:
+            continue
+        try:
+            if tipo is str:
+                PARAMETROS[chave] = str(valor).strip()
+            elif tipo is int:
+                PARAMETROS[chave] = int(float(valor))
+            else:
+                PARAMETROS[chave] = float(valor)
+        except (TypeError, ValueError):
+            continue
+
+
+def codigo_receita_darf() -> str:
+    """Código de receita do DARF em vigor (editável no painel administrativo)."""
+    return str(PARAMETROS["codigo_receita_darf"])
+
+
+def meses_ate_vencimento() -> int:
+    """Meses entre a competência e o vencimento do DARF (padrão: 1)."""
+    return int(PARAMETROS["meses_ate_vencimento"])
 
 
 def aliquota(grupo: str, day_trade: bool) -> float:
     """Alíquota aplicável a um grupo de ativos em swing trade ou day trade."""
+    if day_trade:
+        return float(PARAMETROS["aliquota_day_trade"])
     meta = GRUPOS_FEE.get(grupo)
     if meta is None:
-        return ALIQUOTA_DAY_TRADE if day_trade else 0.15
-    if day_trade:
-        return ALIQUOTA_DAY_TRADE
-    return meta.fee_percent
+        return float(PARAMETROS["aliquota_swing_trade"])
+    if meta.fee_percent <= 0.0:
+        return 0.0
+    if grupo in ("FII", "FIAGRO"):
+        return float(PARAMETROS["aliquota_fii"])
+    return float(PARAMETROS["aliquota_swing_trade"])
+
+
+def limite_isencao(grupo: str) -> float:
+    """
+    Limite de vendas isentas no mês para o grupo (``0`` = grupo sem isenção).
+
+    Ações, BDR e ouro usam o limite nacional; ações e ETFs dos EUA têm o limite
+    próprio — ambos editáveis no painel administrativo.
+    """
+    meta = GRUPOS_FEE.get(grupo)
+    if meta is None or not meta.isento or meta.isento_valor <= 0:
+        return 0.0
+    chave = "isencao_eua" if grupo in _GRUPOS_ISENCAO_EUA else "isencao_acoes"
+    return float(PARAMETROS[chave])
 
 
 def bucket_tributario(grupo: str, day_trade: bool) -> str:
@@ -490,10 +583,9 @@ def apurar_mensal(resultados: pd.DataFrame,
         # --- isenção: vendas do mês <= limite do grupo ---------------------
         isento = pd.Series(False, index=mes_res.index)
         for grupo, g in mes_res[mes_res["categoria"] == "Swing Trade"].groupby("grupo"):
-            meta = GRUPOS_FEE.get(grupo)
-            if meta and meta.isento and meta.isento_valor > 0:
-                if g["vendas"].sum() <= meta.isento_valor:
-                    isento.loc[g.index] = True
+            limite = limite_isencao(grupo)
+            if limite > 0 and g["vendas"].sum() <= limite:
+                isento.loc[g.index] = True
         tributavel = mes_res[~isento]
 
         retido = _irrf_retido_mes(notas, mes)
@@ -644,6 +736,8 @@ __all__ = [
     "GRUPOS_FEE", "GrupoFee", "ROTULO_MERCADO", "ALIQUOTA_DAY_TRADE",
     "CODIGO_RECEITA_DARF", "BUCKETS", "IRRF_POR_BUCKET", "SALDOS_INICIAIS_PADRAO",
     "COLUNAS_APURACAO", "COLUNAS_RESULTADO",
+    "PARAMETROS", "PARAMETROS_PADRAO", "PARAMETROS_FISCAIS", "aplicar_parametros",
+    "codigo_receita_darf", "meses_ate_vencimento", "limite_isencao",
     "aliquota", "bucket_tributario", "classificar_grupo",
     "resultados_realizados", "apurar_mensal", "posicao_atual",
 ]

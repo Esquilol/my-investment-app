@@ -31,6 +31,8 @@ Páginas do administrador (apenas ``is_admin``):
     * **Assinaturas**   — planos vigentes, faturas e status.
     * **Pagamentos**    — métodos de pagamento e notas fiscais.
     * **Cupons**        — criação, listagem e desativação de cupons.
+    * **Parâmetros fiscais** — tabela de cálculo (alíquotas, isenções, código do
+      DARF) e monitor de mudanças nas fontes oficiais de legislação.
 
 Observação: os valores apurados são uma estimativa técnica. Não substituem a
 apuração oficial (GCAP/DIRPF) nem a orientação de um contador.
@@ -269,6 +271,8 @@ paginas_admin = [
     st.Page(admin.pagina_assinaturas, title="Assinaturas", icon=":material/assignment:"),
     st.Page(admin.pagina_pagamentos, title="Pagamentos", icon=":material/credit_card:"),
     st.Page(admin.pagina_cupons, title="Cupons", icon=":material/local_offer:"),
+    st.Page(admin.pagina_parametros, title="Parâmetros fiscais",
+            icon=":material/balance:"),
 ]
 
 if st.session_state["is_admin"]:

@@ -21,6 +21,8 @@ import streamlit as st
 
 import paginas
 import persistencia as bd
+import monitor
+import regras
 import saas
 import tema
 
@@ -28,6 +30,16 @@ import tema
 def _moeda(valor: float) -> str:
     """Formata um número no padrão brasileiro: R$ 1.234,56."""
     return f"R$ {float(valor or 0.0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _data(iso: str | None) -> str:
+    """Data ISO guardada no banco -> ``dd/mm/aaaa`` (ou ``—``)."""
+    if not iso:
+        return "—"
+    try:
+        return date.fromisoformat(str(iso)[:10]).strftime("%d/%m/%Y")
+    except ValueError:
+        return "—"
 
 
 # ---------------------------------------------------------------------------
@@ -321,3 +333,121 @@ def pagina_cupons() -> None:
         bd.definir_cupom_ativo(conexao, escolhido, novo)
         st.success("Cupom atualizado.")
         st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Parâmetros fiscais e monitor de legislação
+# ---------------------------------------------------------------------------
+
+def pagina_parametros() -> None:
+    tema.cabecalho(
+        "Parâmetros fiscais e legislação",
+        "Ajuste as alíquotas, isenções e o código do DARF do motor de cálculo e "
+        "acompanhe mudanças nas fontes oficiais.",
+        "\u2696\ufe0f",
+    )
+    conexao = paginas.obter_conexao()
+
+    # -- Monitor de legislação --------------------------------------------
+    tema.secao("Monitor de legislação")
+    st.caption(
+        "O monitor guarda uma impressão digital (hash) do conteúdo de cada "
+        "fonte oficial. Ao **buscar mudanças**, ele baixa as páginas de novo e "
+        "avisa quando o texto mudou — o gatilho para revisar a tabela de "
+        "cálculo logo abaixo."
+    )
+    guardado = bd.carregar_monitor_legislacao(conexao)
+    ultima = monitor.ultima_verificacao(conexao)
+
+    col_botao, col_data = st.columns([1, 3])
+    with col_botao:
+        buscar = st.button("Buscar mudanças", type="primary",
+                           icon=":material/travel_explore:", width="stretch")
+    with col_data:
+        if ultima is None:
+            st.caption("Nenhuma verificação feita ainda.")
+        else:
+            st.caption(f"Última verificação: **{_data(ultima.isoformat())}**.")
+
+    if buscar:
+        with st.spinner("Consultando as fontes oficiais..."):
+            resultados = monitor.verificar(conexao)
+        guardado = bd.carregar_monitor_legislacao(conexao)
+        ultima = monitor.ultima_verificacao(conexao)
+
+        alteradas = [r["titulo"] for r in resultados if r["situacao"] == "mudou"]
+        novas = [r["titulo"] for r in resultados if r["situacao"] == "primeira"]
+        falhas = [r["titulo"] for r in resultados if r["situacao"] == "falhou"]
+
+        if alteradas:
+            st.warning("Mudança detectada em: " + "; ".join(alteradas)
+                       + ". Revise a tabela de cálculo abaixo.")
+        elif novas:
+            st.info("Fontes registradas pela primeira vez: " + "; ".join(novas)
+                    + ". A partir de agora, qualquer alteração será avisada.")
+        elif falhas:
+            st.info("Fontes consultadas, mas algumas não responderam agora "
+                    f"({len(falhas)}). Tente novamente mais tarde.")
+        else:
+            st.success("Nada mudou desde a última verificação.")
+
+    linhas = []
+    for fonte in monitor.FONTES:
+        registro = guardado.get(fonte["url"], {})
+        mudou_em = registro.get("mudou_em")
+        verificado = registro.get("verificado_em")
+        if mudou_em:
+            situacao = f"Alterada em {_data(mudou_em)}"
+        elif verificado:
+            situacao = "Sem mudança"
+        else:
+            situacao = "Não verificada"
+        linhas.append({
+            "Fonte oficial": fonte["titulo"],
+            "Última verificação": _data(verificado),
+            "Situação": situacao,
+        })
+    st.dataframe(pd.DataFrame(linhas), width="stretch", hide_index=True)
+
+    if ultima is not None and (date.today() - ultima).days > monitor.DIAS_ALERTA:
+        st.warning(
+            f"A última verificação foi há {(date.today() - ultima).days} dias. "
+            f"Recomenda-se buscar mudanças a cada {monitor.DIAS_ALERTA} dias."
+        )
+
+    # -- Tabela de cálculo -------------------------------------------------
+    tema.secao("Tabela de cálculo")
+    st.caption(
+        "Parâmetros usados em toda a apuração. As alíquotas são frações "
+        "(0,20 = 20%). Mudar aqui vale para todos os usuários e recai "
+        "imediatamente sobre as telas de IR e DARF — as notas já importadas "
+        "não precisam ser reenviadas."
+    )
+    atuais = bd.carregar_parametros_fiscais(conexao)
+    with st.form("form_parametros_fiscais"):
+        valores: dict[str, str] = {}
+        for chave, rotulo, tipo, descricao, padrao in regras.PARAMETROS_FISCAIS:
+            atual = atuais.get(chave, str(padrao))
+            if tipo is float and chave.startswith("aliquota"):
+                valores[chave] = st.number_input(
+                    rotulo, min_value=0.0, max_value=1.0, value=float(atual),
+                    step=0.01, format="%.2f", help=descricao)
+            elif tipo is float:
+                valores[chave] = st.number_input(
+                    rotulo, min_value=0.0, value=float(atual), step=100.0,
+                    format="%.2f", help=descricao)
+            elif tipo is int:
+                valores[chave] = st.number_input(
+                    rotulo, min_value=0, max_value=12, value=int(float(atual)),
+                    step=1, help=descricao)
+            else:
+                valores[chave] = st.text_input(rotulo, value=str(atual),
+                                               help=descricao)
+
+        if st.form_submit_button("Salvar parâmetros", type="primary",
+                                 icon=":material/save:"):
+            dados = {chave: str(valor) for chave, valor in valores.items()}
+            bd.gravar_parametros_fiscais(conexao, dados)
+            regras.aplicar_parametros(dados)
+            st.success("Parâmetros atualizados — a apuração já usa os novos valores.")
+            st.rerun()

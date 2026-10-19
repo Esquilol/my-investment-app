@@ -32,6 +32,7 @@ from persistencia import (
     carregar_darf_pagamentos,
     carregar_notas,
     carregar_operacoes,
+    carregar_parametros_fiscais,
     carregar_proventos,
     conectar,
     garantir_esquema,
@@ -52,9 +53,12 @@ from persistencia import (
 )
 from proventos import TIPOS, irrf_jcp, ler_planilha
 from regras import (
-    CODIGO_RECEITA_DARF,
+    PARAMETROS,
+    aplicar_parametros,
     apurar_mensal,
     classificar_grupo,
+    codigo_receita_darf,
+    meses_ate_vencimento,
     posicao_atual,
     resultados_realizados,
 )
@@ -103,6 +107,26 @@ DETALHE_MERCADO = [
     "ResultsTermSwingTrade", "ResultsTermDayTrade",
 ]
 
+# Rótulos legíveis das colunas de :data:`DETALHE_MERCADO` (ST = swing trade).
+ROTULO_DETALHE = {
+    "ResultsStockSwingTrade": "Ações (ST)",
+    "ResultsStockDayTrade": "Ações (DT)",
+    "ResultsGoldSwingTrade": "Ouro (ST)",
+    "ResultsGoldDayTrade": "Ouro (DT)",
+    "ResultsOptionSwingTrade": "Opções (ST)",
+    "ResultsOptionDayTrade": "Opções (DT)",
+    "ResultsFutureIDXSwingTrade": "Índice futuro (ST)",
+    "ResultsFutureIDXDayTrade": "Índice futuro (DT)",
+    "ResultsFutureFeeSwingTrade": "Juros futuros (ST)",
+    "ResultsFutureFeeDayTrade": "Juros futuros (DT)",
+    "ResultsFutureUSDSwingTrade": "Dólar futuro (ST)",
+    "ResultsFutureUSDDayTrade": "Dólar futuro (DT)",
+    "ResultsFutureOtherSwingTrade": "Futuros outros (ST)",
+    "ResultsFutureOtherDayTrade": "Futuros outros (DT)",
+    "ResultsTermSwingTrade": "Termo (ST)",
+    "ResultsTermDayTrade": "Termo (DT)",
+}
+
 
 # ---------------------------------------------------------------------------
 # Utilidades
@@ -124,6 +148,34 @@ def _moeda(valor: float) -> str:
     return f"R$ {float(valor or 0.0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _moeda_txt(valor) -> str:
+    """
+    Valor em reais no padrão brasileiro (``R$ 1.234,56``); zero vira ``—``.
+
+    Usado nas tabelas: além de eliminar os artefatos de ponto flutuante
+    (``1291.5300000000002``), o traço deixa a leitura bem mais limpa do que
+    uma fileira de ``0,00``.
+    """
+    if valor is None:
+        return "—"
+    try:
+        numero = round(float(valor), 2)
+    except (TypeError, ValueError):
+        return "—"
+    if pd.isna(numero) or numero == 0:
+        return "—"
+    texto = f"{abs(numero):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{'-' if numero < 0 else ''}R$ {texto}"
+
+
+def _tabela_moeda(df: pd.DataFrame, colunas: list[str]) -> pd.DataFrame:
+    """Converte as colunas indicadas em texto de moeda brasileira."""
+    visao = df.copy()
+    for coluna in colunas:
+        visao[coluna] = visao[coluna].map(_moeda_txt)
+    return visao
+
+
 def _to_csv(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig")
 
@@ -140,9 +192,9 @@ def _to_excel(abas: dict[str, pd.DataFrame]) -> bytes:
 def _vencimento_darf(mes: str) -> date:
     """DARF de renda variável vence no último dia útil do mês seguinte."""
     ano, numero_mes = (int(parte) for parte in mes.split("-"))
-    numero_mes += 1
-    if numero_mes > 12:
-        numero_mes = 1
+    numero_mes += meses_ate_vencimento()
+    while numero_mes > 12:
+        numero_mes -= 12
         ano += 1
     dia = date(ano, numero_mes, calendar.monthrange(ano, numero_mes)[1])
     while dia.weekday() >= 5:          # sábado = 5, domingo = 6
@@ -159,13 +211,27 @@ def _nome_mes(mes: str) -> str:
 
 
 def _colorir(df: pd.DataFrame, colunas: list[str]):
-    """Aplica verde/vermelho aos valores das colunas indicadas (negativo = vermelho)."""
+    """
+    Aplica verde/vermelho às colunas indicadas (negativo = vermelho).
+
+    Aceita tanto números quanto o texto de moeda de :func:`_moeda_txt`
+    (``R$ 1.234,56`` / ``-R$ 5,00``); o traço de zero fica sem cor.
+    """
     def pintar(valor):
-        if not isinstance(valor, (int, float)) or pd.isna(valor):
-            return ""
-        if float(valor) < 0:
+        texto = "" if valor is None else str(valor).strip()
+        if texto.startswith("-"):
             return f"color: {tema.VERMELHO}; font-weight: 600"
-        if float(valor) > 0:
+        if texto in ("", "—", "nan"):
+            return ""
+        if isinstance(valor, (int, float)):
+            numero = float(valor)
+        elif texto.startswith("R$"):
+            numero = 1.0
+        else:
+            return ""
+        if numero < 0:
+            return f"color: {tema.VERMELHO}; font-weight: 600"
+        if numero > 0:
             return f"color: {tema.VERDE}; font-weight: 600"
         return ""
 
@@ -226,6 +292,10 @@ def carregar(identificador: int) -> None:
 
     usuario_id = int(identificador)
     conexao = obter_conexao()
+
+    # Parâmetros fiscais vigentes (alíquotas, isenções, código do DARF),
+    # editáveis no painel administrativo.
+    aplicar_parametros(carregar_parametros_fiscais(conexao))
 
     operacoes = carregar_operacoes(conexao, usuario_id)
     notas = carregar_notas(conexao, usuario_id)
@@ -313,7 +383,7 @@ def _secao_darf() -> None:
             st.markdown(
                 f"**{_nome_mes(competencia)}** — recolher {_moeda(recolher)} até "
                 f"{_vencimento_darf(competencia):%d/%m/%Y} "
-                f"(código {CODIGO_RECEITA_DARF})."
+                f"(código {codigo_receita_darf()})."
             )
         else:
             st.markdown(f"**{_nome_mes(competencia)}** — {linha['ExemptionMessage']}.")
@@ -624,8 +694,9 @@ def pagina_extrato() -> None:
 
         colunas = ["data", "tipo", "ticker", "grupo", "mercado", "quantidade",
                    "preco", "valor_total", "taxas", "resultado", "nota", "corretora"]
+        colunas_moeda = ["preco", "valor_total", "taxas", "resultado"]
         st.dataframe(
-            _colorir(filtro[colunas], ["resultado", "valor_total"]),
+            _colorir(_tabela_moeda(filtro[colunas], colunas_moeda), colunas_moeda),
             width="stretch", hide_index=True,
         )
 
@@ -660,7 +731,10 @@ def pagina_patrimonio() -> None:
              "icone": "\U0001F5C3\uFE0F"},
         ])
 
-        st.dataframe(posicao, width="stretch", hide_index=True)
+        st.dataframe(
+            _tabela_moeda(posicao, ["Preço Médio", "Custo Total"]),
+            width="stretch", hide_index=True,
+        )
 
         tema.secao("Custo por grupo de ativos")
         st.bar_chart(posicao.groupby("Grupo")["Custo Total"].sum(), height=320)
@@ -748,27 +822,37 @@ def pagina_ir() -> None:
 
         visao = tabela_ir[list(RESUMO_IR)].rename(columns=RESUMO_IR).copy()
         visao["Mês"] = visao["Mês"].map(_nome_mes)
+        # Colunas zeradas em todas as competências só poluem a leitura.
+        for coluna in [c for c in visao.columns if c not in ("Mês", "Situação")]:
+            if pd.to_numeric(visao[coluna], errors="coerce").fillna(0.0).abs().sum() == 0:
+                visao = visao.drop(columns=coluna)
         coloriveis = [c for c in visao.columns if c not in ("Mês", "Situação")]
+        visao = _tabela_moeda(visao, coloriveis)
         st.dataframe(_colorir(visao, coloriveis), width="stretch", hide_index=True)
 
-        tema.secao("Resultados por mercado (campos `Results*`)")
-        detalhe = tabela_ir[tabela_ir["mes"].isin(
-            [m for m in tabela_ir["mes"] if any(tabela_ir.loc[tabela_ir["mes"] == m, c].iloc[0]
-                                                for c in DETALHE_MERCADO)]
-        )]
-        if detalhe.empty:
+        tema.secao("Resultados por mercado")
+        detalhe = tabela_ir[["mes"] + DETALHE_MERCADO].copy()
+        detalhe["Mês"] = detalhe["mes"].map(_nome_mes)
+        # Mercados sem resultado em nenhuma competência só poluem a leitura.
+        ativos = [c for c in DETALHE_MERCADO
+                  if pd.to_numeric(detalhe[c], errors="coerce").fillna(0.0).abs().sum() > 0]
+        if not ativos:
             st.caption("Sem resultados por mercado no período.")
         else:
-            detalhe = detalhe[["mes"] + DETALHE_MERCADO].rename(columns={"mes": "Mês"})
+            rotulos = [ROTULO_DETALHE[c] for c in ativos]
+            visao_mercado = detalhe[["Mês"] + ativos].rename(columns=ROTULO_DETALHE)
             st.dataframe(
-                _colorir(detalhe, DETALHE_MERCADO),
+                _colorir(_tabela_moeda(visao_mercado, rotulos), rotulos),
                 width="stretch", hide_index=True,
             )
 
         st.caption(
-            "Day Trade: 20% sem isenção. Swing Trade: 15% (FII/FIAGRO: 20%), com "
-            "isenção quando as vendas do grupo no mês ficam dentro do limite de "
-            "R$ 20.000,00 (ações/BDR/ouro) ou R$ 35.000,00 (ativos dos EUA). "
+            f"Day Trade: {float(PARAMETROS['aliquota_day_trade']):.0%} sem isenção. "
+            f"Swing Trade: {float(PARAMETROS['aliquota_swing_trade']):.0%} "
+            f"(FII/FIAGRO: {float(PARAMETROS['aliquota_fii']):.0%}), com isenção "
+            f"quando as vendas do grupo no mês ficam dentro de "
+            f"{_moeda(PARAMETROS['isencao_acoes'])} (ações/BDR/ouro) ou "
+            f"{_moeda(PARAMETROS['isencao_eua'])} (ativos dos EUA). "
             "Prejuízos e IRRF retido são compensados por categoria, mês a mês — "
             "o que não for usado fica acumulado para as competências seguintes."
         )
@@ -793,6 +877,7 @@ def pagina_darf() -> None:
 
     # -- Painel de competências, com a situação de pagamento ---------------
     tema.secao("Competências")
+    colunas_moeda = ["Base de cálculo", "IR apurado", "IRRF retido", "Valor a recolher"]
     resumo = pd.DataFrame([
         {
             "Competência": _nome_mes(mes),
@@ -805,8 +890,9 @@ def pagina_darf() -> None:
         }
         for mes, linha in zip(competencias, tabela_ir.to_dict("records"))
     ])
+    resumo = _tabela_moeda(resumo, colunas_moeda)
     st.dataframe(
-        _colorir(resumo, ["Base de cálculo", "IR apurado", "IRRF retido", "Valor a recolher"]),
+        _colorir(resumo, colunas_moeda),
         width="stretch", hide_index=True,
     )
 
@@ -859,7 +945,7 @@ def pagina_darf() -> None:
     with col1:
         tema.secao("Dados para emissão no Sicalc / internet banking")
         st.code(
-            f"Código de receita: {CODIGO_RECEITA_DARF}\n"
+            f"Código de receita: {codigo_receita_darf()}\n"
             f"Período de apuração: {competencia}\n"
             f"Vencimento: {_vencimento_darf(competencia):%d/%m/%Y}\n"
             f"Valor: {_moeda(linha['DARFFinal'])}",
@@ -877,7 +963,8 @@ def pagina_darf() -> None:
             {"Item": "IR a recolher", "Valor": linha["DARFFinal"]},
         ])
         st.dataframe(
-            _colorir(composicao, ["Valor"]), width="stretch", hide_index=True,
+            _colorir(_tabela_moeda(composicao, ["Valor"]), ["Valor"]),
+            width="stretch", hide_index=True,
         )
 
     # -- Controle de pagamento --------------------------------------------
@@ -922,7 +1009,7 @@ def pagina_darf() -> None:
         icon=":material/download:",
     )
     st.caption(
-        f"Código de receita {CODIGO_RECEITA_DARF} — ganhos líquidos em operações "
+        f"Código de receita {codigo_receita_darf()} — ganhos líquidos em operações "
         "realizadas em bolsas de valores, de mercadorias, de futuros e "
         "assemelhadas (pessoa física)."
     )
