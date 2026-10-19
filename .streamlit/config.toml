@@ -1,0 +1,20 @@
+# Tema visual do app (inspirado numa identidade "fintech" limpa: verde-petróleo
+# como cor de marca, superfícies claras e tipografia legível).
+# Este arquivo é versionado; os segredos ficam em .streamlit/secrets.toml.
+
+[theme]
+base = "light"
+primaryColor = "#17776C"
+backgroundColor = "#F4F6F8"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1F2933"
+font = "sans serif"
+
+[theme.sidebar]
+backgroundColor = "#0E3B37"
+secondaryBackgroundColor = "#14524B"
+textColor = "#EAF4F2"
+primaryColor = "#4FD1B5"
+
+[browser]
+gatherUsageStats = false

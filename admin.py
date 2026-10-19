@@ -22,6 +22,7 @@ import streamlit as st
 import paginas
 import persistencia as bd
 import saas
+import tema
 
 
 def _moeda(valor: float) -> str:
@@ -34,36 +35,44 @@ def _moeda(valor: float) -> str:
 # ---------------------------------------------------------------------------
 
 def pagina_dashboard() -> None:
-    st.subheader("\U0001F4CA Visão geral do negócio")
+    tema.cabecalho(
+        "Visão geral do negócio",
+        "Métricas de cadastros, assinaturas e faturamento da plataforma.",
+        "\U0001F4CA",
+    )
     conexao = paginas.obter_conexao()
     m = saas.metricas(conexao)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Usuários cadastrados", m["usuarios_total"])
-    c2.metric("Assinantes PRO", m["usuarios_pagos"])
-    c3.metric("Faturamento acumulado", _moeda(m["faturamento"]))
-    c4.metric("Ticket médio", _moeda(m["ticket_medio"]))
+    tema.kpis([
+        {"rotulo": "Usuários cadastrados", "valor": m["usuarios_total"],
+         "icone": "\U0001F465"},
+        {"rotulo": "Assinantes PRO", "valor": m["usuarios_pagos"], "icone": "\U0001F31F"},
+        {"rotulo": "Faturamento acumulado", "valor": _moeda(m["faturamento"]),
+         "icone": "\U0001F4B0"},
+        {"rotulo": "Ticket médio", "valor": _moeda(m["ticket_medio"]),
+         "icone": "\U0001F4C8"},
+    ])
+    tema.kpis([
+        {"rotulo": "Plano Gratuito", "valor": m["usuarios_free"], "icone": "\U0001F193"},
+        {"rotulo": "Contas ativas", "valor": m["usuarios_ativos"], "icone": "\u2705"},
+        {"rotulo": "Assinaturas ativas", "valor": m["assinaturas_ativas"],
+         "icone": "\U0001F4CB"},
+        {"rotulo": "Cupons ativos", "valor": m["cupons_ativos"], "icone": "\U0001F39F\uFE0F"},
+    ])
 
-    c5, c6, c7, c8 = st.columns(4)
-    c5.metric("Plano Gratuito", m["usuarios_free"])
-    c6.metric("Contas ativas", m["usuarios_ativos"])
-    c7.metric("Assinaturas ativas", m["assinaturas_ativas"])
-    c8.metric("Cupons ativos", m["cupons_ativos"])
-
-    st.divider()
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**Distribuição de planos**")
+        tema.secao("Distribuição de planos")
         st.bar_chart(pd.DataFrame(
             {"Usuários": [m["usuarios_free"], m["usuarios_pagos"]]},
             index=["Gratuito", "PRO"],
-        ))
+        ), height=300)
     with col2:
-        st.markdown("**Assinaturas**")
+        tema.secao("Assinaturas")
         st.bar_chart(pd.DataFrame(
             {"Assinaturas": [m["assinaturas_ativas"], m["assinaturas_canceladas"]]},
             index=["Ativas", "Canceladas"],
-        ))
+        ), height=300)
 
     st.caption(
         "Faturamento considera apenas pagamentos com status **pago**. "
@@ -76,12 +85,16 @@ def pagina_dashboard() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_contas() -> None:
-    st.subheader("\U0001F465 Verificar contas / cadastros")
+    tema.cabecalho(
+        "Contas e cadastros",
+        "Consulte, filtre e ajuste plano, status e permissões de cada usuário.",
+        "\U0001F465",
+    )
     conexao = paginas.obter_conexao()
     df = bd.listar_usuarios(conexao)
 
     if df.empty:
-        st.info("Nenhum usuário cadastrado.")
+        tema.vazio("Nenhum usuário cadastrado.")
         return
 
     filtro = st.radio(
@@ -102,8 +115,7 @@ def pagina_contas() -> None:
     st.caption(f"{len(visao)} de {len(df)} conta(s).")
     st.dataframe(visao, width="stretch", hide_index=True)
 
-    st.divider()
-    st.markdown("**Gerenciar conta**")
+    tema.secao("Gerenciar conta")
     rotulos = {int(r.id): f"{r.usuario} — {r.email}" for r in df.itertuples()}
     escolhido = st.selectbox("Usuário", options=list(rotulos),
                              format_func=lambda i: rotulos[i], key="admin_conta")
@@ -127,7 +139,7 @@ def pagina_contas() -> None:
                              key=f"plano_{escolhido}")
 
     eu_mesmo = escolhido == st.session_state.get("usuario_id")
-    if st.button("Salvar alterações", type="primary"):
+    if st.button("Salvar alterações", type="primary", icon=":material/save:"):
         if eu_mesmo and (not ativo or not admin):
             st.error("Você não pode desativar nem remover o seu próprio perfil de administrador.")
         else:
@@ -143,12 +155,16 @@ def pagina_contas() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_assinaturas() -> None:
-    st.subheader("\U0001F4CB Gestão de assinaturas ativas")
+    tema.cabecalho(
+        "Gestão de assinaturas",
+        "Acompanhe o ciclo de vida das assinaturas e cancele quando necessário.",
+        "\U0001F4CB",
+    )
     conexao = paginas.obter_conexao()
 
     df = bd.listar_assinaturas(conexao)
     if df.empty:
-        st.info("Nenhuma assinatura registrada até agora.")
+        tema.vazio("Nenhuma assinatura registrada até agora.")
         return
 
     filtro = st.radio("Status", ["Todas", "Ativas", "Canceladas", "Substituídas"],
@@ -172,14 +188,13 @@ def pagina_assinaturas() -> None:
         st.caption("Não há assinaturas ativas para cancelar.")
         return
 
-    st.divider()
-    st.markdown("**Cancelar assinatura**")
+    tema.secao("Cancelar assinatura")
     rotulos = {int(l["id"]): f"{l['usuario']} — {l['plano_codigo']} (até {l['fim']})"
                for l in ativas}
     escolhida = st.selectbox("Assinatura ativa", options=list(rotulos),
                              format_func=lambda i: rotulos[i], key="admin_assinatura")
     usuario_id = next(int(l["usuario_id"]) for l in ativas if int(l["id"]) == escolhido)
-    if st.button("Cancelar assinatura selecionada"):
+    if st.button("Cancelar assinatura selecionada", icon=":material/cancel:"):
         bd.cancelar_assinatura(conexao, usuario_id)
         st.success("Assinatura cancelada; o usuário voltou ao plano Gratuito.")
         st.rerun()
@@ -190,10 +205,14 @@ def pagina_assinaturas() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_pagamentos() -> None:
-    st.subheader("\U0001F4B3 Pagamentos e notas fiscais")
+    tema.cabecalho(
+        "Pagamentos e notas fiscais",
+        "Configuração das chaves de checkout, faturamento e documentos emitidos.",
+        "\U0001F4B3",
+    )
     conexao = paginas.obter_conexao()
 
-    st.markdown("**Métodos de pagamento**")
+    tema.secao("Métodos de pagamento")
     st.caption(
         "Chaves usadas pelo checkout. Enquanto o ambiente for **simulado**, "
         "nenhuma cobrança é feita — as chaves ficam apenas gravadas no banco "
@@ -214,7 +233,8 @@ def pagina_pagamentos() -> None:
                                        value=config.get("cartao_api_key") or "")
         cartao_public_key = st.text_input("Public key do cartão",
                                           value=config.get("cartao_public_key") or "")
-        if st.form_submit_button("Salvar configuração", type="primary"):
+        if st.form_submit_button("Salvar configuração", type="primary",
+                                 icon=":material/save:"):
             bd.gravar_config_pagamento(conexao, {
                 "pix_chave": pix_chave, "pix_recebedor": pix_recebedor,
                 "cartao_provedor": cartao_provedor, "cartao_api_key": cartao_api_key,
@@ -222,16 +242,19 @@ def pagina_pagamentos() -> None:
             })
             st.success("Configuração de pagamento atualizada.")
 
-    st.divider()
-    st.markdown("**Pagamentos recebidos**")
+    tema.secao("Pagamentos recebidos")
     pagamentos = bd.listar_pagamentos(conexao)
     if pagamentos.empty:
         st.caption("Nenhum pagamento registrado.")
     else:
+        tema.kpis([
+            {"rotulo": "Pagamentos", "valor": len(pagamentos), "icone": "\U0001F9FE"},
+            {"rotulo": "Faturamento acumulado",
+             "valor": _moeda(bd.faturamento_total(conexao)), "icone": "\U0001F4B0"},
+        ])
         st.dataframe(pagamentos, width="stretch", hide_index=True)
-        st.metric("Faturamento acumulado", _moeda(bd.faturamento_total(conexao)))
 
-    st.markdown("**Notas fiscais emitidas**")
+    tema.secao("Notas fiscais emitidas")
     notas = bd.listar_notas_fiscais(conexao)
     if notas.empty:
         st.caption("Nenhuma nota fiscal emitida.")
@@ -244,9 +267,14 @@ def pagina_pagamentos() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_cupons() -> None:
-    st.subheader("\U0001F39F\uFE0F Gestão de cupons de desconto")
+    tema.cabecalho(
+        "Cupons de desconto",
+        "Crie códigos promocionais e controle quantas vezes podem ser usados.",
+        "\U0001F39F\uFE0F",
+    )
     conexao = paginas.obter_conexao()
 
+    tema.secao("Criar cupom")
     with st.form("form_cupom", clear_on_submit=True):
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -259,7 +287,8 @@ def pagina_cupons() -> None:
         with col4:
             uso_maximo = st.number_input("Limite de usos (0 = ilimitado)",
                                          min_value=0, step=1, value=0)
-        if st.form_submit_button("Criar cupom", type="primary"):
+        if st.form_submit_button("Criar cupom", type="primary",
+                                 icon=":material/add:"):
             if not codigo.strip():
                 st.error("Informe o código do cupom.")
             else:
@@ -272,15 +301,15 @@ def pagina_cupons() -> None:
                     st.success(f"Cupom {codigo.strip().upper()} criado.")
                     st.rerun()
 
-    st.divider()
+    tema.secao("Cupons cadastrados")
     cupons = bd.listar_cupons(conexao)
     if cupons.empty:
-        st.info("Nenhum cupom cadastrado.")
+        tema.vazio("Nenhum cupom cadastrado ainda.")
         return
 
     st.dataframe(cupons, width="stretch", hide_index=True)
 
-    st.markdown("**Ativar / desativar**")
+    tema.secao("Ativar / desativar")
     rotulos = {int(r.id): f"{r.codigo} — {r.desconto_pct:.0f}% "
                           f"({'ativo' if r.ativo else 'inativo'})"
                for r in cupons.itertuples()}
@@ -288,7 +317,7 @@ def pagina_cupons() -> None:
                              format_func=lambda i: rotulos[i], key="admin_cupom")
     linha = cupons[cupons["id"] == escolhido].iloc[0]
     novo = st.toggle("Ativo", value=bool(linha["ativo"]), key=f"cupom_ativo_{escolhido}")
-    if st.button("Salvar cupom"):
+    if st.button("Salvar cupom", icon=":material/save:"):
         bd.definir_cupom_ativo(conexao, escolhido, novo)
         st.success("Cupom atualizado.")
         st.rerun()

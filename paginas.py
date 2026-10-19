@@ -23,6 +23,7 @@ import streamlit as st
 
 import auth
 import saas
+import tema
 from parser import extract_notas
 from persistencia import (
     adicionar_provento,
@@ -209,8 +210,23 @@ def carregar(identificador: int) -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_upload() -> None:
-    st.subheader("Enviar notas de corretagem")
+    tema.hero(
+        "Bem-vindo ao seu Gestor de Investimentos",
+        "Importe as notas de corretagem em PDF e o app calcula posição, proventos e "
+        "Imposto de Renda automaticamente — com isenção de R$ 20 mil e compensação "
+        "de prejuízo mês a mês.",
+        "\U0001F4C8",
+    )
 
+    contagem = resumo_importacao(conexao, usuario_id)
+    tema.kpis([
+        {"rotulo": "Notas importadas", "valor": contagem["notas"], "icone": "\U0001F4C4"},
+        {"rotulo": "Operações", "valor": contagem["operacoes"], "icone": "\U0001F501"},
+        {"rotulo": "Arquivos processados", "valor": contagem["arquivos"],
+         "icone": "\U0001F5C2\uFE0F"},
+    ])
+
+    tema.secao("Enviar notas de corretagem")
     if saas.limite_notas(conexao, usuario_id) >= 0:
         st.caption(
             f"Plano **{saas.rotulo_plano(conexao, usuario_id)}** — limite de "
@@ -227,7 +243,8 @@ def pagina_upload() -> None:
             accept_multiple_files=True,
         )
 
-    if st.button("Processar notas", type="primary", disabled=not arquivos):
+    if st.button("Processar notas", type="primary", icon=":material/bolt:",
+                 disabled=not arquivos):
         notas_novas = operacoes_novas = arquivos_novos = 0
         for arquivo in arquivos:
             try:
@@ -258,22 +275,19 @@ def pagina_upload() -> None:
         if arquivos_novos:
             st.rerun()
 
-    st.divider()
-
-    contagem = resumo_importacao(conexao, usuario_id)
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Notas importadas", contagem["notas"])
-    m2.metric("Operações", contagem["operacoes"])
-    m3.metric("Arquivos processados", contagem["arquivos"])
-
-    if st.button("🗑️ Limpar operações importadas"):
-        limpar_dados(conexao, usuario_id)
-        st.rerun()
+    with st.expander(":material/delete: Limpar dados importados"):
+        st.caption(
+            "Remove as notas, operações e proventos deste usuário. Os saldos de "
+            "prejuízo a compensar informados na apuração são mantidos."
+        )
+        if st.button("Limpar operações importadas"):
+            limpar_dados(conexao, usuario_id)
+            st.rerun()
 
     if notas.empty:
-        st.info("Nenhuma nota importada ainda. Envie um PDF para começar.")
+        tema.vazio("Nenhuma nota importada ainda. Envie um PDF para começar.")
     else:
-        st.markdown("**Notas importadas**")
+        tema.secao("Notas importadas")
         visao_notas = notas.copy()
         visao_notas["data"] = visao_notas["data"].dt.strftime("%d/%m/%Y")
         visao_notas.columns = ["Nota", "Corretora", "Data", "Arquivo",
@@ -286,33 +300,40 @@ def pagina_upload() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_visao() -> None:
-    st.subheader("Visão geral")
+    tema.cabecalho(
+        "Visão geral",
+        "Um panorama da sua carteira, dos resultados e dos impostos do período.",
+        "\U0001F4CA",
+    )
 
     if not tem_dados:
-        st.info("Sem dados. Importe notas na página **Upload de Notas**.")
+        tema.vazio("Sem dados ainda. Importe notas na página **Upload de Notas**.")
     else:
         custo_total = float(posicao["Custo Total"].sum()) if not posicao.empty else 0.0
         ir_total = float(tabela_ir["IRRFFinal"].sum()) if not tabela_ir.empty else 0.0
         total_proventos = float(proventos["valor"].sum()) if not proventos.empty else 0.0
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Patrimônio (custo)", _moeda(custo_total))
-        c2.metric("Ativos em carteira", len(posicao))
-        c3.metric("IR apurado no período", _moeda(ir_total))
-        c4.metric("Proventos recebidos", _moeda(total_proventos))
+        tema.kpis([
+            {"rotulo": "Patrimônio (custo)", "valor": _moeda(custo_total),
+             "icone": "\U0001F4BC"},
+            {"rotulo": "Ativos em carteira", "valor": len(posicao), "icone": "\U0001F4C8"},
+            {"rotulo": "IR apurado no período", "valor": _moeda(ir_total),
+             "icone": "\U0001F4B0"},
+            {"rotulo": "Proventos recebidos", "valor": _moeda(total_proventos),
+             "icone": "\U0001F4B5"},
+        ])
 
-        st.divider()
-        st.markdown("**Resultado realizado por mês**")
+        tema.secao("Resultado realizado por mês")
         if resultados.empty:
-            st.info("Nenhum resultado realizado no período.")
+            tema.vazio("Nenhum resultado realizado no período.")
         else:
             por_mes = resultados.pivot_table(
                 index="mes", columns="categoria", values="resultado",
                 aggfunc="sum", fill_value=0.0,
             )
-            st.bar_chart(por_mes)
+            st.bar_chart(por_mes, height=320)
 
-        st.markdown("**Últimos negócios**")
+        tema.secao("Últimos negócios")
         ultimos = operacoes.sort_values("data", ascending=False).head(15)
         st.dataframe(
             ultimos[["data", "ticker", "tipo", "quantidade", "preco", "mercado", "nota"]],
@@ -325,10 +346,14 @@ def pagina_visao() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_extrato() -> None:
-    st.subheader("Extrato de operações")
+    tema.cabecalho(
+        "Extrato de operações",
+        "Todas as operações importadas, com filtros por período, ativo e mercado.",
+        "\U0001F9FE",
+    )
 
     if not tem_dados:
-        st.info("Sem operações. Importe notas na página **Upload de Notas**.")
+        tema.vazio("Sem operações ainda. Importe notas na página **Upload de Notas**.")
     else:
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -356,20 +381,26 @@ def pagina_extrato() -> None:
         if mercados:
             filtro = filtro[filtro["mercado"].isin(mercados)]
 
-        e1, e2, e3 = st.columns(3)
-        e1.metric("Operações", len(filtro))
-        e2.metric("Compras", _moeda(filtro.loc[filtro["tipo"] == "C", "valor_total"].sum()))
-        e3.metric("Vendas", _moeda(filtro.loc[filtro["tipo"] == "V", "valor_total"].sum()))
+        tema.kpis([
+            {"rotulo": "Operações", "valor": len(filtro), "icone": "\U0001F501"},
+            {"rotulo": "Compras",
+             "valor": _moeda(filtro.loc[filtro["tipo"] == "C", "valor_total"].sum()),
+             "icone": "\U0001F7E2"},
+            {"rotulo": "Vendas",
+             "valor": _moeda(filtro.loc[filtro["tipo"] == "V", "valor_total"].sum()),
+             "icone": "\U0001F534"},
+        ])
 
         colunas = ["data", "tipo", "ticker", "grupo", "mercado", "quantidade",
                    "preco", "valor_total", "taxas", "resultado", "nota", "corretora"]
         st.dataframe(filtro[colunas], width="stretch", hide_index=True)
 
         st.download_button(
-            "⬇️ Baixar extrato filtrado (CSV)",
+            "Baixar extrato filtrado (CSV)",
             data=_to_csv(filtro[colunas]),
             file_name=f"extrato_{date.today():%Y%m%d}.csv",
             mime="text/csv",
+            icon=":material/download:",
         )
 
 
@@ -378,20 +409,27 @@ def pagina_extrato() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_patrimonio() -> None:
-    st.subheader("Posição em custódia")
+    tema.cabecalho(
+        "Posição em custódia",
+        "O que você tem hoje, com preço médio já ajustado pelas taxas de corretagem.",
+        "\U0001F4BC",
+    )
 
     if posicao.empty:
-        st.info("Sem posição calculada. Importe notas na página **Upload de Notas**.")
+        tema.vazio("Sem posição calculada ainda. Importe notas na página **Upload de Notas**.")
     else:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Ativos em carteira", len(posicao))
-        c2.metric("Custo total", _moeda(posicao["Custo Total"].sum()))
-        c3.metric("Grupos distintos", posicao["Grupo"].nunique())
+        tema.kpis([
+            {"rotulo": "Ativos em carteira", "valor": len(posicao), "icone": "\U0001F4CA"},
+            {"rotulo": "Custo total", "valor": _moeda(posicao["Custo Total"].sum()),
+             "icone": "\U0001F4B0"},
+            {"rotulo": "Grupos distintos", "valor": posicao["Grupo"].nunique(),
+             "icone": "\U0001F5C3\uFE0F"},
+        ])
 
         st.dataframe(posicao, width="stretch", hide_index=True)
 
-        st.markdown("**Custo por grupo de ativos**")
-        st.bar_chart(posicao.groupby("Grupo")["Custo Total"].sum())
+        tema.secao("Custo por grupo de ativos")
+        st.bar_chart(posicao.groupby("Grupo")["Custo Total"].sum(), height=320)
 
         st.caption(
             "Preço médio ponderado com as taxas de corretagem somadas ao custo "
@@ -404,9 +442,13 @@ def pagina_patrimonio() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_ir() -> None:
-    st.subheader("Apuração de Imposto de Renda")
+    tema.cabecalho(
+        "Apuração de Imposto de Renda",
+        "Projeção mensal de IR sobre renda variável, com isenção e compensação de prejuízos.",
+        "\U0001F4B0",
+    )
 
-    with st.expander("⚙️ Saldos iniciais a compensar", expanded=False):
+    with st.expander(":material/settings: Saldos iniciais a compensar", expanded=False):
         st.caption(
             "Informe o saldo acumulado de prejuízo (valores negativos) e o IRRF "
             "retido em meses anteriores que ainda não foi compensado. É o ponto "
@@ -434,7 +476,7 @@ def pagina_ir() -> None:
                                          value=float(prejuizos.get("ir_swing") or 0.0),
                                          step=10.0, format="%.2f")
 
-        if st.button("Salvar saldos"):
+        if st.button("Salvar saldos", type="primary", icon=":material/save:"):
             gravar_prejuizos(conexao, usuario_id, {
                 "data": prejuizos.get("data"),
                 "DayTrade": prej_day,
@@ -456,22 +498,25 @@ def pagina_ir() -> None:
         )
 
     if tabela_ir.empty:
-        st.info("Nenhuma operação com resultado realizada. A apuração aparece após importar notas.")
+        tema.vazio("Nenhuma operação com resultado realizada. "
+                   "A apuração aparece após importar notas.")
     else:
         ir_total = float(tabela_ir["IRRFFinal"].sum())
         irrf_total = float(
             tabela_ir["IRRFMonthlyDayTrade"].sum() + tabela_ir["IRRFMonthlySwingTrade"].sum()
         )
-        a1, a2, a3 = st.columns(3)
-        a1.metric("IR apurado", _moeda(tabela_ir["IRRFBase"].sum()))
-        a2.metric("IRRF retido", _moeda(irrf_total))
-        a3.metric("IR a pagar", _moeda(ir_total))
+        tema.kpis([
+            {"rotulo": "IR apurado", "valor": _moeda(tabela_ir["IRRFBase"].sum()),
+             "icone": "\U0001F4B0"},
+            {"rotulo": "IRRF retido", "valor": _moeda(irrf_total), "icone": "\U0001F9FE"},
+            {"rotulo": "IR a pagar", "valor": _moeda(ir_total), "icone": "\U0001F4C5"},
+        ])
 
         visao = tabela_ir[list(RESUMO_IR)].rename(columns=RESUMO_IR).copy()
         visao["Mês"] = visao["Mês"].map(_nome_mes)
         st.dataframe(visao, width="stretch", hide_index=True)
 
-        st.markdown("**Resultados por mercado (campos `Results*`)**")
+        tema.secao("Resultados por mercado (campos `Results*`)")
         detalhe = tabela_ir[tabela_ir["mes"].isin(
             [m for m in tabela_ir["mes"] if any(tabela_ir.loc[tabela_ir["mes"] == m, c].iloc[0]
                                                 for c in DETALHE_MERCADO)]
@@ -498,10 +543,14 @@ def pagina_ir() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_darf() -> None:
-    st.subheader("DARF — ganhos líquidos em renda variável")
+    tema.cabecalho(
+        "DARF — ganhos líquidos em renda variável",
+        "O valor a recolher por competência, com o código de receita e o vencimento.",
+        "\U0001F9EE",
+    )
 
     if tabela_ir.empty:
-        st.info("Sem competências apuradas. Importe notas na página **Upload de Notas**.")
+        tema.vazio("Sem competências apuradas. Importe notas na página **Upload de Notas**.")
     else:
         competencias = list(tabela_ir["mes"])
         competencia = st.selectbox(
@@ -511,12 +560,18 @@ def pagina_darf() -> None:
         )
         linha = tabela_ir[tabela_ir["mes"] == competencia].iloc[0]
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Base de cálculo", _moeda(linha["BaseCalcSwingTrade"] + linha["BaseCalcDayTrade"]))
-        c2.metric("IR apurado", _moeda(linha["IRRFBase"]))
-        c3.metric("IRRF retido", _moeda(
-            linha["IRRFMonthlyDayTrade"] + linha["IRRFMonthlySwingTrade"]))
-        c4.metric("Valor a recolher", _moeda(linha["DARFFinal"]))
+        recolher = float(linha["DARFFinal"])
+        tema.kpis([
+            {"rotulo": "Base de cálculo",
+             "valor": _moeda(linha["BaseCalcSwingTrade"] + linha["BaseCalcDayTrade"]),
+             "icone": "\U0001F4CA"},
+            {"rotulo": "IR apurado", "valor": _moeda(linha["IRRFBase"]), "icone": "\U0001F4B0"},
+            {"rotulo": "IRRF retido",
+             "valor": _moeda(linha["IRRFMonthlyDayTrade"] + linha["IRRFMonthlySwingTrade"]),
+             "icone": "\U0001F9FE"},
+            {"rotulo": "Valor a recolher", "valor": _moeda(recolher),
+             "icone": "\U0001F4C5", "tom": "neg" if recolher > 0 else "pos"},
+        ])
 
         if float(linha["DARFFinal"]) <= 0:
             st.success(f"{_nome_mes(competencia)}: {linha['ExemptionMessage']}.")
@@ -529,7 +584,7 @@ def pagina_darf() -> None:
         st.divider()
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("**Dados para emissão no Sicalc / internet banking**")
+            tema.secao("Dados para emissão no Sicalc / internet banking")
             st.code(
                 f"Código de receita: {CODIGO_RECEITA_DARF}\n"
                 f"Período de apuração: {competencia}\n"
@@ -538,7 +593,7 @@ def pagina_darf() -> None:
                 language="text",
             )
         with col2:
-            st.markdown("**Composição**")
+            tema.secao("Composição")
             composicao = pd.DataFrame([
                 {"Item": "Base de cálculo Day Trade", "Valor": linha["BaseCalcDayTrade"]},
                 {"Item": "Base de cálculo Swing Trade", "Valor": linha["BaseCalcSwingTrade"]},
@@ -551,10 +606,11 @@ def pagina_darf() -> None:
             st.dataframe(composicao, width="stretch", hide_index=True)
 
         st.download_button(
-            "⬇️ Baixar apuração do período (CSV)",
+            "Baixar apuração do período (CSV)",
             data=_to_csv(tabela_ir),
             file_name=f"apuracao_{date.today():%Y%m%d}.csv",
             mime="text/csv",
+            icon=":material/download:",
         )
         st.caption(
             f"Código de receita {CODIGO_RECEITA_DARF} — ganhos líquidos em operações "
@@ -568,10 +624,15 @@ def pagina_darf() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_proventos() -> None:
-    st.subheader("Proventos recebidos")
+    tema.cabecalho(
+        "Proventos recebidos",
+        "Dividendos, JCP, rendimentos de FII e demais bonificações — com o "
+        "IRRF do JCP calculado automaticamente.",
+        "\U0001F4B5",
+    )
 
     # -- Importação do extrato ---------------------------------------------
-    with st.expander("Importar extrato de proventos (CSV ou XLSX)",
+    with st.expander(":material/upload_file: Importar extrato de proventos (CSV ou XLSX)",
                      expanded=proventos.empty):
         st.caption(
             "As notas de corretagem não trazem proventos. Baixe o extrato de "
@@ -595,7 +656,8 @@ def pagina_proventos() -> None:
                     if ignoradas:
                         st.caption(f"{ignoradas} linha(s) ignorada(s) por falta de "
                                    "ticker ou de data reconhecível.")
-                    if st.button(f"Importar {len(tabela)} provento(s)", type="primary"):
+                    if st.button(f"Importar {len(tabela)} provento(s)", type="primary",
+                                 icon=":material/check_circle:"):
                         novas = salvar_proventos(conexao, usuario_id, tabela.to_dict("records"))
                         st.session_state["proventos_importados"] = (novas, len(tabela) - novas)
                         st.rerun()
@@ -608,30 +670,34 @@ def pagina_proventos() -> None:
         st.success(aviso)
 
     # -- Lançamento manual -------------------------------------------------
-    with st.form("form_provento", clear_on_submit=True):
-        col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 1])
-        with col1:
-            data_provento = st.date_input("Data", value=date.today())
-        with col2:
-            ticker_provento = st.text_input("Ticker", placeholder="MXRF11")
-        with col3:
-            tipo_provento = st.selectbox("Tipo", TIPOS)
-        with col4:
-            quantidade_provento = st.number_input("Quantidade", value=0.0, step=1.0)
-        with col5:
-            valor_provento = st.number_input("Valor (R$)", value=0.0, step=0.01, format="%.2f")
+    with st.expander(":material/add_circle: Lançar provento manualmente"):
+        with st.form("form_provento", clear_on_submit=True):
+            col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 1])
+            with col1:
+                data_provento = st.date_input("Data", value=date.today())
+            with col2:
+                ticker_provento = st.text_input("Ticker", placeholder="MXRF11")
+            with col3:
+                tipo_provento = st.selectbox("Tipo", TIPOS)
+            with col4:
+                quantidade_provento = st.number_input("Quantidade", value=0.0, step=1.0)
+            with col5:
+                valor_provento = st.number_input("Valor (R$)", value=0.0, step=0.01,
+                                                 format="%.2f")
 
-        if st.form_submit_button("Adicionar provento", type="primary"):
-            if not ticker_provento.strip():
-                st.error("Informe o ticker do provento.")
-            else:
-                adicionar_provento(conexao, usuario_id, data_provento.isoformat(),
-                                   ticker_provento.strip(), tipo_provento,
-                                   quantidade_provento, valor_provento)
-                st.rerun()
+            if st.form_submit_button("Adicionar provento", type="primary",
+                                     icon=":material/add:"):
+                if not ticker_provento.strip():
+                    st.error("Informe o ticker do provento.")
+                else:
+                    adicionar_provento(conexao, usuario_id, data_provento.isoformat(),
+                                       ticker_provento.strip(), tipo_provento,
+                                       quantidade_provento, valor_provento)
+                    st.rerun()
 
     if proventos.empty:
-        st.info("Nenhum provento registrado ainda.")
+        tema.vazio("Nenhum provento registrado ainda. Importe um extrato ou "
+                   "lance manualmente.")
         return
 
     # -- Resumo ------------------------------------------------------------
@@ -641,11 +707,15 @@ def pagina_proventos() -> None:
     ])
     irrf_total_jcp = detalhe["irrf"].sum()
 
-    p1, p2, p3, p4 = st.columns(4)
-    p1.metric("Total recebido", _moeda(proventos["valor"].sum()))
-    p2.metric("Lançamentos", len(proventos))
-    p3.metric("Ativos distintos", proventos["ticker"].nunique())
-    p4.metric("IRRF de JCP (15%)", _moeda(irrf_total_jcp))
+    tema.kpis([
+        {"rotulo": "Total recebido", "valor": _moeda(proventos["valor"].sum()),
+         "icone": "\U0001F4B0"},
+        {"rotulo": "Lançamentos", "valor": len(proventos), "icone": "\U0001F4C4"},
+        {"rotulo": "Ativos distintos", "valor": proventos["ticker"].nunique(),
+         "icone": "\U0001F3E6"},
+        {"rotulo": "IRRF de JCP (15%)", "valor": _moeda(irrf_total_jcp),
+         "icone": "\U0001F9FE"},
+    ])
     st.caption(
         "O IRRF do JCP é retido na fonte com tributação **exclusiva**: é definitivo "
         "e não entra no DARF 6015 do IR mensal da renda variável — serve para "
@@ -653,7 +723,7 @@ def pagina_proventos() -> None:
         "lançado como bruto; se o extrato trouxer o valor já líquido, informe o bruto."
     )
 
-    st.markdown("**Por tipo de provento**")
+    tema.secao("Por tipo de provento")
     por_tipo = proventos.groupby("tipo")["valor"].agg(
         Lancamentos="count", Valor="sum"
     ).reset_index()
@@ -663,27 +733,28 @@ def pagina_proventos() -> None:
     ]
     st.dataframe(por_tipo.rename(columns=ROTULOS_PROVENTO), width="stretch", hide_index=True)
 
-    st.markdown("**Proventos por mês**")
+    tema.secao("Proventos por mês")
     por_mes_prov = proventos.copy()
     por_mes_prov["mes"] = pd.to_datetime(por_mes_prov["data"]).dt.strftime("%Y-%m")
-    st.bar_chart(por_mes_prov.groupby("mes")["valor"].sum())
+    st.bar_chart(por_mes_prov.groupby("mes")["valor"].sum(), height=320)
 
-    st.markdown("**Detalhamento**")
+    tema.secao("Detalhamento")
     st.dataframe(detalhe.drop(columns=["id"]).rename(columns=ROTULOS_PROVENTO),
                  width="stretch", hide_index=True)
 
-    remover = st.selectbox(
-        "Remover lançamento",
-        options=list(proventos["id"]),
-        format_func=lambda i: (
-            f"{proventos.loc[proventos['id'] == i, 'data'].iloc[0]} — "
-            f"{proventos.loc[proventos['id'] == i, 'ticker'].iloc[0]} — "
-            f"{_moeda(proventos.loc[proventos['id'] == i, 'valor'].iloc[0])}"
-        ),
-    )
-    if st.button("Remover selecionado"):
-        remover_provento(conexao, usuario_id, remover)
-        st.rerun()
+    with st.expander(":material/delete: Remover lançamento"):
+        remover = st.selectbox(
+            "Remover lançamento",
+            options=list(proventos["id"]),
+            format_func=lambda i: (
+                f"{proventos.loc[proventos['id'] == i, 'data'].iloc[0]} — "
+                f"{proventos.loc[proventos['id'] == i, 'ticker'].iloc[0]} — "
+                f"{_moeda(proventos.loc[proventos['id'] == i, 'valor'].iloc[0])}"
+            ),
+        )
+        if st.button("Remover selecionado", icon=":material/delete:"):
+            remover_provento(conexao, usuario_id, remover)
+            st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -691,27 +762,42 @@ def pagina_proventos() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_relatorios() -> None:
-    st.subheader("Exportar dados")
+    tema.cabecalho(
+        "Exportar dados",
+        "Baixe suas operações, posição e apuração para conferência, planilha "
+        "ou backup pessoal.",
+        "\U0001F4E5",
+    )
 
     if not tem_dados:
-        st.info("Nada para exportar ainda.")
+        tema.vazio("Nada para exportar ainda. Importe notas na página "
+                   "**Upload de Notas**.")
     else:
         colunas_extrato = ["data", "tipo", "ticker", "grupo", "mercado", "quantidade",
                            "preco", "valor_total", "taxas", "resultado", "nota", "corretora"]
 
+        tema.kpis([
+            {"rotulo": "Operações", "valor": len(operacoes), "icone": "\U0001F501"},
+            {"rotulo": "Notas", "valor": len(notas), "icone": "\U0001F4C4"},
+            {"rotulo": "Competências apuradas", "valor": len(tabela_ir),
+             "icone": "\U0001F4C5"},
+        ])
+
+        tema.secao("Baixar arquivos")
         col1, col2 = st.columns(2)
         with col1:
             st.download_button(
-                "⬇️ Operações (CSV)",
+                "Operações (CSV)",
                 data=_to_csv(operacoes[colunas_extrato]),
                 file_name=f"operacoes_{date.today():%Y%m%d}.csv",
                 mime="text/csv",
                 width="stretch",
+                icon=":material/table_view:",
             )
         with col2:
             if saas.pode_exportar_excel(conexao, usuario_id):
                 st.download_button(
-                    "⬇️ Consolidado (Excel)",
+                    "Consolidado (Excel)",
                     data=_to_excel({
                         "operacoes": operacoes[colunas_extrato],
                         "posicao": posicao,
@@ -723,6 +809,7 @@ def pagina_relatorios() -> None:
                     file_name=f"relatorio_{date.today():%Y%m%d}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     width="stretch",
+                    icon=":material/grid_on:",
                 )
             else:
                 st.info(
@@ -730,14 +817,13 @@ def pagina_relatorios() -> None:
                     "PRO. Assine em **Planos e Assinatura** para liberar."
                 )
 
-        st.divider()
-        st.markdown("**Prévia — Apuração de IR**")
+        tema.secao("Prévia — Apuração de IR")
         if tabela_ir.empty:
             st.caption("Sem apuração no período.")
         else:
             st.dataframe(tabela_ir, width="stretch", hide_index=True)
 
-        st.markdown("**Prévia — Operações**")
+        tema.secao("Prévia — Operações")
         st.dataframe(operacoes[colunas_extrato], width="stretch", hide_index=True)
 
 
@@ -746,14 +832,18 @@ def pagina_relatorios() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_planos() -> None:
-    st.subheader("\U0001F4B3 Planos e assinatura")
+    tema.cabecalho(
+        "Planos e assinatura",
+        "Compare os planos e libere os recursos avançados quando precisar.",
+        "\U0001F4B3",
+    )
 
     if saas.eh_pro(conexao, usuario_id):
         st.success(f"Você é assinante do plano **{saas.rotulo_plano(conexao, usuario_id)}**.")
     else:
         st.info(f"Você está no plano **{saas.rotulo_plano(conexao, usuario_id)}**.")
 
-    st.markdown("**Planos disponíveis**")
+    tema.secao("Planos disponíveis")
     planos = listar_planos(conexao)
     if planos.empty:
         st.warning("Nenhum plano configurado.")
@@ -761,7 +851,7 @@ def pagina_planos() -> None:
 
     colunas = st.columns(len(planos))
     for coluna, (_, plano) in zip(colunas, planos.iterrows()):
-        with coluna:
+        with coluna, st.container(border=True):
             st.markdown(f"#### {plano['nome']}")
             preco = ("Grátis" if float(plano["preco_mensal"]) <= 0
                      else f"{_moeda(plano['preco_mensal'])}/mês")
@@ -774,13 +864,11 @@ def pagina_planos() -> None:
             if plano["descricao"]:
                 st.caption(plano["descricao"])
 
-    st.divider()
-
     pro = obter_plano(conexao, "pro")
     if pro is None:
         st.warning("Plano PRO não configurado.")
     elif not saas.eh_pro(conexao, usuario_id):
-        st.markdown("**Assinar o PRO**")
+        tema.secao("Assinar o PRO")
         st.caption("Checkout **simulado** — nenhuma cobrança real é efetuada.")
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -807,7 +895,8 @@ def pagina_planos() -> None:
             f"**{_moeda(total)}**"
         )
 
-        if st.button("Confirmar assinatura", type="primary"):
+        if st.button("Confirmar assinatura", type="primary",
+                     icon=":material/workspace_premium:"):
             try:
                 resultado = saas.assinar(conexao, usuario_id, "pro", forma=forma,
                                          codigo_cupom=codigo_cupom or None,
@@ -825,29 +914,32 @@ def pagina_planos() -> None:
 
     assinatura = assinatura_ativa(conexao, usuario_id)
     if assinatura is not None:
-        st.divider()
-        st.markdown("**Assinatura vigente**")
-        a1, a2, a3, a4 = st.columns(4)
-        a1.metric("Plano", assinatura["plano_nome"] or assinatura["plano_codigo"])
-        a2.metric("Início", assinatura["inicio"])
-        a3.metric("Renova até", assinatura["fim"])
-        a4.metric("Valor", _moeda(assinatura["valor_pago"]))
-        if st.button("Cancelar assinatura"):
+        tema.secao("Assinatura vigente")
+        tema.kpis([
+            {"rotulo": "Plano",
+             "valor": assinatura["plano_nome"] or assinatura["plano_codigo"],
+             "icone": "\U0001F31F"},
+            {"rotulo": "Início", "valor": assinatura["inicio"], "icone": "\U0001F4C6"},
+            {"rotulo": "Renova até", "valor": assinatura["fim"], "icone": "\U0001F501"},
+            {"rotulo": "Valor", "valor": _moeda(assinatura["valor_pago"]),
+             "icone": "\U0001F4B0"},
+        ])
+        if st.button("Cancelar assinatura", icon=":material/cancel:"):
             cancelar_assinatura(conexao, usuario_id)
             st.success("Assinatura cancelada. Você voltou ao plano Gratuito.")
             st.rerun()
 
-    st.divider()
+    tema.secao("Meus pagamentos e notas fiscais")
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**Meus pagamentos**")
+        st.markdown("**Pagamentos**")
         pagamentos = listar_pagamentos(conexao, usuario_id)
         if pagamentos.empty:
             st.caption("Nenhum pagamento registrado.")
         else:
             st.dataframe(pagamentos, width="stretch", hide_index=True)
     with col2:
-        st.markdown("**Minhas notas fiscais**")
+        st.markdown("**Notas fiscais**")
         notas_fiscais = listar_notas_fiscais(conexao, usuario_id)
         if notas_fiscais.empty:
             st.caption("Nenhuma nota fiscal emitida.")
@@ -860,27 +952,36 @@ def pagina_planos() -> None:
 # ---------------------------------------------------------------------------
 
 def pagina_conta() -> None:
-    st.subheader("\U0001F464 Minha conta")
+    tema.cabecalho(
+        "Minha conta",
+        "Seus dados de acesso, o plano vigente e a troca de senha.",
+        "\U0001F464",
+    )
 
     usuario = obter_usuario(conexao, usuario_id)
     if usuario is None:
         st.error("Conta não encontrada.")
         return
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Usuário", usuario["usuario"])
-    c2.metric("Plano", saas.rotulo_plano(conexao, usuario_id))
-    c3.metric("Perfil", "Administrador" if usuario["is_admin"] else "Investidor")
-    st.caption(f"E-mail: {usuario['email']} · Cadastro em {(usuario['criado_em'] or '')[:10]}")
+    tema.kpis([
+        {"rotulo": "Usuário", "valor": usuario["usuario"], "icone": "\U0001F464"},
+        {"rotulo": "Plano", "valor": saas.rotulo_plano(conexao, usuario_id),
+         "icone": "\U0001F4B3"},
+        {"rotulo": "Perfil", "valor": "Administrador" if usuario["is_admin"] else "Investidor",
+         "icone": "\U0001F6E1\uFE0F"},
+        {"rotulo": "Cadastro em", "valor": (usuario["criado_em"] or "")[:10],
+         "icone": "\U0001F4C6"},
+    ])
+    st.caption(f"E-mail: {usuario['email']}")
 
-    st.divider()
-    st.markdown("**Alterar senha**")
+    tema.secao("Alterar senha")
     with st.form("form_alterar_senha"):
         senha_atual = st.text_input("Senha atual", type="password", key="ct_atual")
         nova = st.text_input("Nova senha", type="password", key="ct_nova")
         confirmacao = st.text_input("Confirme a nova senha", type="password",
                                     key="ct_confirmacao")
-        if st.form_submit_button("Alterar senha", type="primary"):
+        if st.form_submit_button("Alterar senha", type="primary",
+                                 icon=":material/lock_reset:"):
             if len(nova) < auth.TAMANHO_MINIMO:
                 st.error(f"A senha deve ter ao menos {auth.TAMANHO_MINIMO} caracteres.")
             elif nova != confirmacao:

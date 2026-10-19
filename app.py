@@ -38,19 +38,25 @@ apuração oficial (GCAP/DIRPF) nem a orientação de um contador.
 
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
 import admin
 import auth
 import paginas
 import saas
+import tema
 from persistencia import obter_usuario
 
 st.set_page_config(
     page_title="Gestor de Investimentos B3",
     page_icon="\U0001F4C8",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
+
+tema.aplicar()
 
 
 # ---------------------------------------------------------------------------
@@ -142,13 +148,18 @@ def _aba_recuperar(conexao) -> None:
 def tela_autenticacao() -> None:
     """Tela de entrada com login, cadastro e recuperação de senha."""
     conexao = paginas.obter_conexao()
-    st.title("\U0001F512 Gestor de Investimentos B3")
+    st.markdown(
+        '<div class="mp-marca"><div class="logo">\U0001F4C8</div>'
+        "<h1>Gestor de Investimentos B3</h1></div>",
+        unsafe_allow_html=True,
+    )
     st.caption(
         "Entre na sua conta ou crie uma agora. As senhas são gravadas apenas "
         "como **hash PBKDF2** no ``dados.db`` local — nunca em claro."
     )
     aba_entrar, aba_criar, aba_recuperar = st.tabs(
-        ["Entrar", "Criar conta", "Recuperar senha"])
+        [":material/login: Entrar", ":material/person_add: Criar conta",
+         ":material/lock_reset: Recuperar senha"])
     with aba_entrar:
         _aba_entrar(conexao)
     with aba_criar:
@@ -179,46 +190,52 @@ if usuario_atual is None or not usuario_atual["ativo"]:
 st.session_state["is_admin"] = bool(usuario_atual["is_admin"])
 
 with st.sidebar:
-    st.markdown(f"#### \U0001F464 {usuario_atual['usuario']}")
+    st.markdown(
+        '<div style="display:flex;align-items:center;gap:.55rem;padding:.1rem 0 .45rem">'
+        '<span style="font-size:1.45rem">\U0001F4C8</span>'
+        "<span style=\"font-family:'Poppins',sans-serif;font-weight:600;"
+        'font-size:1.02rem;color:#EAF4F2">Gestor de Investimentos</span></div>'
+        f'<div style="color:#9EC9C1;font-size:.8rem;margin-bottom:.6rem">'
+        f"Olá, <b style='color:#EAF4F2'>{html.escape(str(usuario_atual['usuario']))}</b>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    rotulo_plano = saas.rotulo_plano(conexao, usuario_id)
     if saas.eh_pro(conexao, usuario_id):
-        st.success(f"\U0001F48E Plano **{saas.rotulo_plano(conexao, usuario_id)}**")
+        tema.mostrar_chip(f"Plano {rotulo_plano}", "pro", "\U0001F48E")
     else:
-        st.info(f"\U0001F193 Plano **{saas.rotulo_plano(conexao, usuario_id)}**")
+        tema.mostrar_chip(f"Plano {rotulo_plano}", "free", "\U0001F381")
     if st.session_state["is_admin"]:
-        st.caption("\U0001F6E1\uFE0F Perfil: Administrador")
-    st.divider()
-    if st.button("Sair", icon="\U0001F513", width="stretch"):
+        tema.mostrar_chip("Administrador", "admin", "\U0001F6E1\uFE0F")
+    st.write("")
+    if st.button("Sair", icon=":material/logout:", width="stretch"):
         st.session_state.clear()
         st.rerun()
-
-st.title("\U0001F4C8 Gestor de Investimentos B3")
-st.caption(
-    "Importe notas de corretagem em PDF e acompanhe posição, proventos e IR "
-    "automaticamente. Dados gravados localmente em SQLite (com deduplicação por nota)."
-)
 
 paginas.carregar(usuario_id)
 
 paginas_investidor = [
     st.Page(paginas.pagina_upload, title="Upload de Notas",
-            icon="\U0001F4C1", default=True),
-    st.Page(paginas.pagina_visao, title="Visão Geral", icon="\U0001F4CA"),
-    st.Page(paginas.pagina_extrato, title="Extrato", icon="\U0001F9FE"),
-    st.Page(paginas.pagina_patrimonio, title="Meu Patrimônio", icon="\U0001F4BC"),
-    st.Page(paginas.pagina_ir, title="Apuração de IR", icon="\U0001F4B0"),
-    st.Page(paginas.pagina_darf, title="DARF", icon="\U0001F9EE"),
-    st.Page(paginas.pagina_proventos, title="Proventos", icon="\U0001F4B5"),
-    st.Page(paginas.pagina_relatorios, title="Relatórios", icon="\U0001F4E5"),
-    st.Page(paginas.pagina_planos, title="Planos e Assinatura", icon="\U0001F4B3"),
-    st.Page(paginas.pagina_conta, title="Minha Conta", icon="\U0001F464"),
+            icon=":material/upload_file:", default=True),
+    st.Page(paginas.pagina_visao, title="Visão Geral", icon=":material/dashboard:"),
+    st.Page(paginas.pagina_extrato, title="Extrato", icon=":material/receipt_long:"),
+    st.Page(paginas.pagina_patrimonio, title="Meu Patrimônio",
+            icon=":material/account_balance_wallet:"),
+    st.Page(paginas.pagina_ir, title="Apuração de IR", icon=":material/calculate:"),
+    st.Page(paginas.pagina_darf, title="DARF", icon=":material/request_quote:"),
+    st.Page(paginas.pagina_proventos, title="Proventos", icon=":material/payments:"),
+    st.Page(paginas.pagina_relatorios, title="Relatórios", icon=":material/download:"),
+    st.Page(paginas.pagina_planos, title="Planos e Assinatura",
+            icon=":material/workspace_premium:"),
+    st.Page(paginas.pagina_conta, title="Minha Conta", icon=":material/person:"),
 ]
 
 paginas_admin = [
-    st.Page(admin.pagina_dashboard, title="Visão Geral", icon="\U0001F4CA"),
-    st.Page(admin.pagina_contas, title="Contas", icon="\U0001F465"),
-    st.Page(admin.pagina_assinaturas, title="Assinaturas", icon="\U0001F4CB"),
-    st.Page(admin.pagina_pagamentos, title="Pagamentos", icon="\U0001F4B3"),
-    st.Page(admin.pagina_cupons, title="Cupons", icon="\U0001F39F\uFE0F"),
+    st.Page(admin.pagina_dashboard, title="Visão Geral", icon=":material/insights:"),
+    st.Page(admin.pagina_contas, title="Contas", icon=":material/group:"),
+    st.Page(admin.pagina_assinaturas, title="Assinaturas", icon=":material/assignment:"),
+    st.Page(admin.pagina_pagamentos, title="Pagamentos", icon=":material/credit_card:"),
+    st.Page(admin.pagina_cupons, title="Cupons", icon=":material/local_offer:"),
 ]
 
 if st.session_state["is_admin"]:
