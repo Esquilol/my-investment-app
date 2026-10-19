@@ -22,8 +22,8 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - `posicao_atual(operacoes)`: posição em custódia com quantidade e preço médio.
 
 ### Adicionado — Persistência (`persistencia.py`)
-- Camada SQLite (`dados.db`) com 4 tabelas: `notas`, `operacoes`,
-  `prejuizos_anteriores` e `proventos`.
+- Camada SQLite (`dados.db`) com 5 tabelas: `notas`, `operacoes`,
+  `prejuizos_anteriores`, `proventos` e `usuarios`.
 - **Deduplicação**: `notas` tem `UNIQUE(corretora, numero)` e `operacoes` usa hash
   único; reimportar PDFs sobrepostos não duplica registros.
 - `salvar_notas`, `carregar_operacoes`, `carregar_notas`, `resumo_importacao`,
@@ -44,6 +44,15 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - `irrf_jcp(valor)`: IRRF de JCP a 15%, tratado como **tributação exclusiva** —
   definitivo e **fora do DARF 6015** do IR mensal da renda variável.
 
+### Adicionado — Login local (`auth.py`)
+- Login **local com senha**, sem dependências externas: PBKDF2-HMAC-SHA256 com
+  sal aleatório, no formato `algoritmo$iteracoes$sal$hash`.
+- A senha **não é gravada em claro**; a comparação usa `secrets.compare_digest`
+  (tempo constante). A credencial fica na tabela `usuarios` do `dados.db`, que
+  está no `.gitignore`.
+- Um único usuário (uso pessoal). No primeiro acesso o app pede para definir a
+  senha; depois, exige usuário e senha. Botão **Sair** na barra lateral.
+
 ### Adicionado — Interface
 - Reescrita com **8 páginas navegáveis** (`st.navigation`): Upload de Notas,
   Visão Geral, Extrato, Meu Patrimônio, Apuração de IR, DARF, Proventos e
@@ -55,13 +64,16 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   `6015` e vencimento calculado no último dia útil do mês seguinte.
 - Página **Proventos** com importação de extrato (CSV/XLSX), lançamento manual,
   resumo por tipo (com o IRRF do JCP) e gráfico mensal.
+- **Proteção por login**: o app só mostra as páginas após a autenticação; o
+  primeiro acesso define a senha e há botão **Sair**.
 
 ### Adicionado — Validação (`validar.py`)
 - Suíte sem dependência de pytest, executável com `python validar.py` (exit code 0/1).
 - Cobre: classificação de ativos, reconciliação com os dados de referência (Set/2026),
   isenção, compensação entre meses, compensação de IRRF entre meses, deduplicação
   com os 4 PDFs reais, a reconciliação dos futuros (teste 7, `ajuste do dia −
-  despesas da nota`) e a importação de proventos com o IRRF de JCP (teste 8).
+  despesas da nota`), a importação de proventos com o IRRF de JCP (teste 8) e o
+  login local (teste 9, hash e verificação da senha).
 - Resultado atual: **todas as verificações passam** (`EXIT=0`), incluindo
   `IRRFFinal = 192,65` e `IRRFBase = 205,79` idênticos aos dados de referência.
 

@@ -2,7 +2,8 @@
 validar.py
 ----------
 Verificação automática do motor fiscal (``regras.py``), da persistência
-(``persistencia.py``) e da importação de proventos (``proventos.py``).
+(``persistencia.py``), da importação de proventos (``proventos.py``) e do
+login local (``auth.py``).
 
 Não depende de ``pytest`` — basta executar:
 
@@ -21,6 +22,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from auth import definir_senha, gerar_hash, tem_usuario, verificar_senha
 from parser import extract_notas
 from persistencia import (
     carregar_notas,
@@ -366,6 +368,44 @@ def teste_proventos() -> None:
             conexao.close()
 
 
+def teste_login() -> None:
+    print("\n9. Login local: hash da senha e sessão")
+    with tempfile.TemporaryDirectory() as pasta:
+        conexao = conectar(Path(pasta) / "teste.db")
+        try:
+            _checar("sem usuário no início", tem_usuario(conexao), False)
+
+            definir_senha(conexao, "investidor", "segredo123")
+            _checar("usuário criado", tem_usuario(conexao), True)
+            _checar("senha correta aceita",
+                    verificar_senha(conexao, "investidor", "segredo123"), True)
+            _checar("senha errada recusada",
+                    verificar_senha(conexao, "investidor", "segredo124"), False)
+            _checar("usuário errado recusado",
+                    verificar_senha(conexao, "outro", "segredo123"), False)
+
+            registro = conexao.execute(
+                "SELECT hash FROM usuarios WHERE id = 1").fetchone()["hash"]
+            _checar("senha não gravada em claro", "segredo123" in registro, False)
+            _checar("hash reconhecido pelo formato",
+                    registro.split("$")[0], "pbkdf2_sha256")
+
+            mesmo = gerar_hash("segredo123", sal=b"0123456789abcdef")
+            _checar("hash determinístico com o mesmo sal", mesmo,
+                    gerar_hash("segredo123", sal=b"0123456789abcdef"))
+            _checar("sal diferente gera hash diferente",
+                    gerar_hash("segredo123", sal=b"0123456789abcdef")
+                    != gerar_hash("segredo123", sal=b"fedcba9876543210"), True)
+
+            definir_senha(conexao, "investidor", "novaSenha456")
+            _checar("senha antiga invalidada",
+                    verificar_senha(conexao, "investidor", "segredo123"), False)
+            _checar("nova senha aceita",
+                    verificar_senha(conexao, "investidor", "novaSenha456"), True)
+        finally:
+            conexao.close()
+
+
 def main() -> int:
     print("=" * 78)
     print("VALIDAÇÃO DO MOTOR FISCAL — Gestor de Investimentos B3")
@@ -377,6 +417,7 @@ def main() -> int:
     teste_compensacao()
     teste_irrf_compensacao()
     teste_proventos()
+    teste_login()
 
     pdfs = sorted(Path(r"C:\Users\Esquilo\Downloads").glob("NotaCorretagem_01-09-26_30-09-26*.pdf"))
     teste_deduplicacao(pdfs)

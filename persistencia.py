@@ -82,6 +82,13 @@ CREATE TABLE IF NOT EXISTS proventos (
     quantidade REAL NOT NULL DEFAULT 0,
     valor      REAL NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS usuarios (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    usuario    TEXT NOT NULL,
+    hash       TEXT NOT NULL,
+    criado_em  TEXT
+);
 """
 
 

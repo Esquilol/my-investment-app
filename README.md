@@ -42,11 +42,12 @@ nota de corretagem → extrato de operações → apuração mensal → DARF.
 
 ```
 .
-├── app.py            # Entrada Streamlit (configura a página e monta o menu)
+├── app.py            # Entrada Streamlit: login, configuração e menu de páginas
 ├── paginas.py        # Conteúdo das 8 páginas navegáveis e carga dos dados
 ├── parser.py         # Extrator de operações das notas em PDF (pdfplumber)
-├── persistencia.py   # Camada SQLite (notas, operações, prejuízos, proventos)
+├── persistencia.py   # Camada SQLite (notas, operações, prejuízos, proventos, usuário)
 ├── proventos.py      # Importação do extrato de proventos e IRRF de JCP
+├── auth.py           # Login local: hash PBKDF2 da senha e verificação
 ├── regras.py         # Motor fiscal (classificação, preço médio, apuração mensal)
 ├── validar.py        # Suíte de validação do motor fiscal (sem pytest)
 ├── requirements.txt  # Dependências
@@ -86,12 +87,20 @@ python -m streamlit run app.py
 
 O navegador abrirá em `http://localhost:8501`.
 
+## Acesso
+
+O app é protegido por **login local com senha**. No primeiro acesso, defina a senha;
+nas próximas vezes, informe usuário e senha. A senha é gravada apenas como **hash
+PBKDF2-HMAC-SHA256** (com sal aleatório por usuário) na tabela `usuarios` do
+`dados.db`, que fica **fora do versionamento** — nenhuma credencial vai para o
+repositório. Use o botão **Sair** na barra lateral para encerrar a sessão.
+
 ## Validação
 
 A suíte `validar.py` confere o motor fiscal contra os números de referência de
 Set/2026 e cobre classificação de ativos, isenção, compensação de prejuízo,
-compensação de IRRF, deduplicação de notas e a importação de proventos com o
-IRRF de JCP:
+compensação de IRRF, deduplicação de notas, a importação de proventos com o
+IRRF de JCP e o login local (hash e verificação da senha):
 
 ```bash
 python validar.py
@@ -101,12 +110,13 @@ Retorna `EXIT=0` quando todas as verificações passam.
 
 ## Como usar
 
-1. Em **📁 Upload de Notas**, envie os PDFs das notas de corretagem.
-2. Em **💵 Proventos**, importe o extrato de proventos (CSV/XLSX) da corretora.
-3. Confira a posição em **💼 Meu Patrimônio** e as operações em **🧾 Extrato**.
-4. Em **💰 Apuração de IR**, ajuste os saldos de prejuízo anteriores, se houver.
-5. Em **🧮 DARF**, veja o valor a recolher da competência.
-6. Exporte em **📥 Relatórios** (CSV ou Excel).
+1. Entre com a **senha** (definida no primeiro acesso).
+2. Em **📁 Upload de Notas**, envie os PDFs das notas de corretagem.
+3. Em **💵 Proventos**, importe o extrato de proventos (CSV/XLSX) da corretora.
+4. Confira a posição em **💼 Meu Patrimônio** e as operações em **🧾 Extrato**.
+5. Em **💰 Apuração de IR**, ajuste os saldos de prejuízo anteriores, se houver.
+6. Em **🧮 DARF**, veja o valor a recolher da competência.
+7. Exporte em **📥 Relatórios** (CSV ou Excel).
 
 ## Deploy
 
