@@ -172,6 +172,10 @@ saldos_finais = None
 posicao = None
 tem_dados = False
 
+#: Página de DARF registrada em ``app.py``; preenchida após a navegação existir
+#: e usada pelo atalho de emissão da página de upload.
+PAGINA_DARF = None
+
 
 def carregar(identificador: int) -> None:
     """Lê o banco SQLite do usuário e recalcula os agregados das páginas."""
@@ -209,6 +213,68 @@ def carregar(identificador: int) -> None:
 # Página 1 — Upload
 # ---------------------------------------------------------------------------
 
+def _texto_progresso(indice: int, total: int) -> str:
+    """Texto da barra de progresso: ``2 de 5 notas — 40%``."""
+    return f"{indice} de {total} nota(s) processada(s) — {round(indice / total * 100)}%"
+
+
+def _botao_darf(rotulo: str = "Emitir DARF", chave: str = "btn_darf") -> None:
+    """Botão que leva direto à página de emissão do DARF."""
+    if st.button(rotulo, type="primary", icon=":material/receipt_long:",
+                 width="stretch", key=chave, disabled=PAGINA_DARF is None):
+        st.switch_page(PAGINA_DARF)
+
+
+def _secao_darf() -> None:
+    """Atalho para emitir o DARF da competência mais recente apurada."""
+    tema.secao("Emitir DARF")
+    if tabela_ir.empty:
+        st.caption(
+            "Envie a primeira nota e o valor do DARF da competência aparece "
+            "aqui — com vencimento e código de receita prontos para o Sicalc."
+        )
+        return
+
+    competencia = str(tabela_ir["mes"].iloc[-1])
+    linha = tabela_ir[tabela_ir["mes"] == competencia].iloc[0]
+    recolher = float(linha["DARFFinal"])
+
+    esquerda, direita = st.columns([2, 1])
+    with esquerda:
+        if recolher > 0:
+            st.markdown(
+                f"**{_nome_mes(competencia)}** — recolher {_moeda(recolher)} até "
+                f"{_vencimento_darf(competencia):%d/%m/%Y} "
+                f"(código {CODIGO_RECEITA_DARF})."
+            )
+        else:
+            st.markdown(f"**{_nome_mes(competencia)}** — {linha['ExemptionMessage']}.")
+    with direita:
+        _botao_darf()
+
+
+def _cartao_conclusao(resultado: dict) -> None:
+    """Retorno do processamento: o que foi importado, o que falhou e o próximo passo."""
+    for aviso in resultado["avisos"]:
+        st.warning(aviso)
+    for erro in resultado["erros"]:
+        st.error(erro)
+
+    if not resultado["arquivos"]:
+        st.info("Nenhuma nota nova importada neste envio.")
+        return
+
+    st.success(
+        f"**Concluído** — {resultado['arquivos']} arquivo(s) processado(s), "
+        f"{resultado['notas']} nota(s) e {resultado['operacoes']} operação(ões)."
+    )
+    esquerda, direita = st.columns([2, 1])
+    with esquerda:
+        st.markdown("Sua apuração está pronta. Emita o DARF em um clique.")
+    with direita:
+        _botao_darf("Emitir DARF agora", "btn_darf_conclusao")
+
+
 def pagina_upload() -> None:
     tema.hero(
         "Bem-vindo ao seu Gestor de Investimentos",
@@ -217,6 +283,10 @@ def pagina_upload() -> None:
         "de prejuízo mês a mês.",
         "\U0001F4C8",
     )
+
+    resultado = st.session_state.pop("resultado_upload", None)
+    if resultado is not None:
+        _cartao_conclusao(resultado)
 
     contagem = resumo_importacao(conexao, usuario_id)
     tema.kpis([
@@ -245,35 +315,46 @@ def pagina_upload() -> None:
 
     if st.button("Processar notas", type="primary", icon=":material/bolt:",
                  disabled=not arquivos):
-        notas_novas = operacoes_novas = arquivos_novos = 0
-        for arquivo in arquivos:
+        total = len(arquivos)
+        barra = st.progress(0.0, text=f"0 de {total} nota(s) processada(s) — 0%")
+        resultado = {"notas": 0, "operacoes": 0, "arquivos": 0,
+                     "erros": [], "avisos": []}
+        interrompido = False
+
+        for indice, arquivo in enumerate(arquivos, start=1):
             try:
                 lidas = extract_notas(arquivo, corretora=corretora, arquivo=arquivo.name)
             except Exception as erro:  # noqa: BLE001
-                st.error(f"Falha ao ler {arquivo.name}: {erro}")
+                resultado["erros"].append(f"Falha ao ler {arquivo.name}: {erro}")
+                barra.progress(indice / total, text=_texto_progresso(indice, total))
                 continue
 
             if not lidas:
-                st.warning(f"Nenhuma operação reconhecida em {arquivo.name}.")
+                resultado["avisos"].append(f"Nenhuma operação reconhecida em {arquivo.name}.")
+                barra.progress(indice / total, text=_texto_progresso(indice, total))
                 continue
 
             permitido, aviso = saas.pode_importar(conexao, usuario_id, len(lidas))
             if not permitido:
-                st.error(aviso)
+                resultado["erros"].append(aviso)
+                interrompido = True
                 break
 
             novas, ops = salvar_notas(conexao, lidas, usuario_id)
-            notas_novas += novas
-            operacoes_novas += ops
-            arquivos_novos += 1
+            resultado["notas"] += novas
+            resultado["operacoes"] += ops
+            resultado["arquivos"] += 1
+            barra.progress(indice / total, text=_texto_progresso(indice, total))
 
-            if novas:
-                st.success(f"{arquivo.name}: {novas} nota(s) e {ops} operação(ões) importada(s).")
-            else:
-                st.info(f"{arquivo.name}: notas já importadas anteriormente (nada duplicado).")
+        if interrompido:
+            barra.empty()
+        else:
+            barra.progress(1.0, text=f"Concluído — {total} nota(s) processada(s) — 100%")
 
-        if arquivos_novos:
-            st.rerun()
+        st.session_state["resultado_upload"] = resultado
+        st.rerun()
+
+    _secao_darf()
 
     with st.expander(":material/delete: Limpar dados importados"):
         st.caption(
