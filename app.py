@@ -39,12 +39,14 @@ apuração oficial (GCAP/DIRPF) nem a orientação de um contador.
 from __future__ import annotations
 
 import html
+import secrets
 
 import streamlit as st
 
 import admin
 import auth
 import paginas
+import persistencia as bd
 import saas
 import tema
 from persistencia import obter_usuario
@@ -172,12 +174,35 @@ def tela_autenticacao() -> None:
 # Gate de acesso e navegação
 # ---------------------------------------------------------------------------
 
-if not st.session_state.get("autenticado"):
-    tela_autenticacao()
-    st.stop()
+# MODO DE TESTE — a tela de login está desativada enquanto as funcionalidades
+# do app estão sendo validadas. O app entra direto no painel com um usuário
+# de teste. Para voltar a exigir login, troque o valor abaixo para ``False``.
+MODO_TESTE = True
 
-conexao = paginas.obter_conexao()
-usuario_id = int(st.session_state["usuario_id"])
+
+def _usuario_de_teste(conexao) -> int:
+    """Id do usuário usado no modo de teste; cria um se o banco estiver vazio."""
+    linha = conexao.execute(
+        "SELECT id FROM usuarios ORDER BY is_admin DESC, id LIMIT 1"
+    ).fetchone()
+    if linha is not None:
+        return int(linha["id"])
+    novo_id = auth.criar_conta(conexao, "teste", "teste@local", secrets.token_hex(16))
+    bd.atualizar_usuario(conexao, novo_id, plano_codigo="pro")
+    return novo_id
+
+
+if MODO_TESTE:
+    conexao = paginas.obter_conexao()
+    usuario_id = _usuario_de_teste(conexao)
+    st.session_state.update(autenticado=True, usuario_id=usuario_id)
+else:
+    if not st.session_state.get("autenticado"):
+        tela_autenticacao()
+        st.stop()
+
+    conexao = paginas.obter_conexao()
+    usuario_id = int(st.session_state["usuario_id"])
 
 # Revalida a sessão a cada execução: uma conta desativada pelo administrador
 # derruba o usuário na hora, e o perfil/período do plano são relidos do banco.
@@ -207,8 +232,10 @@ with st.sidebar:
         tema.mostrar_chip(f"Plano {rotulo_plano}", "free", "\U0001F381")
     if st.session_state["is_admin"]:
         tema.mostrar_chip("Administrador", "admin", "\U0001F6E1\uFE0F")
+    if MODO_TESTE:
+        tema.mostrar_chip("Modo de teste", "neutro", "\U0001F9EA")
     st.write("")
-    if st.button("Sair", icon=":material/logout:", width="stretch"):
+    if not MODO_TESTE and st.button("Sair", icon=":material/logout:", width="stretch"):
         st.session_state.clear()
         st.rerun()
 
