@@ -34,6 +34,7 @@ from persistencia import (
     carregar_operacoes,
     carregar_proventos,
     conectar,
+    garantir_esquema,
     gravar_darf_pagamento,
     gravar_prejuizos,
     ler_prejuizos,
@@ -115,7 +116,7 @@ def _conexao():
 
 def obter_conexao():
     """Conexão com o banco, compartilhada por todas as páginas do app."""
-    return _conexao()
+    return garantir_esquema(_conexao())
 
 
 def _moeda(valor: float) -> str:
@@ -224,7 +225,7 @@ def carregar(identificador: int) -> None:
     global resultados, tabela_ir, saldos_finais, posicao, darf_pagamentos, tem_dados
 
     usuario_id = int(identificador)
-    conexao = _conexao()
+    conexao = obter_conexao()
 
     operacoes = carregar_operacoes(conexao, usuario_id)
     notas = carregar_notas(conexao, usuario_id)

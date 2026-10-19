@@ -219,6 +219,13 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   compensado por bucket e o excedente é transportado para as competências seguintes.
   Com os dados reais, o IRRF de R$ 0,16 de Swing Trade (mês sem IR a pagar por esse
   bucket) passou a aparecer em vez de ser perdido.
+- **`no such table: darf_pagamentos` no app publicado**: o `CREATE TABLE` só rodava
+  ao abrir a conexão, e a conexão é reaproveitada entre execuções
+  (`st.cache_resource`) — depois de um deploy que criou a tabela, um banco antigo
+  continuava sem ela e qualquer página quebrava. `VERSAO_ESQUEMA` subiu para **3** e
+  a nova função `persistencia.garantir_esquema` confere o `PRAGMA user_version` a
+  cada execução, aplicando o esquema quando o banco está atrás — sem tocar nos dados
+  já existentes.
 
 ## Base
 - Projeto construído a partir do mapeamento de **27 telas** de um sistema de

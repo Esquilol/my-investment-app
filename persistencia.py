@@ -39,7 +39,8 @@ from parser import Nota
 CAMINHO_PADRAO = Path(__file__).with_name("dados.db")
 
 #: Versão do esquema gravada em ``PRAGMA user_version``.
-VERSAO_ESQUEMA = 2
+#: 3 — acrescenta a tabela ``darf_pagamentos``.
+VERSAO_ESQUEMA = 3
 
 _ESQUEMA = """
 CREATE TABLE IF NOT EXISTS usuarios (
@@ -319,6 +320,28 @@ def conectar(caminho: Path | str | None = None) -> sqlite3.Connection:
     conexao = sqlite3.connect(str(destino), check_same_thread=False)
     conexao.row_factory = sqlite3.Row
     conexao.execute("PRAGMA foreign_keys = ON")
+    conexao.executescript(_ESQUEMA)
+    _migrar(conexao)
+    _semear(conexao)
+    conexao.commit()
+    return conexao
+
+
+def garantir_esquema(conexao: sqlite3.Connection) -> sqlite3.Connection:
+    """
+    Aplica o esquema em uma conexão já aberta, **só se o banco estiver atrás**.
+
+    A conexão é reaproveitada entre execuções do Streamlit
+    (``st.cache_resource``), então o ``CREATE TABLE`` de ``conectar`` roda uma
+    única vez por processo: um deploy que acrescente tabelas novas não
+    recriaria a conexão, e as consultas falhariam com *no such table*. Aqui o
+    ``PRAGMA user_version`` é conferido a cada execução e o esquema é aplicado
+    quando a versão do banco é menor que a do código.
+    """
+    versao = conexao.execute("PRAGMA user_version").fetchone()[0]
+    if versao == VERSAO_ESQUEMA:
+        return conexao
+
     conexao.executescript(_ESQUEMA)
     _migrar(conexao)
     _semear(conexao)
@@ -971,6 +994,7 @@ def gravar_darf_pagamento(conexao: sqlite3.Connection, usuario_id: int,
 
 __all__ = [
     "CAMINHO_PADRAO", "VERSAO_ESQUEMA", "PLANOS_PADRAO", "agora", "conectar",
+    "garantir_esquema",
     "criar_usuario", "obter_usuario", "obter_por_login", "obter_por_email",
     "listar_usuarios", "atualizar_usuario", "contar_usuarios",
     "listar_planos", "obter_plano",
