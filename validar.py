@@ -626,7 +626,7 @@ def teste_parametros_monitor() -> None:
 
 def main() -> int:
     print("=" * 78)
-    print("VALIDAÇÃO DO MOTOR FISCAL — Gestor de Investimentos B3")
+    print("VALIDAÇÃO DO MOTOR FISCAL — FiscoTrade")
     print("=" * 78)
 
     teste_classificacao()

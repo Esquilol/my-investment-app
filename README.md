@@ -1,4 +1,4 @@
-# 📈 Gestor de Investimentos B3
+# 📈 FiscoTrade
 
 Aplicativo em **Streamlit** para gerenciar investimentos e apurar **Imposto de Renda**
 automaticamente a partir de **notas de corretagem em PDF** (sem digitação manual).

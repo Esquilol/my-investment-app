@@ -25,7 +25,7 @@ import streamlit as st
 import persistencia as bd
 import tema
 
-MARCA = "Gestor de Investimentos B3"
+MARCA = "FiscoTrade"
 
 #: Seções do app mostradas em cartões na landing (apenas o que ele faz hoje).
 FUNCIONALIDADES = [

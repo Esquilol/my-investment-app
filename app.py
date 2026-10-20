@@ -54,7 +54,7 @@ import tema
 from persistencia import obter_usuario
 
 st.set_page_config(
-    page_title="Gestor de Investimentos B3",
+    page_title="FiscoTrade",
     page_icon="\U0001F4C8",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -158,7 +158,7 @@ def tela_autenticacao() -> None:
         st.rerun()
     st.markdown(
         '<div class="mp-marca"><div class="logo">\U0001F4C8</div>'
-        "<h1>Gestor de Investimentos B3</h1></div>",
+        "<h1>FiscoTrade</h1></div>",
         unsafe_allow_html=True,
     )
     st.caption(
@@ -209,7 +209,7 @@ with st.sidebar:
         '<div style="display:flex;align-items:center;gap:.55rem;padding:.1rem 0 .45rem">'
         '<span style="font-size:1.45rem">\U0001F4C8</span>'
         "<span style=\"font-family:'Poppins',sans-serif;font-weight:600;"
-        'font-size:1.02rem;color:#EAF4F2">Gestor de Investimentos</span></div>'
+        'font-size:1.02rem;color:#EAF4F2">FiscoTrade</span></div>'
         f'<div style="color:#9EC9C1;font-size:.8rem;margin-bottom:.6rem">'
         f"Olá, <b style='color:#EAF4F2'>{html.escape(str(usuario_atual['usuario']))}</b>"
         "</div>",

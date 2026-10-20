@@ -5,6 +5,25 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Não publicado]
 
+### Alterado — Nome do aplicativo: FiscoTrade
+- O app passou a se chamar **FiscoTrade** em todos os pontos visíveis: título da
+  página (`page_title`), cabeçalho da tela de acesso, título da barra lateral,
+  marca da landing (`landing.MARCA`), saudação da página de upload, `README.md`
+  e o cabeçalho do `validar.py`.
+
+### Corrigido — Acesso do administrador
+- O seed do administrador em `persistencia._semear` ficou **idempotente**: a
+  linha é inserida com `INSERT OR IGNORE` sempre que os segredos existem, e não
+  mais apenas quando o banco não tinha nenhum administrador. Assim o admin é
+  criado mesmo em bancos que já tinham outros usuários (caso típico depois de
+  habilitar os segredos depois do primeiro deploy).
+- Documentado que, **sem os segredos `[admin]` configurados**, nenhum
+  administrador é criado: localmente o arquivo `.streamlit/secrets.toml` (fora
+  do versionamento) e, no Streamlit Cloud, *App settings → Secrets* precisam
+  conter `usuario`, `email` e `senha`. Como o banco SQLite é recriado a cada
+  reinício da nuvem, o admin é semeado de novo automaticamente a cada boot —
+  desde que os segredos estejam presentes.
+
 ### Adicionado — Landing pública e login habilitado
 - **`landing.py`** (novo): página pública mostrada antes do login, com as seções
   **Início** (destaque e o que o app faz), **Planos** e **Dúvidas**, mais os

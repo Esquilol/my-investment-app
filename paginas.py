@@ -433,7 +433,7 @@ def _cartao_conclusao(resultado: dict) -> None:
 
 def pagina_upload() -> None:
     tema.hero(
-        "Bem-vindo ao seu Gestor de Investimentos",
+        "Bem-vindo ao FiscoTrade",
         "Importe as notas de corretagem em PDF e o app calcula posição, proventos e "
         "Imposto de Renda automaticamente — com isenção de R$ 20 mil e compensação "
         "de prejuízo mês a mês.",
