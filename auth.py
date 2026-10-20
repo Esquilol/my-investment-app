@@ -67,7 +67,32 @@ ADMIN_PADRAO_SENHA = _segredo_admin("senha")
 VALIDADE_TOKEN_HORAS = 1
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_USUARIO = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
+
+
+def somente_digitos(texto: str) -> str:
+    """Mantém apenas os dígitos (usado para normalizar o CPF)."""
+    return "".join(c for c in (texto or "") if c.isdigit())
+
+
+def validar_cpf(cpf: str) -> bool:
+    """
+    Confere o CPF pelos **dígitos verificadores**.
+
+    Um CPF é recusado quando não tem 11 dígitos ou quando todos os dígitos são
+    iguais (sequências como ``111.111.111-11`` passam na conta, mas não são
+    CPFs válidos).
+    """
+    digitos = somente_digitos(cpf)
+    if len(digitos) != 11 or digitos == digitos[0] * 11:
+        return False
+    for tamanho in (9, 10):
+        soma = sum(int(digitos[i]) * (tamanho + 1 - i) for i in range(tamanho))
+        digito = (soma * 10) % 11
+        if digito == 10:
+            digito = 0
+        if digito != int(digitos[tamanho]):
+            return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -100,14 +125,16 @@ def conferir_senha(senha: str, registro: str) -> bool:
 # Validações
 # ---------------------------------------------------------------------------
 
-def validar_cadastro(usuario: str, email: str, senha: str,
+def validar_cadastro(nome: str, email: str, cpf: str, senha: str,
                      confirmacao: str) -> str | None:
     """Retorna a mensagem de erro, ou ``None`` se o cadastro estiver válido."""
-    if not _USUARIO.match(usuario.strip()):
-        return ("Usuário deve ter de 3 a 32 caracteres, usando letras, números, "
-                "ponto, hífen ou sublinhado.")
-    if not _EMAIL.match(email.strip()):
+    partes = [parte for parte in (nome or "").split() if len(parte) >= 2]
+    if len(partes) < 2:
+        return "Informe o nome completo (nome e sobrenome)."
+    if not _EMAIL.match((email or "").strip()):
         return "Informe um e-mail válido."
+    if not validar_cpf(cpf):
+        return "Informe um CPF válido (11 dígitos)."
     if len(senha) < TAMANHO_MINIMO:
         return f"A senha deve ter ao menos {TAMANHO_MINIMO} caracteres."
     if senha != confirmacao:
@@ -119,11 +146,35 @@ def validar_cadastro(usuario: str, email: str, senha: str,
 # Contas
 # ---------------------------------------------------------------------------
 
-def criar_conta(conexao: sqlite3.Connection, usuario: str, email: str,
-                senha: str, is_admin: bool = False) -> int:
+def _apelido_livre(conexao: sqlite3.Connection, email: str) -> str:
+    """
+    Gera o apelido interno de login a partir do e-mail.
+
+    O cadastro não pede "usuário": o apelido é derivado da parte antes do ``@``
+    e, se já estiver em uso, recebe um sufixo numérico.
+    """
+    base = re.sub(r"[^A-Za-z0-9._-]", "", (email or "").split("@")[0])[:28]
+    if len(base) < 3:
+        base = (base + "usr")[:32]
+    apelido, numero = base, 1
+    while bd.usuario_em_uso(conexao, apelido):
+        numero += 1
+        apelido = f"{base}{numero}"
+    return apelido
+
+
+def criar_conta(conexao: sqlite3.Connection, nome: str, email: str, cpf: str,
+                senha: str, origem: str | None = None,
+                parceiro_id: int | None = None) -> int:
     """Cadastra um usuário (senha em hash) e devolve o ``id``."""
-    return bd.criar_usuario(conexao, usuario, email, gerar_hash(senha),
-                            is_admin=is_admin, plano_codigo="free")
+    novo_id = bd.criar_usuario(
+        conexao, _apelido_livre(conexao, email), email, gerar_hash(senha),
+        plano_codigo="free", nome=nome.strip(), cpf=somente_digitos(cpf),
+        origem=origem,
+    )
+    if parceiro_id:
+        bd.registrar_indicacao(conexao, novo_id, int(parceiro_id))
+    return novo_id
 
 
 def autenticar(conexao: sqlite3.Connection, login: str, senha: str):

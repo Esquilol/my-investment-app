@@ -5,6 +5,37 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Não publicado]
 
+### Adicionado — Cupom de meses grátis e painel de parceiros
+- **Cupons com dois modos**: a tabela `cupons` ganhou a coluna `tipo`
+  (`percentual` ou `meses`) e `meses_gratis`. No modo percentual o desconto
+  incide sobre a mensalidade; no modo meses o checkout sai **grátis** e a
+  assinatura passa a valer o número de meses concedidos. O formulário do painel
+  administrativo (`admin.pagina_cupons`) permite escolher o modo.
+- **Painel de parceiros** (`admin.pagina_parceiros`): cadastro do parceiro com
+  o **código de indicação**, a **comissão (%)** sobre o que os indicados gastam
+  em planos e o **benefício do indicado** (desconto ou meses grátis do PRO).
+  A tela lista os parceiros com o número de indicados, o total faturado por
+  eles e a **comissão a pagar**, além das indicações registradas.
+- Novas tabelas `parceiros` e `indicacoes` (esquema **v5**); `usuarios` ganhou
+  `nome`, `cpf` e `origem`. A indicação é única por conta (`usuario_id UNIQUE`)
+  e o benefício é consumido no **primeiro checkout** do PRO.
+- O checkout (`paginas.pagina_planos`) exibe o benefício de indicação
+  disponível e trata o cupom de meses grátis; `saas.assinar` aplica, nesta
+  ordem, o cupom informado ou o benefício de indicação não usado.
+
+### Alterado — Cadastro por e-mail (sem campo "Usuário")
+- O formulário **Criar conta** passou a pedir **E-mail, Nome completo, CPF,
+  Senha, Confirme sua senha** e **Onde nos conheceu?** (botão **USE AGORA!**).
+  Não há mais campo "Usuário": o apelido de login é derivado da parte antes do
+  `@` do e-mail (com sufixo numérico em caso de repetição) e o login aceita
+  **apelido, e-mail ou CPF**.
+- O campo **"Onde nos conheceu?"** guarda a origem da conta; quando o texto
+  corresponde ao **código de um parceiro**, a indicação é registrada
+  automaticamente e o indicado passa a ter direito ao benefício configurado.
+- `auth.validar_cpf` confere os dígitos verificadores (recusando sequências
+  repetidas como `111.111.111-11`) e `auth.validar_cadastro` exige nome e
+  sobrenome, e-mail válido, CPF válido e confirmação de senha.
+
 ### Alterado — Nome do aplicativo: FiscoTrade
 - O app passou a se chamar **FiscoTrade** em todos os pontos visíveis: título da
   página (`page_title`), cabeçalho da tela de acesso, título da barra lateral,

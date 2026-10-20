@@ -12,9 +12,10 @@ Por usuário, guarda:
 
 Para a operação SaaS, guarda ainda:
 
-* **usuários** (hash de senha, perfil de acesso, plano e status);
+* **usuários** (nome, CPF, hash de senha, perfil de acesso, plano e status);
 * **planos**, **assinaturas** e **pagamentos**;
 * **cupons** de desconto e **notas fiscais**;
+* os **parceiros** e as **indicações** que trouxeram cada conta nova;
 * a **configuração dos métodos de pagamento**.
 
 O banco fica fora do versionamento (``.gitignore``), de modo que credenciais e
@@ -41,7 +42,9 @@ CAMINHO_PADRAO = Path(__file__).with_name("dados.db")
 #: Versão do esquema gravada em ``PRAGMA user_version``.
 #: 3 — acrescenta a tabela ``darf_pagamentos``.
 #: 4 — acrescenta ``parametros_fiscais`` e ``monitor_legislacao``.
-VERSAO_ESQUEMA = 4
+#: 5 — acrescenta ``parceiros`` e ``indicacoes``; ``cupons`` ganha o modo
+#:     "meses grátis" e ``usuarios`` ganha nome, CPF e origem.
+VERSAO_ESQUEMA = 5
 
 _ESQUEMA = """
 CREATE TABLE IF NOT EXISTS usuarios (
@@ -52,6 +55,9 @@ CREATE TABLE IF NOT EXISTS usuarios (
     is_admin      INTEGER NOT NULL DEFAULT 0,
     ativo         INTEGER NOT NULL DEFAULT 1,
     plano_codigo  TEXT    NOT NULL DEFAULT 'free',
+    nome          TEXT,
+    cpf           TEXT,
+    origem        TEXT,
     reset_token   TEXT,
     reset_expira  TEXT,
     criado_em     TEXT
@@ -97,12 +103,36 @@ CREATE TABLE IF NOT EXISTS pagamentos (
 CREATE TABLE IF NOT EXISTS cupons (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     codigo       TEXT    NOT NULL UNIQUE,
+    tipo         TEXT    NOT NULL DEFAULT 'percentual',
     desconto_pct REAL    NOT NULL DEFAULT 0,
+    meses_gratis INTEGER NOT NULL DEFAULT 0,
     ativo        INTEGER NOT NULL DEFAULT 1,
     validade     TEXT,
     uso_maximo   INTEGER NOT NULL DEFAULT 0,
     usos         INTEGER NOT NULL DEFAULT 0,
     criado_em    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS parceiros (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome            TEXT    NOT NULL,
+    email           TEXT,
+    codigo          TEXT    NOT NULL UNIQUE,
+    comissao_pct    REAL    NOT NULL DEFAULT 0,
+    beneficio_tipo  TEXT    NOT NULL DEFAULT 'percentual',
+    beneficio_valor REAL    NOT NULL DEFAULT 0,
+    ativo           INTEGER NOT NULL DEFAULT 1,
+    criado_em       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS indicacoes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id      INTEGER NOT NULL UNIQUE,
+    parceiro_id     INTEGER NOT NULL,
+    beneficio_usado INTEGER NOT NULL DEFAULT 0,
+    criado_em       TEXT,
+    FOREIGN KEY (usuario_id) REFERENCES usuarios (id),
+    FOREIGN KEY (parceiro_id) REFERENCES parceiros (id)
 );
 
 CREATE TABLE IF NOT EXISTS notas_fiscais (
@@ -228,6 +258,36 @@ def _colunas(conexao: sqlite3.Connection, tabela: str) -> set[str]:
     return {linha["name"] for linha in conexao.execute(f"PRAGMA table_info({tabela})")}
 
 
+def _acrescentar_colunas(conexao: sqlite3.Connection) -> None:
+    """
+    Acrescenta colunas novas em tabelas que já existem (migração idempotente).
+
+    O ``CREATE TABLE IF NOT EXISTS`` do esquema não altera tabelas já criadas,
+    então toda coluna acrescentada depois da primeira versão precisa entrar
+    aqui — do contrário um banco antigo continuaria sem a coluna e as consultas
+    falhariam com *no such column*.
+    """
+    novas = {
+        "usuarios": {"nome": "TEXT", "cpf": "TEXT", "origem": "TEXT"},
+        "cupons": {
+            "tipo": "TEXT NOT NULL DEFAULT 'percentual'",
+            "meses_gratis": "INTEGER NOT NULL DEFAULT 0",
+        },
+    }
+    for tabela, colunas in novas.items():
+        existentes = _colunas(conexao, tabela)
+        for nome, definicao in colunas.items():
+            if existentes and nome not in existentes:
+                conexao.execute(f"ALTER TABLE {tabela} ADD COLUMN {nome} {definicao}")
+
+    # O CPF identifica uma pessoa: não pode repetir entre contas. Índice parcial
+    # porque o administrador e as contas antigas não têm CPF preenchido.
+    conexao.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_cpf "
+        "ON usuarios (cpf) WHERE cpf IS NOT NULL")
+    conexao.commit()
+
+
 def _migrar(conexao: sqlite3.Connection) -> None:
     """
     Converte o esquema **monousuário** antigo no esquema multiusuário.
@@ -236,6 +296,7 @@ def _migrar(conexao: sqlite3.Connection) -> None:
     administrador), de modo que nada é perdido na atualização.
     """
     if "usuario_id" in _colunas(conexao, "notas"):
+        _acrescentar_colunas(conexao)
         conexao.execute(f"PRAGMA user_version = {VERSAO_ESQUEMA}")
         return
 
@@ -299,6 +360,7 @@ def _migrar(conexao: sqlite3.Connection) -> None:
         )
         conexao.execute("DROP TABLE prejuizos_antigo")
 
+    _acrescentar_colunas(conexao)
     conexao.execute(f"PRAGMA user_version = {VERSAO_ESQUEMA}")
 
 
@@ -387,24 +449,32 @@ def garantir_esquema(conexao: sqlite3.Connection) -> sqlite3.Connection:
 # Usuários
 # ---------------------------------------------------------------------------
 
-_CAMPOS_PUBLICOS = ("id, usuario, email, is_admin, ativo, plano_codigo, criado_em")
+_CAMPOS_PUBLICOS = ("id, usuario, nome, email, cpf, origem, is_admin, ativo, "
+                    "plano_codigo, criado_em")
 
 
 def criar_usuario(conexao: sqlite3.Connection, usuario: str, email: str,
                   senha_hash: str, is_admin: bool = False,
-                  plano_codigo: str = "free") -> int:
+                  plano_codigo: str = "free", nome: str | None = None,
+                  cpf: str | None = None, origem: str | None = None) -> int:
     """Insere um usuário e devolve o ``id`` criado."""
     try:
         cur = conexao.execute(
-            "INSERT INTO usuarios (usuario, email, hash, is_admin, ativo, plano_codigo, criado_em) "
-            "VALUES (?, ?, ?, ?, 1, ?, ?)",
+            "INSERT INTO usuarios (usuario, email, hash, is_admin, ativo, plano_codigo, "
+            " nome, cpf, origem, criado_em) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
             (usuario.strip(), email.strip().lower(), senha_hash,
-             int(is_admin), plano_codigo, agora()),
+             int(is_admin), plano_codigo, nome, cpf, origem, agora()),
         )
     except sqlite3.IntegrityError as erro:
-        raise ValueError("usuário ou e-mail já cadastrado") from erro
+        raise ValueError("usuário, e-mail ou CPF já cadastrado") from erro
     conexao.commit()
     return int(cur.lastrowid)
+
+
+def usuario_em_uso(conexao: sqlite3.Connection, usuario: str) -> bool:
+    """Diz se o apelido de login já pertence a alguém (usado ao gerar um novo)."""
+    return conexao.execute("SELECT 1 FROM usuarios WHERE usuario = ?",
+                           (usuario,)).fetchone() is not None
 
 
 def obter_usuario(conexao: sqlite3.Connection, usuario_id: int):
@@ -416,17 +486,21 @@ def obter_usuario(conexao: sqlite3.Connection, usuario_id: int):
 
 
 def obter_por_login(conexao: sqlite3.Connection, login: str):
-    """Linha **com hash**, buscando por usuário ou e-mail (usado no login)."""
+    """Linha **com hash**, buscando por usuário, e-mail ou CPF (usado no login)."""
+    limpo = (login or "").strip()
+    digitos = "".join(c for c in limpo if c.isdigit())
     return conexao.execute(
-        "SELECT id, usuario, email, hash, is_admin, ativo, plano_codigo, criado_em "
-        "FROM usuarios WHERE usuario = ? OR email = ?",
-        (login.strip(), login.strip().lower()),
+        "SELECT id, usuario, nome, email, cpf, hash, is_admin, ativo, plano_codigo, "
+        "       criado_em "
+        "FROM usuarios WHERE usuario = ? OR email = ? OR (cpf IS NOT NULL AND cpf = ?)",
+        (limpo, limpo.lower(), digitos),
     ).fetchone()
 
 
 def obter_por_email(conexao: sqlite3.Connection, email: str):
     return conexao.execute(
-        "SELECT id, usuario, email, hash, is_admin, ativo, plano_codigo, criado_em "
+        "SELECT id, usuario, nome, email, cpf, hash, is_admin, ativo, plano_codigo, "
+        "       criado_em "
         "FROM usuarios WHERE email = ?", (email.strip().lower(),)
     ).fetchone()
 
@@ -434,7 +508,8 @@ def obter_por_email(conexao: sqlite3.Connection, email: str):
 def listar_usuarios(conexao: sqlite3.Connection) -> pd.DataFrame:
     """Todos os usuários, com o nome do plano (para o painel administrativo)."""
     return pd.read_sql_query(
-        "SELECT u.id, u.usuario, u.email, u.plano_codigo AS plano, p.nome AS plano_nome, "
+        "SELECT u.id, u.usuario, u.nome, u.email, u.cpf, u.origem, "
+        "       u.plano_codigo AS plano, p.nome AS plano_nome, "
         "       u.is_admin, u.ativo, u.criado_em "
         "FROM usuarios u LEFT JOIN planos p ON p.codigo = u.plano_codigo "
         "ORDER BY u.id",
@@ -445,7 +520,7 @@ def listar_usuarios(conexao: sqlite3.Connection) -> pd.DataFrame:
 def atualizar_usuario(conexao: sqlite3.Connection, usuario_id: int, **campos) -> None:
     """Atualiza os campos informados de um usuário (usuario, email, hash, ativo...)."""
     permitidos = {"usuario", "email", "hash", "is_admin", "ativo", "plano_codigo",
-                  "reset_token", "reset_expira"}
+                  "nome", "cpf", "origem", "reset_token", "reset_expira"}
     itens = {k: v for k, v in campos.items() if k in permitidos}
     if not itens:
         return
@@ -600,14 +675,21 @@ def faturamento_total(conexao: sqlite3.Connection) -> float:
 # Cupons de desconto
 # ---------------------------------------------------------------------------
 
-def criar_cupom(conexao: sqlite3.Connection, codigo: str, desconto_pct: float,
-                validade: str | None = None, uso_maximo: int = 0) -> int:
+def criar_cupom(conexao: sqlite3.Connection, codigo: str, desconto_pct: float = 0.0,
+                validade: str | None = None, uso_maximo: int = 0,
+                tipo: str = "percentual", meses_gratis: int = 0) -> int:
+    """
+    Cria um cupom.
+
+    ``tipo`` aceita ``"percentual"`` (desconto sobre a mensalidade) ou
+    ``"meses"`` (meses grátis do plano, sem cobrança no checkout).
+    """
     try:
         cur = conexao.execute(
-            "INSERT INTO cupons (codigo, desconto_pct, ativo, validade, uso_maximo, "
-            " usos, criado_em) VALUES (?, ?, 1, ?, ?, 0, ?)",
-            (codigo.strip().upper(), float(desconto_pct), validade,
-             int(uso_maximo), agora()),
+            "INSERT INTO cupons (codigo, tipo, desconto_pct, meses_gratis, ativo, "
+            " validade, uso_maximo, usos, criado_em) VALUES (?, ?, ?, ?, 1, ?, ?, 0, ?)",
+            (codigo.strip().upper(), tipo, float(desconto_pct), int(meses_gratis),
+             validade, int(uso_maximo), agora()),
         )
     except sqlite3.IntegrityError as erro:
         raise ValueError("já existe um cupom com esse código") from erro
@@ -617,7 +699,8 @@ def criar_cupom(conexao: sqlite3.Connection, codigo: str, desconto_pct: float,
 
 def listar_cupons(conexao: sqlite3.Connection) -> pd.DataFrame:
     return pd.read_sql_query(
-        "SELECT id, codigo, desconto_pct, ativo, validade, uso_maximo, usos, criado_em "
+        "SELECT id, codigo, tipo, desconto_pct, meses_gratis, ativo, validade, "
+        "       uso_maximo, usos, criado_em "
         "FROM cupons ORDER BY id DESC",
         conexao,
     )
@@ -639,6 +722,123 @@ def registrar_uso_cupom(conexao: sqlite3.Connection, codigo: str) -> None:
     conexao.execute("UPDATE cupons SET usos = usos + 1 WHERE codigo = ?",
                     (codigo.strip().upper(),))
     conexao.commit()
+
+
+# ---------------------------------------------------------------------------
+# Parceiros e indicações
+# ---------------------------------------------------------------------------
+
+def criar_parceiro(conexao: sqlite3.Connection, nome: str, codigo: str,
+                   comissao_pct: float = 0.0, beneficio_tipo: str = "percentual",
+                   beneficio_valor: float = 0.0, email: str | None = None) -> int:
+    """
+    Cadastra um parceiro.
+
+    ``comissao_pct`` é o quanto ele recebe sobre o que os indicados gastam;
+    ``beneficio_tipo``/``beneficio_valor`` é o que o **indicado** ganha no
+    primeiro checkout (``"percentual"`` em % ou ``"meses"`` de plano grátis).
+    """
+    try:
+        cur = conexao.execute(
+            "INSERT INTO parceiros (nome, email, codigo, comissao_pct, beneficio_tipo, "
+            " beneficio_valor, ativo, criado_em) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+            (nome.strip(), (email or "").strip().lower() or None,
+             codigo.strip().upper(), float(comissao_pct), beneficio_tipo,
+             float(beneficio_valor), agora()),
+        )
+    except sqlite3.IntegrityError as erro:
+        raise ValueError("já existe um parceiro com esse código") from erro
+    conexao.commit()
+    return int(cur.lastrowid)
+
+
+def listar_parceiros(conexao: sqlite3.Connection,
+                     somente_ativos: bool = False) -> pd.DataFrame:
+    """Parceiros com o número de indicados e o total já faturado por eles."""
+    filtro = "WHERE pa.ativo = 1" if somente_ativos else ""
+    return pd.read_sql_query(
+        "SELECT pa.id, pa.nome, pa.codigo, pa.email, "
+        "       pa.comissao_pct, pa.beneficio_tipo, pa.beneficio_valor, pa.ativo, "
+        "       COUNT(i.id) AS indicados, "
+        "       COALESCE(SUM(pg.total), 0) AS faturado_indicados, "
+        "       pa.criado_em "
+        "FROM parceiros pa "
+        "LEFT JOIN indicacoes i ON i.parceiro_id = pa.id "
+        "LEFT JOIN (SELECT usuario_id, SUM(valor_final) AS total FROM pagamentos "
+        "           WHERE status = 'pago' GROUP BY usuario_id) pg "
+        "       ON pg.usuario_id = i.usuario_id "
+        f"{filtro} "
+        "GROUP BY pa.id ORDER BY pa.id DESC",
+        conexao,
+    )
+
+
+def obter_parceiro(conexao: sqlite3.Connection, parceiro_id: int):
+    return conexao.execute("SELECT * FROM parceiros WHERE id = ?",
+                           (int(parceiro_id),)).fetchone()
+
+
+def obter_parceiro_por_codigo(conexao: sqlite3.Connection, codigo: str):
+    return conexao.execute("SELECT * FROM parceiros WHERE codigo = ?",
+                           (codigo.strip().upper(),)).fetchone()
+
+
+def definir_parceiro_ativo(conexao: sqlite3.Connection, parceiro_id: int,
+                           ativo: bool) -> None:
+    conexao.execute("UPDATE parceiros SET ativo = ? WHERE id = ?",
+                    (int(ativo), int(parceiro_id)))
+    conexao.commit()
+
+
+def registrar_indicacao(conexao: sqlite3.Connection, usuario_id: int,
+                        parceiro_id: int) -> int:
+    """Liga uma conta nova ao parceiro que a indicou (uma indicação por conta)."""
+    try:
+        cur = conexao.execute(
+            "INSERT INTO indicacoes (usuario_id, parceiro_id, beneficio_usado, criado_em) "
+            "VALUES (?, ?, 0, ?)", (int(usuario_id), int(parceiro_id), agora()))
+    except sqlite3.IntegrityError as erro:
+        raise ValueError("esta conta já tem uma indicação registrada") from erro
+    conexao.commit()
+    return int(cur.lastrowid)
+
+
+def obter_indicacao(conexao: sqlite3.Connection, usuario_id: int):
+    """Indicação da conta, com os dados do parceiro, ou ``None``."""
+    return conexao.execute(
+        "SELECT i.id, i.usuario_id, i.parceiro_id, i.beneficio_usado, i.criado_em, "
+        "       pa.nome AS parceiro_nome, pa.codigo AS parceiro_codigo, "
+        "       pa.comissao_pct, pa.beneficio_tipo, pa.beneficio_valor, pa.ativo AS parceiro_ativo "
+        "FROM indicacoes i JOIN parceiros pa ON pa.id = i.parceiro_id "
+        "WHERE i.usuario_id = ?", (int(usuario_id),)
+    ).fetchone()
+
+
+def marcar_beneficio_usado(conexao: sqlite3.Connection, usuario_id: int) -> None:
+    """Marca o benefício da indicação como consumido (usado uma única vez)."""
+    conexao.execute("UPDATE indicacoes SET beneficio_usado = 1 WHERE usuario_id = ?",
+                    (int(usuario_id),))
+    conexao.commit()
+
+
+def listar_indicacoes(conexao: sqlite3.Connection,
+                      parceiro_id: int | None = None) -> pd.DataFrame:
+    """Indicações com o nome da conta, do parceiro e quanto ela já gastou."""
+    condicao = "WHERE i.parceiro_id = ?" if parceiro_id is not None else ""
+    parametros = (int(parceiro_id),) if parceiro_id is not None else ()
+    return pd.read_sql_query(
+        "SELECT i.id, u.usuario, u.nome, u.email, pa.nome AS parceiro, "
+        "       i.beneficio_usado, COALESCE(pg.total, 0) AS total_gasto, i.criado_em "
+        "FROM indicacoes i "
+        "JOIN usuarios u ON u.id = i.usuario_id "
+        "JOIN parceiros pa ON pa.id = i.parceiro_id "
+        "LEFT JOIN (SELECT usuario_id, SUM(valor_final) AS total FROM pagamentos "
+        "           WHERE status = 'pago' GROUP BY usuario_id) pg "
+        "       ON pg.usuario_id = i.usuario_id "
+        f"{condicao} "
+        "ORDER BY i.id DESC",
+        conexao,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1089,12 +1289,15 @@ __all__ = [
     "CAMINHO_PADRAO", "VERSAO_ESQUEMA", "PLANOS_PADRAO", "agora", "conectar",
     "garantir_esquema",
     "criar_usuario", "obter_usuario", "obter_por_login", "obter_por_email",
-    "listar_usuarios", "atualizar_usuario", "contar_usuarios",
+    "listar_usuarios", "atualizar_usuario", "contar_usuarios", "usuario_em_uso",
     "listar_planos", "obter_plano",
     "criar_assinatura", "assinatura_ativa", "listar_assinaturas", "cancelar_assinatura",
     "registrar_pagamento", "listar_pagamentos", "faturamento_total",
     "criar_cupom", "listar_cupons", "obter_cupom", "definir_cupom_ativo",
     "registrar_uso_cupom",
+    "criar_parceiro", "listar_parceiros", "obter_parceiro", "obter_parceiro_por_codigo",
+    "definir_parceiro_ativo", "registrar_indicacao", "obter_indicacao",
+    "marcar_beneficio_usado", "listar_indicacoes",
     "registrar_nota_fiscal", "listar_notas_fiscais",
     "obter_config_pagamento", "gravar_config_pagamento",
     "salvar_notas", "limpar_dados", "remover_notas",

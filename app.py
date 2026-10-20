@@ -51,7 +51,7 @@ import landing
 import paginas
 import saas
 import tema
-from persistencia import obter_usuario
+from persistencia import obter_parceiro_por_codigo, obter_usuario
 
 st.set_page_config(
     page_title="FiscoTrade",
@@ -94,23 +94,34 @@ def _aba_entrar(conexao) -> None:
 def _aba_criar_conta(conexao) -> None:
     st.caption("Sua conta começa no **plano Gratuito**. Você pode assinar o PRO quando quiser.")
     with st.form("form_cadastro"):
-        usuario = st.text_input("Usuário", key="cad_usuario",
-                                placeholder="ex.: maria.silva")
         email = st.text_input("E-mail", key="cad_email")
+        nome = st.text_input("Nome completo", key="cad_nome")
+        cpf = st.text_input("CPF", key="cad_cpf", placeholder="000.000.000-00")
         senha = st.text_input("Senha", type="password", key="cad_senha")
-        confirmacao = st.text_input("Confirme a senha", type="password", key="cad_confirmacao")
-        if st.form_submit_button("Criar conta", type="primary"):
-            erro = auth.validar_cadastro(usuario, email, senha, confirmacao)
+        confirmacao = st.text_input("Confirme sua senha", type="password", key="cad_confirmacao")
+        origem = st.text_input(
+            "Onde nos conheceu?", key="cad_origem",
+            placeholder="Ex.: indicação, Google, Instagram — ou o código do parceiro",
+        )
+        if st.form_submit_button("USE AGORA!", type="primary"):
+            erro = auth.validar_cadastro(nome, email, cpf, senha, confirmacao)
             if erro:
                 st.error(erro)
                 return
+            texto_origem = (origem or "").strip()
+            parceiro = (obter_parceiro_por_codigo(conexao, texto_origem)
+                        if texto_origem else None)
             try:
-                novo_id = auth.criar_conta(conexao, usuario, email, senha)
+                novo_id = auth.criar_conta(
+                    conexao, nome, email, cpf, senha,
+                    origem=texto_origem or None,
+                    parceiro_id=parceiro["id"] if parceiro else None,
+                )
             except ValueError as erro_banco:
                 st.error(str(erro_banco))
             else:
                 st.success("Conta criada! Bem-vindo(a) ao plano Gratuito.")
-                _entrar({"id": novo_id, "usuario": usuario.strip(), "is_admin": 0})
+                _entrar(obter_usuario(conexao, novo_id))
 
 
 def _aba_recuperar(conexao) -> None:
@@ -257,6 +268,7 @@ paginas_admin = [
     st.Page(admin.pagina_assinaturas, title="Assinaturas", icon=":material/assignment:"),
     st.Page(admin.pagina_pagamentos, title="Pagamentos", icon=":material/credit_card:"),
     st.Page(admin.pagina_cupons, title="Cupons", icon=":material/local_offer:"),
+    st.Page(admin.pagina_parceiros, title="Parceiros", icon=":material/handshake:"),
     st.Page(admin.pagina_parametros, title="Parâmetros fiscais",
             icon=":material/balance:"),
 ]

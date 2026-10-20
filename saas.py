@@ -32,6 +32,33 @@ def _moeda(valor: float) -> str:
     return "R$ " + texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _campo(linha, chave: str, padrao=None):
+    """
+    Lê um campo tanto de um ``sqlite3.Row`` quanto de um dicionário.
+
+    É o que permite tratar **cupom** e **benefício de indicação** com o mesmo
+    código: os dois chegam aqui com ``tipo``, ``desconto_pct`` e
+    ``meses_gratis``, ainda que venham de tabelas diferentes.
+    """
+    try:
+        valor = linha[chave]
+    except (KeyError, IndexError):
+        return padrao
+    return padrao if valor is None else valor
+
+
+def _meses(quantidade: int) -> str:
+    return "mês" if int(quantidade) == 1 else "meses"
+
+
+def descrever_cupom(linha) -> str:
+    """Texto curto do benefício: ``10%`` ou ``3 meses grátis``."""
+    if _campo(linha, "tipo", "percentual") == "meses":
+        meses = int(_campo(linha, "meses_gratis", 0))
+        return f"{meses} {_meses(meses)} grátis"
+    return f"{float(_campo(linha, 'desconto_pct', 0.0)):.0f}% de desconto"
+
+
 # ---------------------------------------------------------------------------
 # Planos e limites
 # ---------------------------------------------------------------------------
@@ -95,8 +122,9 @@ def validar_cupom(conexao: sqlite3.Connection, codigo: str):
     """
     Valida um cupom e devolve ``(ok, cupom, mensagem)``.
 
-    Um cupom é recusado se não existir, estiver desativado, vencido ou já tiver
-    atingido o limite de usos.
+    Um cupom é recusado se não existir, estiver desativado, vencido, já tiver
+    atingido o limite de usos — ou, no modo "meses grátis", se não definir
+    quantos meses concede.
     """
     if not codigo or not codigo.strip():
         return False, None, "Informe o código do cupom."
@@ -113,20 +141,83 @@ def validar_cupom(conexao: sqlite3.Connection, codigo: str):
             return False, None, "Cupom com validade inválida."
     if cupom["uso_maximo"] and cupom["usos"] >= cupom["uso_maximo"]:
         return False, None, "Cupom esgotado (limite de usos atingido)."
-    return True, cupom, f"Cupom aplicado: {cupom['desconto_pct']:.0f}% de desconto."
+    if _campo(cupom, "tipo", "percentual") == "meses":
+        if int(_campo(cupom, "meses_gratis", 0)) <= 0:
+            return False, None, "Cupom de meses grátis sem quantidade definida."
+    return True, cupom, f"Cupom aplicado: {descrever_cupom(cupom)}."
 
 
-def calcular_preco(plano, cupom) -> dict:
-    """Valores do checkout: original, desconto e final."""
+def calcular_preco(plano, cupom, meses: int = 1) -> dict:
+    """
+    Valores do checkout: original, desconto e final.
+
+    No cupom **percentual** o desconto incide sobre a mensalidade, e ``meses``
+    continua sendo o prazo escolhido. No cupom de **meses grátis** o valor final
+    é zero e ``meses`` passa a ser o número de meses concedidos pelo cupom.
+    """
     original = float(plano["preco_mensal"])
-    percentual = float(cupom["desconto_pct"]) if cupom else 0.0
+    tipo = _campo(cupom, "tipo", "percentual") if cupom else "percentual"
+
+    if cupom and tipo == "meses":
+        concedidos = int(_campo(cupom, "meses_gratis", 0))
+        return {
+            "original": original,
+            "tipo": "meses",
+            "percentual": 100.0,
+            "meses": concedidos,
+            "desconto": round(original * concedidos, 2),
+            "final": 0.0,
+        }
+
+    percentual = float(_campo(cupom, "desconto_pct", 0.0)) if cupom else 0.0
     desconto = round(original * percentual / 100.0, 2)
     return {
         "original": original,
+        "tipo": "percentual",
         "percentual": percentual,
+        "meses": int(meses or 1),
         "desconto": desconto,
         "final": round(original - desconto, 2),
     }
+
+
+# ---------------------------------------------------------------------------
+# Indicações de parceiros
+# ---------------------------------------------------------------------------
+
+def beneficio_indicacao(conexao: sqlite3.Connection, usuario_id: int):
+    """
+    Benefício que a conta ainda tem a receber por ter sido indicada.
+
+    Devolve um dicionário no formato de cupom (``tipo``, ``desconto_pct``,
+    ``meses_gratis``) para reaproveitar :func:`calcular_preco`. É ``None``
+    quando não há indicação, o parceiro está inativo, o benefício já foi usado
+    ou o parceiro não definiu benefício para os indicados.
+    """
+    indicacao = bd.obter_indicacao(conexao, usuario_id)
+    if indicacao is None or indicacao["beneficio_usado"]:
+        return None
+    if not indicacao["parceiro_ativo"]:
+        return None
+
+    tipo = indicacao["beneficio_tipo"]
+    valor = float(indicacao["beneficio_valor"] or 0.0)
+    if tipo not in ("percentual", "meses") or valor <= 0:
+        return None
+
+    return {
+        "codigo": f"INDICA-{indicacao['parceiro_codigo']}",
+        "indicacao": True,
+        "parceiro": indicacao["parceiro_nome"],
+        "tipo": tipo,
+        "desconto_pct": valor if tipo == "percentual" else 0.0,
+        "meses_gratis": int(valor) if tipo == "meses" else 0,
+    }
+
+
+def comissao_parceiro(faturado: float, comissao_pct: float) -> float:
+    """Quanto o parceiro tem a receber sobre o que os indicados gastaram."""
+    return round(float(faturado or 0.0) * float(comissao_pct or 0.0) / 100.0, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -137,11 +228,13 @@ def assinar(conexao: sqlite3.Connection, usuario_id: int, plano_codigo: str,
             forma: str = "Pix", codigo_cupom: str | None = None,
             meses: int = 1) -> dict:
     """
-    Efetiva a assinatura: valida o cupom, grava a assinatura, o pagamento, a
-    nota fiscal e atualiza o plano do usuário.
+    Efetiva a assinatura: aplica o benefício, grava a assinatura, o pagamento,
+    a nota fiscal e atualiza o plano do usuário.
 
-    Levanta ``ValueError`` quando o plano não existe, o valor é inválido, a
-    forma de pagamento é desconhecida ou o cupom informado é recusado.
+    O benefício aplicado é, nesta ordem: o **cupom** informado; na ausência
+    dele, o **benefício de indicação** que a conta ainda não usou. Levanta
+    ``ValueError`` quando o plano não existe, o valor é inválido, a forma de
+    pagamento é desconhecida ou o cupom informado é recusado.
     """
     plano = bd.obter_plano(conexao, plano_codigo)
     if plano is None:
@@ -153,16 +246,20 @@ def assinar(conexao: sqlite3.Connection, usuario_id: int, plano_codigo: str,
     if forma not in FORMAS_PAGAMENTO:
         raise ValueError("Forma de pagamento inválida.")
 
-    cupom = None
+    cupom, de_indicacao = None, False
     if codigo_cupom and codigo_cupom.strip():
         ok, cupom, mensagem = validar_cupom(conexao, codigo_cupom)
         if not ok:
             raise ValueError(mensagem)
+    else:
+        cupom = beneficio_indicacao(conexao, usuario_id)
+        de_indicacao = cupom is not None
 
-    valores = calcular_preco(plano, cupom)
+    valores = calcular_preco(plano, cupom, meses=meses)
     assinatura_id = bd.criar_assinatura(
         conexao, usuario_id, plano_codigo, valor_pago=valores["final"],
-        forma=forma, cupom_codigo=cupom["codigo"] if cupom else None, meses=meses,
+        forma=forma, cupom_codigo=cupom["codigo"] if cupom else None,
+        meses=valores["meses"],
     )
     referencia = f"SIM-{datetime.now():%Y%m%d%H%M%S}-{usuario_id}"
     pagamento_id = bd.registrar_pagamento(
@@ -172,7 +269,9 @@ def assinar(conexao: sqlite3.Connection, usuario_id: int, plano_codigo: str,
     )
     numero_nf = bd.registrar_nota_fiscal(conexao, usuario_id, pagamento_id,
                                          valores["final"])
-    if cupom:
+    if cupom and de_indicacao:
+        bd.marcar_beneficio_usado(conexao, usuario_id)
+    elif cupom:
         bd.registrar_uso_cupom(conexao, cupom["codigo"])
 
     return {
@@ -182,6 +281,7 @@ def assinar(conexao: sqlite3.Connection, usuario_id: int, plano_codigo: str,
         "referencia": referencia,
         "plano": plano["nome"],
         "forma": forma,
+        "origem_beneficio": "indicacao" if de_indicacao else ("cupom" if cupom else None),
         **valores,
     }
 

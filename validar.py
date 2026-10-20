@@ -429,27 +429,56 @@ def teste_login() -> None:
                 print("  [-----] segredos do admin ausentes — login do admin ignorado")
 
             _checar("validação recusa e-mail inválido",
-                    auth.validar_cadastro("maria", "invalido", "segredo1", "segredo1"),
+                    auth.validar_cadastro("Maria Silva", "invalido", "12345678909",
+                                          "segredo1", "segredo1"),
                     "Informe um e-mail válido.")
+            _checar("validação recusa nome sem sobrenome",
+                    auth.validar_cadastro("Maria", "m@x.com", "12345678909",
+                                          "segredo1", "segredo1"),
+                    "Informe o nome completo (nome e sobrenome).")
+            _checar("validação recusa CPF inválido",
+                    auth.validar_cadastro("Maria Silva", "m@x.com", "11111111111",
+                                          "segredo1", "segredo1"),
+                    "Informe um CPF válido (11 dígitos).")
             _checar("validação recusa senhas diferentes",
-                    auth.validar_cadastro("maria", "m@x.com", "segredo1", "segredo2"),
+                    auth.validar_cadastro("Maria Silva", "m@x.com", "12345678909",
+                                          "segredo1", "segredo2"),
                     "As senhas não conferem.")
             _checar("validação aceita cadastro válido",
-                    auth.validar_cadastro("maria", "m@x.com", "segredo1", "segredo1"),
+                    auth.validar_cadastro("Maria Silva", "m@x.com", "12345678909",
+                                          "segredo1", "segredo1"),
                     None)
 
-            novo_id = auth.criar_conta(conexao, "maria", "maria@x.com", "segredo1")
+            novo_id = auth.criar_conta(conexao, "Maria Silva", "maria@x.com",
+                                       "12345678909", "segredo1", origem="Instagram")
             _checar("conta criada no plano gratuito",
                     bd.obter_usuario(conexao, novo_id)["plano_codigo"], "free")
-            _checar("login da conta nova",
+            _checar("nome completo gravado",
+                    bd.obter_usuario(conexao, novo_id)["nome"], "Maria Silva")
+            _checar("origem gravada",
+                    bd.obter_usuario(conexao, novo_id)["origem"], "Instagram")
+            _checar("login pelo apelido derivado do e-mail",
                     auth.autenticar(conexao, "maria", "segredo1") is not None, True)
+            _checar("login pelo e-mail",
+                    auth.autenticar(conexao, "maria@x.com", "segredo1") is not None, True)
+            _checar("login pelo CPF",
+                    auth.autenticar(conexao, "123.456.789-09", "segredo1") is not None, True)
 
             try:
-                auth.criar_conta(conexao, "maria", "outro@x.com", "segredo1")
+                auth.criar_conta(conexao, "Maria Silva", "maria@x.com",
+                                 "11144477735", "segredo1")
                 duplicou = True
             except ValueError:
                 duplicou = False
-            _checar("usuário duplicado recusado", duplicou, False)
+            _checar("e-mail duplicado recusado", duplicou, False)
+
+            try:
+                auth.criar_conta(conexao, "Joana Souza", "joana@x.com",
+                                 "12345678909", "segredo1")
+                cpf_duplicado = True
+            except ValueError:
+                cpf_duplicado = False
+            _checar("CPF duplicado recusado", cpf_duplicado, False)
 
             _checar("determinismo do hash com o mesmo sal",
                     gerar_hash("segredo1", sal=b"0123456789abcdef"),
@@ -495,7 +524,8 @@ def teste_saas() -> None:
             _checar("PRO tem notas ilimitadas", saas.limite_notas(conexao, admin), -1)
             _checar("PRO exporta Excel", saas.pode_exportar_excel(conexao, admin), True)
 
-            uid = auth.criar_conta(conexao, "joao", "joao@x.com", "segredo1")
+            uid = auth.criar_conta(conexao, "Joao Pereira", "joao@x.com",
+                                   "12345678909", "segredo1")
             _checar("free tem limite de 20 notas", saas.limite_notas(conexao, uid), 20)
             _checar("free pode importar até o limite",
                     saas.pode_importar(conexao, uid, 20)[0], True)
@@ -540,10 +570,51 @@ def teste_saas() -> None:
             bd.cancelar_assinatura(conexao, uid)
             _checar("cancelamento devolve ao gratuito", saas.eh_pro(conexao, uid), False)
 
+            # Cupom de meses grátis do PRO
+            bd.criar_cupom(conexao, "freepro3", tipo="meses", meses_gratis=3)
+            ok_meses, cupom_meses, _ = saas.validar_cupom(conexao, "FREEPRO3")
+            _checar("cupom de meses reconhecido", ok_meses, True)
+            _checar("cupom de meses descrito",
+                    saas.descrever_cupom(cupom_meses), "3 meses grátis")
+            v_meses = saas.calcular_preco(pro, cupom_meses)
+            _checar("cupom de meses zera o valor", v_meses["final"], 0.0)
+            _checar("cupom de meses concede 3 meses", v_meses["meses"], 3)
+            _checar("economia do cupom de meses", v_meses["desconto"], 89.70)
+
+            bd.criar_cupom(conexao, "vazio", tipo="meses", meses_gratis=0)
+            _checar("cupom de meses sem quantidade recusado",
+                    saas.validar_cupom(conexao, "VAZIO")[0], False)
+
+            # Parceiro e indicação
+            parceiro_id = bd.criar_parceiro(
+                conexao, "Ana Afiliada", "ANA10", comissao_pct=30.0,
+                beneficio_tipo="meses", beneficio_valor=1)
+            indicado = auth.criar_conta(
+                conexao, "Pedro Lima", "pedro@x.com", "11144477735", "segredo1",
+                origem="ANA10", parceiro_id=parceiro_id)
+            beneficio = saas.beneficio_indicacao(conexao, indicado)
+            _checar("benefício de indicação disponível", bool(beneficio), True)
+            _checar("benefício do indicado é 1 mês grátis",
+                    (beneficio["tipo"], beneficio["meses_gratis"]), ("meses", 1))
+            _checar("checkout do indicado fica grátis",
+                    saas.calcular_preco(pro, beneficio)["final"], 0.0)
+
+            resultado_ind = saas.assinar(conexao, indicado, "pro")
+            _checar("indicado virou PRO", saas.eh_pro(conexao, indicado), True)
+            _checar("benefício usado uma única vez",
+                    saas.beneficio_indicacao(conexao, indicado), None)
+            _checar("origem do benefício registrada",
+                    resultado_ind["origem_beneficio"], "indicacao")
+
+            linha_parceiro = bd.listar_parceiros(conexao).iloc[0]
+            _checar("parceiro com 1 indicado", int(linha_parceiro["indicados"]), 1)
+            _checar("comissão de 30% calculada",
+                    saas.comissao_parceiro(100.0, 30.0), 30.0)
+
             m = saas.metricas(conexao)
-            _checar("métricas: total de usuários", m["usuarios_total"], 2)
+            _checar("métricas: total de usuários", m["usuarios_total"], 3)
             _checar("métricas: pagos/free",
-                    (m["usuarios_pagos"], m["usuarios_free"]), (1, 1))
+                    (m["usuarios_pagos"], m["usuarios_free"]), (2, 1))
             _checar("faturamento contabilizado", round(m["faturamento"], 2), 26.91)
         finally:
             conexao.close()

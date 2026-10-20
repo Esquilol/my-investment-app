@@ -1266,6 +1266,8 @@ def pagina_planos() -> None:
     elif not saas.eh_pro(conexao, usuario_id):
         tema.secao("Assinar o PRO")
         st.caption("Checkout **simulado** — nenhuma cobrança real é efetuada.")
+
+        indicacao = saas.beneficio_indicacao(conexao, usuario_id)
         col1, col2, col3 = st.columns(3)
         with col1:
             forma = st.selectbox("Forma de pagamento", saas.FORMAS_PAGAMENTO,
@@ -1281,15 +1283,27 @@ def pagina_planos() -> None:
         if codigo_cupom:
             ok, cupom, mensagem = saas.validar_cupom(conexao, codigo_cupom)
             (st.success if ok else st.error)(mensagem)
+        elif indicacao:
+            cupom = indicacao
+            st.info(f"Benefício de indicação de **{indicacao['parceiro']}**: "
+                    f"{saas.descrever_cupom(indicacao)}.")
 
-        valores = saas.calcular_preco(pro, cupom)
-        total = valores["final"] * int(meses)
-        st.caption(
-            f"Plano {_moeda(valores['original'])}/mês · desconto "
-            f"{valores['percentual']:.0f}% ({_moeda(valores['desconto'])}) · "
-            f"por mês **{_moeda(valores['final'])}** · total ({int(meses)} mês(es)) "
-            f"**{_moeda(total)}**"
-        )
+        valores = saas.calcular_preco(pro, cupom, meses=int(meses))
+        if valores["tipo"] == "meses":
+            unidade = "mês" if valores["meses"] == 1 else "meses"
+            st.caption(
+                f"Plano {_moeda(valores['original'])}/mês · "
+                f"**{valores['meses']} {unidade} grátis** "
+                f"(economia de {_moeda(valores['desconto'])}) · total **Grátis**"
+            )
+        else:
+            total = valores["final"] * int(meses)
+            st.caption(
+                f"Plano {_moeda(valores['original'])}/mês · desconto "
+                f"{valores['percentual']:.0f}% ({_moeda(valores['desconto'])}) · "
+                f"por mês **{_moeda(valores['final'])}** · total ({int(meses)} mês(es)) "
+                f"**{_moeda(total)}**"
+            )
 
         if st.button("Confirmar assinatura", type="primary",
                      icon=":material/workspace_premium:"):

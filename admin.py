@@ -281,7 +281,7 @@ def pagina_pagamentos() -> None:
 def pagina_cupons() -> None:
     tema.cabecalho(
         "Cupons de desconto",
-        "Crie códigos promocionais e controle quantas vezes podem ser usados.",
+        "Crie códigos promocionais — desconto percentual ou meses grátis do PRO.",
         "\U0001F39F\uFE0F",
     )
     conexao = paginas.obter_conexao()
@@ -292,21 +292,35 @@ def pagina_cupons() -> None:
         with col1:
             codigo = st.text_input("Código", placeholder="BEMVINDO10")
         with col2:
-            desconto = st.number_input("Desconto (%)", min_value=0.0, max_value=100.0,
-                                       value=10.0, step=5.0)
+            tipo = st.selectbox(
+                "Tipo", ["percentual", "meses"],
+                format_func=lambda t: ("Desconto (%)" if t == "percentual"
+                                       else "Meses grátis"),
+            )
         with col3:
-            validade = st.date_input("Validade", value=date.today())
+            valor = st.number_input(
+                "Valor (%, ou nº de meses)", min_value=0.0, value=10.0, step=5.0,
+                help="No tipo percentual, é o desconto sobre a mensalidade. "
+                     "No tipo meses, é quantos meses do PRO são grátis.",
+            )
         with col4:
             uso_maximo = st.number_input("Limite de usos (0 = ilimitado)",
                                          min_value=0, step=1, value=0)
+        validade = st.date_input("Validade", value=date.today())
         if st.form_submit_button("Criar cupom", type="primary",
                                  icon=":material/add:"):
             if not codigo.strip():
                 st.error("Informe o código do cupom.")
+            elif tipo == "meses" and int(valor) <= 0:
+                st.error("Informe quantos meses grátis o cupom concede.")
             else:
                 try:
-                    bd.criar_cupom(conexao, codigo, desconto,
-                                   validade=validade.isoformat(), uso_maximo=int(uso_maximo))
+                    bd.criar_cupom(
+                        conexao, codigo,
+                        desconto_pct=valor if tipo == "percentual" else 0.0,
+                        validade=validade.isoformat(), uso_maximo=int(uso_maximo),
+                        tipo=tipo, meses_gratis=int(valor) if tipo == "meses" else 0,
+                    )
                 except ValueError as erro:
                     st.error(str(erro))
                 else:
@@ -322,9 +336,11 @@ def pagina_cupons() -> None:
     st.dataframe(cupons, width="stretch", hide_index=True)
 
     tema.secao("Ativar / desativar")
-    rotulos = {int(r.id): f"{r.codigo} — {r.desconto_pct:.0f}% "
-                          f"({'ativo' if r.ativo else 'inativo'})"
-               for r in cupons.itertuples()}
+    rotulos = {}
+    for r in cupons.itertuples():
+        desc = (f"{int(r.meses_gratis)} meses grátis" if r.tipo == "meses"
+                else f"{r.desconto_pct:.0f}%")
+        rotulos[int(r.id)] = f"{r.codigo} — {desc} ({'ativo' if r.ativo else 'inativo'})"
     escolhido = st.selectbox("Cupom", options=list(rotulos),
                              format_func=lambda i: rotulos[i], key="admin_cupom")
     linha = cupons[cupons["id"] == escolhido].iloc[0]
@@ -333,6 +349,109 @@ def pagina_cupons() -> None:
         bd.definir_cupom_ativo(conexao, escolhido, novo)
         st.success("Cupom atualizado.")
         st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Parceiros e indicações
+# ---------------------------------------------------------------------------
+
+def pagina_parceiros() -> None:
+    tema.cabecalho(
+        "Parceiros e indicações",
+        "Cadastre parceiros, defina a comissão sobre o que os indicados gastam e "
+        "o benefício que cada indicado recebe no PRO.",
+        "\U0001F91D",
+    )
+    conexao = paginas.obter_conexao()
+
+    tema.secao("Cadastrar parceiro")
+    st.caption(
+        "O indicado digita o **código do parceiro** no campo *Onde nos conheceu?* "
+        "ao criar a conta; a comissão incide sobre o que ele gastar em planos e o "
+        "benefício é aplicado no primeiro checkout do PRO."
+    )
+    with st.form("form_parceiro", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            nome = st.text_input("Nome do parceiro")
+            email = st.text_input("E-mail (opcional)")
+            comissao = st.number_input(
+                "Comissão sobre o faturamento dos indicados (%)",
+                min_value=0.0, max_value=100.0, value=20.0, step=5.0)
+        with col2:
+            codigo = st.text_input(
+                "Código de indicação", placeholder="Ex.: PARCEIRO10",
+                help="É o que o indicado informa em 'Onde nos conheceu?'.")
+            beneficio_tipo = st.selectbox(
+                "Benefício do indicado", ["percentual", "meses"],
+                format_func=lambda t: ("Desconto (%)" if t == "percentual"
+                                       else "Meses grátis do PRO"))
+            beneficio_valor = st.number_input(
+                "Valor do benefício (%, ou nº de meses)", min_value=0.0,
+                value=10.0, step=5.0)
+        if st.form_submit_button("Cadastrar parceiro", type="primary",
+                                 icon=":material/add:"):
+            if not nome.strip() or not codigo.strip():
+                st.error("Informe o nome e o código do parceiro.")
+            elif beneficio_tipo == "meses" and int(beneficio_valor) <= 0:
+                st.error("Informe quantos meses grátis o indicado recebe.")
+            else:
+                try:
+                    bd.criar_parceiro(
+                        conexao, nome, codigo, comissao_pct=comissao,
+                        beneficio_tipo=beneficio_tipo,
+                        beneficio_valor=beneficio_valor, email=email or None,
+                    )
+                except ValueError as erro:
+                    st.error(str(erro))
+                else:
+                    st.success(
+                        f"Parceiro {nome.strip()} cadastrado "
+                        f"(código {codigo.strip().upper()}).")
+                    st.rerun()
+
+    tema.secao("Parceiros cadastrados")
+    parceiros = bd.listar_parceiros(conexao)
+    if parceiros.empty:
+        tema.vazio("Nenhum parceiro cadastrado ainda.")
+        return
+
+    visao = parceiros.copy()
+    visao["benefício do indicado"] = [
+        (f"{int(r.beneficio_valor)} meses grátis" if r.beneficio_tipo == "meses"
+         else f"{r.beneficio_valor:.0f}%")
+        for r in parceiros.itertuples()
+    ]
+    visao["comissão a pagar"] = [
+        saas.comissao_parceiro(r.faturado_indicados, r.comissao_pct)
+        for r in parceiros.itertuples()
+    ]
+    st.dataframe(
+        visao[["id", "nome", "codigo", "email", "comissao_pct",
+               "benefício do indicado", "indicados", "faturado_indicados",
+               "comissão a pagar", "ativo"]],
+        width="stretch", hide_index=True)
+
+    tema.secao("Ativar / desativar parceiro")
+    rotulos = {int(r.id): f"{r.nome} — {r.codigo} "
+                          f"({'ativo' if r.ativo else 'inativo'})"
+               for r in parceiros.itertuples()}
+    escolhido = st.selectbox("Parceiro", options=list(rotulos),
+                             format_func=lambda i: rotulos[i], key="admin_parceiro")
+    linha = parceiros[parceiros["id"] == escolhido].iloc[0]
+    novo = st.toggle("Ativo", value=bool(linha["ativo"]),
+                     key=f"parceiro_ativo_{escolhido}")
+    if st.button("Salvar parceiro", icon=":material/save:"):
+        bd.definir_parceiro_ativo(conexao, escolhido, novo)
+        st.success("Parceiro atualizado.")
+        st.rerun()
+
+    tema.secao("Indicações")
+    indicacoes = bd.listar_indicacoes(conexao)
+    if indicacoes.empty:
+        st.caption("Nenhuma indicação registrada ainda.")
+    else:
+        st.dataframe(indicacoes, width="stretch", hide_index=True)
 
 
 # ---------------------------------------------------------------------------
