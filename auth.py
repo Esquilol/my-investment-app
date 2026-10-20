@@ -41,26 +41,26 @@ TAMANHO_MINIMO = 6
 # ---------------------------------------------------------------------------
 # Credencial padrão do administrador
 # ---------------------------------------------------------------------------
-# A senha NÃO fica no código. Ela vem de ``st.secrets["admin"]["senha"]`` — no
-# Streamlit Cloud, defina em *App settings → Secrets*; localmente, em
-# ``.streamlit/secrets.toml`` (fora do versionamento). Sem a senha configurada,
-# o administrador simplesmente não é semeado.
+# Nenhuma credencial fica no código: usuário, e-mail e senha vêm todos de
+# ``st.secrets["admin"]`` — no Streamlit Cloud, defina em *App settings →
+# Secrets*; localmente, em ``.streamlit/secrets.toml`` (fora do versionamento).
+# Sem esses segredos, o administrador simplesmente não é semeado.
 #
 #     # .streamlit/secrets.toml
 #     [admin]
-#     usuario = "jhon"
-#     email   = "jhon@local"
-#     senha   = "troque-esta-senha"
-def _segredo_admin(campo: str, padrao: str | None = None) -> str | None:
+#     usuario = "..."
+#     email   = "..."
+#     senha   = "..."
+def _segredo_admin(campo: str) -> str | None:
     """Lê uma credencial do administrador em ``st.secrets['admin']``."""
     try:
         return str(st.secrets["admin"][campo])
     except Exception:  # sem arquivo/segredo configurado
-        return padrao
+        return None
 
 
-ADMIN_PADRAO_USUARIO = _segredo_admin("usuario", "jhon")
-ADMIN_PADRAO_EMAIL = _segredo_admin("email", "jhon@local")
+ADMIN_PADRAO_USUARIO = _segredo_admin("usuario")
+ADMIN_PADRAO_EMAIL = _segredo_admin("email")
 ADMIN_PADRAO_SENHA = _segredo_admin("senha")
 
 #: Validade do token de recuperação de senha.

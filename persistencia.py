@@ -324,16 +324,23 @@ def _semear(conexao: sqlite3.Connection) -> None:
         [(chave, str(valor), agora()) for chave, valor in PARAMETROS_PADRAO.items()],
     )
 
-    if conexao.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0] == 0:
-        from auth import ADMIN_PADRAO_EMAIL, ADMIN_PADRAO_SENHA, ADMIN_PADRAO_USUARIO, gerar_hash
+    # Administrador: as credenciais vêm dos segredos (``st.secrets["admin"]``),
+    # nunca do código. É criado apenas se ainda não existir nenhum administrador;
+    # sem os segredos configurados, o app sobe sem usuário administrativo.
+    tem_admin = conexao.execute(
+        "SELECT 1 FROM usuarios WHERE is_admin = 1 LIMIT 1").fetchone()
 
-        if ADMIN_PADRAO_SENHA:  # sem segredo configurado, não semeia o admin
-            conexao.execute(
-                "INSERT INTO usuarios (usuario, email, hash, is_admin, ativo, plano_codigo, criado_em) "
-                "VALUES (?, ?, ?, 1, 1, 'pro', ?)",
-                (ADMIN_PADRAO_USUARIO, ADMIN_PADRAO_EMAIL,
-                 gerar_hash(ADMIN_PADRAO_SENHA), agora()),
-            )
+    from auth import ADMIN_PADRAO_EMAIL, ADMIN_PADRAO_SENHA, ADMIN_PADRAO_USUARIO, gerar_hash
+
+    if tem_admin is None and ADMIN_PADRAO_USUARIO and ADMIN_PADRAO_SENHA:
+        conexao.execute(
+            "INSERT OR IGNORE INTO usuarios "
+            "(usuario, email, hash, is_admin, ativo, plano_codigo, criado_em) "
+            "VALUES (?, ?, ?, 1, 1, 'pro', ?)",
+            (ADMIN_PADRAO_USUARIO,
+             ADMIN_PADRAO_EMAIL or f"{ADMIN_PADRAO_USUARIO}@local",
+             gerar_hash(ADMIN_PADRAO_SENHA), agora()),
+        )
     conexao.commit()
 
 

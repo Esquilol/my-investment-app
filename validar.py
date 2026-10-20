@@ -409,18 +409,24 @@ def teste_login() -> None:
         try:
             administrador = conexao.execute(
                 "SELECT usuario, hash FROM usuarios WHERE is_admin = 1").fetchone()
-            _checar("admin padrão semeado", administrador["usuario"],
-                    auth.ADMIN_PADRAO_USUARIO)
-            _checar("senha não gravada em claro",
-                    auth.ADMIN_PADRAO_SENHA in administrador["hash"], False)
-            _checar("hash no formato PBKDF2", administrador["hash"].split("$")[0],
-                    "pbkdf2_sha256")
-            _checar("login do admin pelo usuário",
-                    auth.autenticar(conexao, "jhon", "321415") is not None, True)
-            _checar("login do admin pelo e-mail",
-                    auth.autenticar(conexao, "jhon@local", "321415") is not None, True)
-            _checar("senha errada recusada",
-                    auth.autenticar(conexao, "jhon", "errada"), None)
+            if auth.ADMIN_PADRAO_USUARIO and auth.ADMIN_PADRAO_SENHA:
+                _checar("admin dos segredos semeado", administrador["usuario"],
+                        auth.ADMIN_PADRAO_USUARIO)
+                _checar("senha não gravada em claro",
+                        auth.ADMIN_PADRAO_SENHA in administrador["hash"], False)
+                _checar("hash no formato PBKDF2", administrador["hash"].split("$")[0],
+                        "pbkdf2_sha256")
+                _checar("login do admin pelo usuário",
+                        auth.autenticar(conexao, auth.ADMIN_PADRAO_USUARIO,
+                                        auth.ADMIN_PADRAO_SENHA) is not None, True)
+                _checar("login do admin pelo e-mail",
+                        auth.autenticar(conexao, auth.ADMIN_PADRAO_EMAIL,
+                                        auth.ADMIN_PADRAO_SENHA) is not None, True)
+                _checar("senha errada recusada",
+                        auth.autenticar(conexao, auth.ADMIN_PADRAO_USUARIO, "errada"), None)
+            else:
+                _checar("sem segredos, nenhum admin semeado", administrador, None)
+                print("  [-----] segredos do admin ausentes — login do admin ignorado")
 
             _checar("validação recusa e-mail inválido",
                     auth.validar_cadastro("maria", "invalido", "segredo1", "segredo1"),

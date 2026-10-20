@@ -5,6 +5,30 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ## [Não publicado]
 
+### Adicionado — Landing pública e login habilitado
+- **`landing.py`** (novo): página pública mostrada antes do login, com as seções
+  **Início** (destaque e o que o app faz), **Planos** e **Dúvidas**, mais os
+  atalhos **Criar conta** e **Acessar minha conta**. O texto descreve apenas o
+  que o app entrega — sem métricas de audiência inventadas nem referência a
+  serviços de terceiros — e os planos são lidos do banco (tabela `planos`), o
+  mesmo que o checkout usa.
+- A tela de acesso ganhou o botão **Voltar** (volta à landing) e a seleção de
+  modo passou a ser por opção — assim os atalhos da landing abrem direto em
+  **Entrar** ou **Criar conta**.
+
+### Alterado — Fim do modo de teste
+- O `MODO_TESTE` foi removido: o app agora **exige login** em todas as execuções.
+  A navegação só é montada depois da autenticação, e o botão **Sair** limpa a
+  sessão e devolve o usuário à landing.
+- **Credenciais do administrador saíram do código**: usuário, e-mail e senha vêm
+  todos de `st.secrets["admin"]` (localmente em `.streamlit/secrets.toml`, fora
+  do versionamento; no Streamlit Cloud, em *App settings → Secrets*). O admin é
+  criado apenas se ainda não existir nenhum administrador — e, sem os segredos,
+  o app sobe sem usuário administrativo.
+- O teste 9 de `validar.py` deixou de citar a senha literal: ele usa os valores
+  dos segredos e, quando eles não estão presentes, apenas confirma que nenhum
+  admin foi semeado.
+
 ### Adicionado — Parâmetros fiscais editáveis e monitor de legislação
 - **Tabela de cálculo no painel administrativo**: nova página **Parâmetros fiscais**
   permite editar as alíquotas (day trade, swing trade, FII/FIAGRO), as isenções

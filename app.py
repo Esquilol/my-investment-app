@@ -1,13 +1,14 @@
 """
 app.py
 ------
-Ponto de entrada do painel: configura a página, faz o **gate de autenticação**
-(entrar / criar conta / recuperar senha) e monta o menu lateral com
-``st.navigation``.
+Ponto de entrada do painel: configura a página, mostra a **landing pública**
+(``landing.py``), faz o **gate de autenticação** (entrar / criar conta /
+recuperar senha) e monta o menu lateral com ``st.navigation``.
 
 O conteúdo de cada página fica em ``paginas.py`` (área do investidor) e
 ``admin.py`` (painel administrativo, restrito a ``is_admin``). As regras de
 negócio do SaaS estão em ``saas.py`` e a persistência em ``persistencia.py``.
+As credenciais do administrador vêm de ``st.secrets["admin"]``, nunca do código.
 
 Execução local (no Windows, chamar o Streamlit como módulo evita problemas de PATH):
 
@@ -41,14 +42,13 @@ apuração oficial (GCAP/DIRPF) nem a orientação de um contador.
 from __future__ import annotations
 
 import html
-import secrets
 
 import streamlit as st
 
 import admin
 import auth
+import landing
 import paginas
-import persistencia as bd
 import saas
 import tema
 from persistencia import obter_usuario
@@ -74,6 +74,7 @@ def _entrar(usuario) -> None:
         usuario_id=int(usuario["id"]),
         usuario=usuario["usuario"],
         is_admin=bool(usuario["is_admin"]),
+        vista_publica=None,
     )
     st.rerun()
 
@@ -152,6 +153,9 @@ def _aba_recuperar(conexao) -> None:
 def tela_autenticacao() -> None:
     """Tela de entrada com login, cadastro e recuperação de senha."""
     conexao = paginas.obter_conexao()
+    if st.button("Voltar", icon=":material/arrow_back:"):
+        st.session_state["vista_publica"] = "landing"
+        st.rerun()
     st.markdown(
         '<div class="mp-marca"><div class="logo">\U0001F4C8</div>'
         "<h1>Gestor de Investimentos B3</h1></div>",
@@ -161,14 +165,18 @@ def tela_autenticacao() -> None:
         "Entre na sua conta ou crie uma agora. As senhas são gravadas apenas "
         "como **hash PBKDF2** no ``dados.db`` local — nunca em claro."
     )
-    aba_entrar, aba_criar, aba_recuperar = st.tabs(
-        [":material/login: Entrar", ":material/person_add: Criar conta",
-         ":material/lock_reset: Recuperar senha"])
-    with aba_entrar:
+
+    modos = ["Entrar", "Criar conta", "Recuperar senha"]
+    if st.session_state.get("auth_aba") not in modos:
+        st.session_state["auth_aba"] = "Entrar"
+    escolha = st.radio("Acesso", modos, horizontal=True,
+                       label_visibility="collapsed", key="auth_aba")
+
+    if escolha == "Entrar":
         _aba_entrar(conexao)
-    with aba_criar:
+    elif escolha == "Criar conta":
         _aba_criar_conta(conexao)
-    with aba_recuperar:
+    else:
         _aba_recuperar(conexao)
 
 
@@ -176,35 +184,15 @@ def tela_autenticacao() -> None:
 # Gate de acesso e navegação
 # ---------------------------------------------------------------------------
 
-# MODO DE TESTE — a tela de login está desativada enquanto as funcionalidades
-# do app estão sendo validadas. O app entra direto no painel com um usuário
-# de teste. Para voltar a exigir login, troque o valor abaixo para ``False``.
-MODO_TESTE = True
-
-
-def _usuario_de_teste(conexao) -> int:
-    """Id do usuário usado no modo de teste; cria um se o banco estiver vazio."""
-    linha = conexao.execute(
-        "SELECT id FROM usuarios ORDER BY is_admin DESC, id LIMIT 1"
-    ).fetchone()
-    if linha is not None:
-        return int(linha["id"])
-    novo_id = auth.criar_conta(conexao, "teste", "teste@local", secrets.token_hex(16))
-    bd.atualizar_usuario(conexao, novo_id, plano_codigo="pro")
-    return novo_id
-
-
-if MODO_TESTE:
-    conexao = paginas.obter_conexao()
-    usuario_id = _usuario_de_teste(conexao)
-    st.session_state.update(autenticado=True, usuario_id=usuario_id)
-else:
-    if not st.session_state.get("autenticado"):
+if not st.session_state.get("autenticado"):
+    if st.session_state.get("vista_publica") == "acesso":
         tela_autenticacao()
-        st.stop()
+    else:
+        landing.mostrar_landing()
+    st.stop()
 
-    conexao = paginas.obter_conexao()
-    usuario_id = int(st.session_state["usuario_id"])
+conexao = paginas.obter_conexao()
+usuario_id = int(st.session_state["usuario_id"])
 
 # Revalida a sessão a cada execução: uma conta desativada pelo administrador
 # derruba o usuário na hora, e o perfil/período do plano são relidos do banco.
@@ -234,10 +222,8 @@ with st.sidebar:
         tema.mostrar_chip(f"Plano {rotulo_plano}", "free", "\U0001F381")
     if st.session_state["is_admin"]:
         tema.mostrar_chip("Administrador", "admin", "\U0001F6E1\uFE0F")
-    if MODO_TESTE:
-        tema.mostrar_chip("Modo de teste", "neutro", "\U0001F9EA")
     st.write("")
-    if not MODO_TESTE and st.button("Sair", icon=":material/logout:", width="stretch"):
+    if st.button("Sair", icon=":material/logout:", width="stretch"):
         st.session_state.clear()
         st.rerun()
 
