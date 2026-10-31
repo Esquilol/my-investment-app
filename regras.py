@@ -522,8 +522,13 @@ def _irrf_retido_mes(notas: pd.DataFrame | None, mes: str) -> dict[str, float]:
     notas["data"] = pd.to_datetime(notas["data"], errors="coerce")
     do_mes = notas[notas["data"].dt.strftime("%Y-%m") == mes]
 
-    # uma nota pode aparecer em mais de um arquivo: conta-se uma única vez
-    do_mes = do_mes.drop_duplicates(subset=["corretora", "numero"])
+    # uma nota pode aparecer em mais de um arquivo: conta-se uma única vez.
+    # A folha entra na chave porque cada folha de uma nota multi-página tem o
+    # seu próprio IRRF (ex.: a 2ª folha de uma nota Day Trade).
+    chave_nota = ["corretora", "numero"]
+    if "folha" in do_mes.columns:
+        chave_nota.append("folha")
+    do_mes = do_mes.drop_duplicates(subset=chave_nota)
     for categoria, grupo in do_mes.groupby("categoria_irrf"):
         if categoria in retido:
             retido[categoria] += float(grupo["irrf"].sum())

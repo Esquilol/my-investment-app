@@ -44,7 +44,9 @@ CAMINHO_PADRAO = Path(__file__).with_name("dados.db")
 #: 4 — acrescenta ``parametros_fiscais`` e ``monitor_legislacao``.
 #: 5 — acrescenta ``parceiros`` e ``indicacoes``; ``cupons`` ganha o modo
 #:     "meses grátis" e ``usuarios`` ganha nome, CPF e origem.
-VERSAO_ESQUEMA = 5
+#: 6 — a chave única da nota passa a incluir a ``folha``: notas que ocupam
+#:     mais de uma página deixam de ter a 2ª folha descartada na importação.
+VERSAO_ESQUEMA = 6
 
 _ESQUEMA = """
 CREATE TABLE IF NOT EXISTS usuarios (
@@ -161,12 +163,13 @@ CREATE TABLE IF NOT EXISTS notas (
     usuario_id      INTEGER NOT NULL,
     numero          TEXT    NOT NULL,
     corretora       TEXT    NOT NULL,
+    folha           TEXT    NOT NULL DEFAULT '',
     data            TEXT,
     arquivo         TEXT,
     despesas        REAL    NOT NULL DEFAULT 0,
     irrf            REAL    NOT NULL DEFAULT 0,
     categoria_irrf  TEXT    NOT NULL DEFAULT 'SwingTrade',
-    UNIQUE (usuario_id, corretora, numero)
+    UNIQUE (usuario_id, corretora, numero, folha)
 );
 
 CREATE TABLE IF NOT EXISTS operacoes (
@@ -175,6 +178,7 @@ CREATE TABLE IF NOT EXISTS operacoes (
     hash         TEXT    NOT NULL,
     corretora    TEXT,
     nota         TEXT,
+    folha        TEXT,
     data         TEXT,
     tipo         TEXT,
     ticker       TEXT,
@@ -273,6 +277,10 @@ def _acrescentar_colunas(conexao: sqlite3.Connection) -> None:
             "tipo": "TEXT NOT NULL DEFAULT 'percentual'",
             "meses_gratis": "INTEGER NOT NULL DEFAULT 0",
         },
+        # A coluna ``folha`` de ``notas`` **não** entra aqui: ela exige a
+        # recriação da tabela para trocar a UNIQUE (ver ``_migrar_v6``), e um
+        # ``ADD COLUMN`` antes disso impediria a migração de rodar.
+        "operacoes": {"folha": "TEXT"},
     }
     for tabela, colunas in novas.items():
         existentes = _colunas(conexao, tabela)
@@ -288,6 +296,33 @@ def _acrescentar_colunas(conexao: sqlite3.Connection) -> None:
     conexao.commit()
 
 
+def _migrar_v6(conexao: sqlite3.Connection) -> None:
+    """
+    v6: incluir a ``folha`` na chave única da nota.
+
+    Uma nota de corretagem pode ocupar mais de uma página; o campo *Folha*
+    distingue essas páginas. O esquema antigo gravava a UNIQUE apenas por
+    ``(usuario_id, corretora, numero)``, então a 2ª folha era descartada em
+    silêncio. Como o SQLite não altera uma UNIQUE existente, a tabela é
+    recriada. As notas já gravadas recebem ``folha = '1'`` (antes da correção
+    só a 1ª folha sobrevivia), de modo que uma reimportação acrescente apenas
+    as folhas seguintes.
+    """
+    if "folha" not in _colunas(conexao, "notas"):
+        conexao.executescript("ALTER TABLE notas RENAME TO notas_v5;")
+        conexao.executescript(_ESQUEMA)          # recria ``notas`` no formato novo
+        conexao.execute(
+            "INSERT INTO notas "
+            "(id, usuario_id, numero, corretora, folha, data, arquivo, despesas, "
+            " irrf, categoria_irrf) "
+            "SELECT id, usuario_id, numero, corretora, '1', data, arquivo, "
+            "       despesas, irrf, categoria_irrf FROM notas_v5")
+        conexao.execute("DROP TABLE notas_v5")
+
+    conexao.execute(
+        "UPDATE notas SET folha = '1' WHERE folha IS NULL OR folha = ''")
+
+
 def _migrar(conexao: sqlite3.Connection) -> None:
     """
     Converte o esquema **monousuário** antigo no esquema multiusuário.
@@ -296,6 +331,7 @@ def _migrar(conexao: sqlite3.Connection) -> None:
     administrador), de modo que nada é perdido na atualização.
     """
     if "usuario_id" in _colunas(conexao, "notas"):
+        _migrar_v6(conexao)
         _acrescentar_colunas(conexao)
         conexao.execute(f"PRAGMA user_version = {VERSAO_ESQUEMA}")
         return
@@ -360,6 +396,7 @@ def _migrar(conexao: sqlite3.Connection) -> None:
         )
         conexao.execute("DROP TABLE prejuizos_antigo")
 
+    _migrar_v6(conexao)
     _acrescentar_colunas(conexao)
     conexao.execute(f"PRAGMA user_version = {VERSAO_ESQUEMA}")
 
@@ -926,6 +963,9 @@ def salvar_notas(conexao: sqlite3.Connection, notas: list[Nota],
     ops_novas = 0
 
     for nota in notas:
+        # A folha distingue as páginas de uma nota multi-página; a 1ª folha (ou
+        # a única) vale "1", alinhado ao valor gravado pela migração v6.
+        folha = nota.folha or "1"
         categoria_irrf = (
             "DayTrade"
             if nota.operacoes and all(op.day_trade for op in nota.operacoes)
@@ -933,12 +973,13 @@ def salvar_notas(conexao: sqlite3.Connection, notas: list[Nota],
         )
         cur = conexao.execute(
             "INSERT OR IGNORE INTO notas "
-            "(usuario_id, numero, corretora, data, arquivo, despesas, irrf, categoria_irrf) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(usuario_id, numero, corretora, folha, data, arquivo, despesas, irrf, categoria_irrf) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 int(usuario_id),
                 nota.numero,
                 nota.corretora,
+                folha,
                 nota.data.isoformat() if nota.data else None,
                 nota.arquivo,
                 nota.despesas,
@@ -953,7 +994,7 @@ def salvar_notas(conexao: sqlite3.Connection, notas: list[Nota],
         ocorrencias: dict[str, int] = {}
         for op in nota.operacoes:
             chave = "|".join(str(p) for p in (
-                op.corretora, op.nota, op.data, op.tipo, op.ticker,
+                op.corretora, op.nota, op.folha or "1", op.data, op.tipo, op.ticker,
                 op.quantidade, op.preco, op.valor_total, op.resultado,
             ))
             indice = ocorrencias.get(chave, 0)
@@ -961,13 +1002,13 @@ def salvar_notas(conexao: sqlite3.Connection, notas: list[Nota],
 
             cur = conexao.execute(
                 "INSERT OR IGNORE INTO operacoes "
-                "(usuario_id, hash, corretora, nota, data, tipo, ticker, quantidade, "
+                "(usuario_id, hash, corretora, nota, folha, data, tipo, ticker, quantidade, "
                 " preco, valor_total, mercado, taxas, irrf, resultado, day_trade, obs, arquivo) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     int(usuario_id),
                     _hash_operacao(chave, indice),
-                    op.corretora, op.nota,
+                    op.corretora, op.nota, op.folha or "1",
                     op.data.isoformat() if op.data else None,
                     op.tipo, op.ticker, op.quantidade, op.preco, op.valor_total,
                     op.mercado, op.taxas, op.irrf, op.resultado,
@@ -988,23 +1029,26 @@ def limpar_dados(conexao: sqlite3.Connection, usuario_id: int) -> None:
 
 
 def remover_notas(conexao: sqlite3.Connection, usuario_id: int,
-                  chaves: list[tuple[str, str]]) -> int:
+                  chaves: list[tuple[str, str, str]]) -> int:
     """
     Apaga as notas indicadas e as operações que vieram delas.
 
-    ``chaves`` é uma lista de ``(corretora, número da nota)`` — a mesma chave
-    que identifica a nota na importação. Retorna quantas notas foram removidas.
+    ``chaves`` é uma lista de ``(corretora, número da nota, folha)`` — a mesma
+    chave que identifica a nota na importação. Retorna quantas notas foram
+    removidas.
     """
     removidas = 0
-    for corretora, numero in chaves:
+    for corretora, numero, folha in chaves:
         cur = conexao.execute(
-            "DELETE FROM notas WHERE usuario_id = ? AND corretora = ? AND numero = ?",
-            (int(usuario_id), str(corretora), str(numero)),
+            "DELETE FROM notas "
+            "WHERE usuario_id = ? AND corretora = ? AND numero = ? AND folha = ?",
+            (int(usuario_id), str(corretora), str(numero), str(folha)),
         )
         removidas += cur.rowcount
         conexao.execute(
-            "DELETE FROM operacoes WHERE usuario_id = ? AND corretora = ? AND nota = ?",
-            (int(usuario_id), str(corretora), str(numero)),
+            "DELETE FROM operacoes "
+            "WHERE usuario_id = ? AND corretora = ? AND nota = ? AND folha = ?",
+            (int(usuario_id), str(corretora), str(numero), str(folha)),
         )
     conexao.commit()
     return removidas
@@ -1014,8 +1058,8 @@ def carregar_operacoes(conexao: sqlite3.Connection, usuario_id: int) -> pd.DataF
     """DataFrame com as operações do usuário."""
     return pd.read_sql_query(
         "SELECT data, tipo, ticker, quantidade, preco, valor_total, mercado, "
-        "       taxas, irrf, resultado, day_trade, nota, corretora, arquivo, obs "
-        "FROM operacoes WHERE usuario_id = ? ORDER BY data, nota, id",
+        "       taxas, irrf, resultado, day_trade, nota, folha, corretora, arquivo, obs "
+        "FROM operacoes WHERE usuario_id = ? ORDER BY data, nota, folha, id",
         conexao, params=(int(usuario_id),),
     )
 
@@ -1023,8 +1067,8 @@ def carregar_operacoes(conexao: sqlite3.Connection, usuario_id: int) -> pd.DataF
 def carregar_notas(conexao: sqlite3.Connection, usuario_id: int) -> pd.DataFrame:
     """DataFrame com as notas do usuário (usado para o IRRF retido)."""
     return pd.read_sql_query(
-        "SELECT numero, corretora, data, arquivo, despesas, irrf, categoria_irrf "
-        "FROM notas WHERE usuario_id = ? ORDER BY data, numero",
+        "SELECT numero, corretora, folha, data, arquivo, despesas, irrf, categoria_irrf "
+        "FROM notas WHERE usuario_id = ? ORDER BY data, numero, folha",
         conexao, params=(int(usuario_id),),
     )
 

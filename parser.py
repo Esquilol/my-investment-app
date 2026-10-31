@@ -54,6 +54,7 @@ class Operacao:
     irrf: float = 0.0             # IRRF retido na nota (rateado não se aplica)
     resultado: Optional[float] = None  # futuros: ajuste com sinal (C=+ / D=-)
     obs: str = ""                 # observações da linha (ex.: "DAY TRADE")
+    folha: str = ""               # folha (página) da nota de origem
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -70,6 +71,7 @@ class Nota:
     despesas: float = 0.0
     irrf: float = 0.0
     operacoes: list["Operacao"] = field(default_factory=list)
+    folha: str = ""               # folha (página) da nota no PDF
 
 
 # ---------------------------------------------------------------------------
@@ -83,8 +85,11 @@ TICKER_RE = re.compile(r"\b([A-Z]{4}(?:\d{1,2}[A-Z]?|[A-Z]\d{1,3}))\b")
 DATE_RE = re.compile(r"(\d{2}/\d{2}/\d{4})")
 
 # Cabeçalho do bloco: "Nr. nota Folha Data pregão \n 76638 1 02/09/2026"
+# A folha identifica cada página de uma nota (algumas notas ocupam 2+ páginas);
+# sem ela a segunda folha colidiria com a primeira na chave única do banco.
 NOTA_HEADER_RE = re.compile(
-    r"Nr\.?\s*nota\s+Folha\s+Data\s*preg[ãa]o\s+(?P<num>\d+)\s+\d+\s+(?P<data>\d{2}/\d{2}/\d{4})",
+    r"Nr\.?\s*nota\s+Folha\s+Data\s*preg[ãa]o\s+(?P<num>\d+)\s+(?P<folha>\d+)\s+"
+    r"(?P<data>\d{2}/\d{2}/\d{4})",
     re.IGNORECASE,
 )
 
@@ -300,6 +305,7 @@ def _parse_futuro(linha: str, meta: dict) -> Optional[Operacao]:
         irrf=meta["irrf"],
         resultado=resultado,
         obs=obs,
+        folha=meta.get("folha", ""),
     )
 
 
@@ -333,6 +339,7 @@ def _parse_genial_b3(linha: str, meta: dict) -> Optional[Operacao]:
         nota=meta["nota"],
         irrf=meta["irrf"],
         obs=head,
+        folha=meta.get("folha", ""),
     )
 
 
@@ -361,6 +368,7 @@ def _parse_generico(linha: str, meta: dict) -> Optional[Operacao]:
         nota=meta["nota"],
         irrf=meta["irrf"],
         obs=m.group("meio").strip(),
+        folha=meta.get("folha", ""),
     )
 
 
@@ -424,6 +432,7 @@ def extract_notas(pdf_file: Union[str, BinaryIO],
         cab = NOTA_HEADER_RE.search(bloco)
         data_nota = _parse_br_date(cab.group("data")) if cab else data_fallback
         numero = cab.group("num") if cab else f"{i}"
+        folha = cab.group("folha") if cab else ""
 
         despesas = _extrair_despesas(bloco)
         irrf = _extrair_irrf(bloco)
@@ -434,6 +443,7 @@ def extract_notas(pdf_file: Union[str, BinaryIO],
             "arquivo": nome_arquivo,
             "nota": numero,
             "irrf": irrf,
+            "folha": folha,
         }
 
         operacoes: list[Operacao] = []
@@ -454,6 +464,7 @@ def extract_notas(pdf_file: Union[str, BinaryIO],
             despesas=despesas,
             irrf=irrf,
             operacoes=operacoes,
+            folha=folha,
         ))
 
     return notas

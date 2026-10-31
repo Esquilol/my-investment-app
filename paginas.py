@@ -477,7 +477,8 @@ def pagina_upload() -> None:
                      "erros": [], "avisos": []}
         interrompido = False
         ja_importadas = (
-            set(zip(notas["corretora"].astype(str), notas["numero"].astype(str)))
+            set(zip(notas["corretora"].astype(str), notas["numero"].astype(str),
+                    notas["folha"].astype(str)))
             if not notas.empty else set()
         )
 
@@ -496,7 +497,7 @@ def pagina_upload() -> None:
 
             ineditas = []
             for nota in lidas:
-                chave = (str(nota.corretora), str(nota.numero))
+                chave = (str(nota.corretora), str(nota.numero), str(nota.folha or "1"))
                 if chave in ja_importadas:
                     resultado["repetidas"] += 1
                     continue
@@ -554,9 +555,9 @@ def pagina_upload() -> None:
     visao_notas = notas.reset_index(drop=True)
     visao_notas["data"] = visao_notas["data"].dt.strftime("%d/%m/%Y")
     visao_notas = visao_notas.rename(columns={
-        "numero": "Nota", "corretora": "Corretora", "data": "Data",
-        "arquivo": "Arquivo", "despesas": "Despesas", "irrf": "IRRF",
-        "categoria_irrf": "Categoria IRRF",
+        "numero": "Nota", "corretora": "Corretora", "folha": "Folha",
+        "data": "Data", "arquivo": "Arquivo", "despesas": "Despesas",
+        "irrf": "IRRF", "categoria_irrf": "Categoria IRRF",
     })
 
     esquerda, direita = st.columns(2)
@@ -585,7 +586,8 @@ def pagina_upload() -> None:
     if st.button("Apagar selecionadas", icon=":material/delete:", type="primary",
                  width="stretch", disabled=not selecionadas):
         chaves = [
-            (str(visao_notas.at[i, "Corretora"]), str(visao_notas.at[i, "Nota"]))
+            (str(visao_notas.at[i, "Corretora"]), str(visao_notas.at[i, "Nota"]),
+             str(visao_notas.at[i, "Folha"]))
             for i in selecionadas
         ]
         removidas = remover_notas(conexao, usuario_id, chaves)
