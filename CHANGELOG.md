@@ -130,7 +130,7 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   desconto** percentual (com validade e limite de usos) e ativação da assinatura.
   Nenhuma cobrança real é feita.
 - **Páginas novas do investidor**: **Planos e Assinatura** e **Minha Conta**.
-- **Administrador padrão** (`jhon`) **semeado** na criação do banco, já no plano PRO
+- **Administrador padrão** (definido via segredos) **semeado** na criação do banco, já no plano PRO
   e com `is_admin = 1`.
 - **Controle de acesso por rota**: as páginas de `admin.py` só entram em
   `st.navigation` quando `is_admin` é verdadeiro — para um usuário comum elas não

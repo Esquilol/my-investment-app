@@ -152,9 +152,9 @@ Cloud, defina em **App settings → Secrets**; localmente, em
 
 ```toml
 [admin]
-usuario = "jhon"
-email   = "jhon@local"
-senha   = "troque-esta-senha"
+usuario = "admin"
+email   = "admin@exemplo.com"
+senha   = "sua-senha-segura"
 ```
 
 Sem `senha` configurada, o administrador **não** é semeado (e o app funciona
@@ -202,7 +202,7 @@ páginas de contas, assinaturas, pagamentos e cupons.
 
 ### Streamlit Community Cloud (streamlit.app)
 
-O repositório é público, então basta apontá-lo no painel:
+Conecte o repositório ao painel:
 
 1. Entre em <https://share.streamlit.io> com a conta do **GitHub**.
 2. **Create app** → **Deploy a public app from GitHub**.
@@ -213,9 +213,9 @@ O repositório é público, então basta apontá-lo no painel:
 
    ```toml
    [admin]
-   usuario = "jhon"
-   email   = "jhon@local"
-   senha   = "troque-esta-senha"
+   usuario = "admin"
+   email   = "admin@exemplo.com"
+   senha   = "sua-senha-segura"
    ```
 
 5. **Deploy**. A cada `git push` na `main` o app é reconstruído automaticamente.
