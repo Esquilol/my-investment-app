@@ -292,8 +292,13 @@ def _planos(conexao) -> None:
         with coluna, st.container(border=True):
             st.markdown(f"#### {plano['nome']}")
             st.caption("Ideal para começar" if gratuito else "Para quem investe sem limite")
-            st.metric("Mensalidade",
-                      "Grátis" if gratuito else f"{_moeda(plano['preco_mensal'])}/mês")
+            preco = ("Grátis" if gratuito
+                     else f"{_moeda(plano['preco_mensal'])}<span style='font-size:0.9rem;color:#6b7280;font-weight:normal;'>/mês</span>")
+            st.markdown(
+                f"<div style='margin:0.5rem 0;'><span style='font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;color:#6b7280;display:block;'>Mensalidade</span>"
+                f"<span style='font-size:1.75rem;font-weight:700;'>{preco}</span></div>",
+                unsafe_allow_html=True,
+            )
             limite = ("ilimitadas" if int(plano["limite_notas"]) < 0
                       else str(int(plano["limite_notas"])))
             st.caption(f"Notas importadas: **{limite}**")
