@@ -64,7 +64,17 @@ from regras import (
 )
 
 
-CORRETORAS = ["Genial", "XP", "Clear", "Genérico"]
+CORRETORAS = [
+    "XP Investimentos",
+    "Clear",
+    "Rico",
+    "BTG Pactual",
+    "Inter",
+    "Nubank",
+    "Santander",
+    "Genial",
+    "Genérico (SINACOR)",
+]
 
 #: Rótulos das colunas da página de proventos.
 ROTULOS_PROVENTO = {

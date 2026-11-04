@@ -7,7 +7,10 @@ Layouts suportados
 ------------------
 1. **Genial — BM&F (futuros)**   ``C WIN V26 14/10/2026 1 183.855,0000 DAY TRADE 819,20 C 0,00``
 2. **Genial — B3 RV (à vista/opções)** ``B3 RV LISTADOV OPCAO DE COMPRA 09/26 PETRI439 PN 41,67 PETR /EDJ 100 5,50 550,00 C``
-3. **Genérico (XP / Clear)** — layout ``<nº> <C|V> <mercado> <ticker> <qtd> <preço> <total>``.
+3. **SINACOR/B3 (XP, Clear, Rico, BTG, Inter, Nubank e demais)** — colunas
+   ``Q  C/V  Tipo mercado  Prazo  Especificação do título  Obs  Quantidade  Preço  Valor  D/C``
+   onde Q começa com ``1-BOVESPA`` (ou similar prefixo de ambiente).
+4. **Genérico** — fallback para outros layouts não identificados.
 
 Um PDF pode conter **várias notas** (um bloco ``NOTA DE CORRETAGEM`` cada). O
 parser divide o texto em blocos para que cada operação receba a **data do seu
@@ -118,7 +121,25 @@ GENIAL_B3_LINE_RE = re.compile(
     r"(?P<dc>[CD])\s*$"
 )
 
-# Bloco 3 — Genérico (XP / Clear):
+# Bloco 3 — SINACOR/B3 (XP, Clear, Rico, BTG, Inter, Nubank e demais)
+# Linha: "1-BOVESPA   C    VISTA   PETROLEO BRASILEIRO   PETR4   100   28,50   2.850,00   D"
+# A coluna Q (ambiente de negociação) começa com dígito + hífen + letras (ex: "1-BOVESPA").
+# Usamos \s{2,} como delimitador entre colunas (colunas sempre separadas por 2+ espaços),
+# o que permite que "OPCAO DE COMPRA" (espaço simples interno) seja capturado corretamente.
+_NUM_BR = r"[\d.]+,\d{2,4}"
+SINACOR_LINE_RE = re.compile(
+    r"^\s*(?P<q>\d+-[A-Z]+)\s{2,}"          # Q: "1-BOVESPA" (seguido de 2+ espaços)
+    r"(?P<cv>[CV])\s{2,}"                    # C ou V
+    r"(?P<mercado>[A-Z][A-Z ]*?)\s{2,}"      # Tipo de mercado (VISTA / FRACIONARIO / OPCAO DE COMPRA)
+    r"(?P<especificacao>.*?)\s{2,}"          # Especificação do título (nome da empresa)
+    r"(?P<ticker>[A-Z]{4}(?:\d{1,2}[A-Z]?|[A-Z]\d{1,2}))\s{2,}"  # Código do ativo (PETR4, PETRG28)
+    r"(?P<qtd>[\d.]+)\s+"
+    r"(?P<preco>" + _NUM_BR + r")\s+"
+    r"(?P<valor>" + _NUM_BR + r")\s+"
+    r"(?P<dc>[CD])\s*$"
+)
+
+# Bloco 4 — Genérico (fallback):
 #   <nº> <C|V> <mercado?> <...especificação...> <TICKER> <qtd> <preço> <total>
 OP_RE = re.compile(
     r"^\s*(?P<num>\d*)\s*"
@@ -130,13 +151,17 @@ OP_RE = re.compile(
     r"(?P<total>[\d.]+,\d{2})"
 )
 
-# Mercados reconhecidos (aparecem entre C/V e o ticker no layout genérico)
+# Mercados reconhecidos (aparecem entre C/V e o ticker no layout genérico / SINACOR)
 MERCADOS = {
     "VISTA": "VISTA",
     "FRACIONARIO": "FRACIONARIO",
     "FRACIONÁRIO": "FRACIONARIO",
     "OPCAO": "OPCAO",
     "OPÇÃO": "OPCAO",
+    "OPCAO DE COMPRA": "OPCAO",
+    "OPCAO DE VENDA": "OPCAO",
+    "OPÇÃO DE COMPRA": "OPCAO",
+    "OPÇÃO DE VENDA": "OPCAO",
     "OURO": "OURO",
     "TERMO": "TERMO",
     "FUTURO": "FUTURO",
@@ -189,9 +214,10 @@ def _detect_mercado(texto: str) -> str:
     if not texto:
         return ""
     upper = texto.upper()
-    for chave, nome in MERCADOS.items():
+    # Testa do mais específico para o mais genérico
+    for chave in sorted(MERCADOS, key=len, reverse=True):
         if chave in upper:
-            return nome
+            return MERCADOS[chave]
     return ""
 
 
@@ -204,45 +230,81 @@ def _last_valor_dc(linha: str) -> Optional[float]:
 
 
 def _extrair_despesas(bloco: str) -> float:
-    """Total de despesas/corretagem da nota."""
-    # BM&F: "Total das despesas" seguido da linha de valores
+    """Total de despesas/corretagem da nota. Suporta layouts Genial e SINACOR."""
+
+    # ------------------------------------------------------------------ #
+    # Layout Genial BM&F: "Total das despesas" seguido da linha de valores
+    # ------------------------------------------------------------------ #
     m = re.search(r"Total das despesas\s*\n?\s*(?P<linha>[^\n]*)", bloco)
     if m:
-        # Linha: + Outros Custos | I.S.S | Ajuste de posição |
-        #        Ajuste day trade | Total das despesas
         valores = re.findall(r"([\d.]+,\d{2})", m.group("linha"))
         if valores:
             total = _parse_br_number(valores[-1])
             if total is not None:
                 # O I.S.S. fica fora do "Total das despesas" impresso, mas
-                # integra o custo da operação (conferido contra os dados de
-                # referência: nota 122982/09-09-2026, I.S.S. de 1,22).
+                # integra o custo da operação.
                 iss = _parse_br_number(valores[1]) if len(valores) >= 2 else 0.0
                 return total + (iss or 0.0)
 
-    # B3 RV: o "Total corretagem / Despesas" impresso cobre apenas
-    # Clearing + ISS/PIS/COFINS. As taxas de liquidação/CCP, de registro e os
-    # emolumentos são cobradas à parte e também integram o custo da operação
-    # (conferido contra os dados de referência: nota 11966/31-08-2026,
-    # 0,70 + 1,77 + 0,94 + 4,34 = 7,75).
+    # ------------------------------------------------------------------ #
+    # Layout Genial B3 RV: "Total corretagem / Despesas" + taxas avulsas
+    # ------------------------------------------------------------------ #
     m = re.search(r"Total corretagem\s*/\s*Despesas\s+([\d.]+,\d{2})", bloco)
     if m:
         total = _parse_br_number(m.group(1)) or 0.0
         for padrao in (
-            r"Taxa de liquida[çc][ãa]o\s*/?\s*CCP\s+([\d.]+,\d{2})",
+            r"Taxa de liquida[çc][ãa]o\s*/?(?:\s*CCP)?\s+([\d.]+,\d{2})",
             r"Taxa de Registro\s+([\d.]+,\d{2})",
             r"Emolumentos\s+([\d.]+,\d{2})",
         ):
-            for valor in re.findall(padrao, bloco):
+            for valor in re.findall(padrao, bloco, re.IGNORECASE):
                 total += _parse_br_number(valor) or 0.0
         return total
+
+    # ------------------------------------------------------------------ #
+    # Layout SINACOR (XP, Clear, Rico, BTG, Inter e demais):
+    # Soma das linhas discriminadas: Clearing, Corretagem, ISS,
+    # Taxa de liquidação, Emolumentos.
+    # Âncora final: "Total custos/despesas", "Total Custos Operacionais"
+    # ou "Total Custos" (BTG).
+    # ------------------------------------------------------------------ #
+
+    # Tenta usar o total final impresso na nota para validação/primário
+    for padrao_total in (
+        r"Total\s+custos/despesas\s+([\d.]+,\d{2})",
+        r"Total\s+Custos\s+Operacionais\s+([\d.]+,\d{2})",
+        r"Total\s+Custos\s+([\d.]+,\d{2})",
+    ):
+        m = re.search(padrao_total, bloco, re.IGNORECASE)
+        if m:
+            return _parse_br_number(m.group(1)) or 0.0
+
+    # Fallback: soma os componentes individualmente
+    total_sinacor = 0.0
+    padroes_componentes = [
+        r"Taxa de liquida[çc][ãa]o\s+([\d.]+,\d{2})",
+        r"Taxa de Registro\s+([\d.]+,\d{2})",
+        r"Emolumentos\s+([\d.]+,\d{2})",
+        r"Clearing\s+([\d.]+,\d{2})",
+        r"Corretagem\s+([\d.]+,\d{2})",
+        r"ISS\s*(?:\([^)]*\))?\s+([\d.]+,\d{2})",
+    ]
+    encontrou = False
+    for padrao in padroes_componentes:
+        for valor in re.findall(padrao, bloco, re.IGNORECASE):
+            v = _parse_br_number(valor)
+            if v is not None:
+                total_sinacor += v
+                encontrou = True
+    if encontrou:
+        return round(total_sinacor, 2)
 
     return 0.0
 
 
 def _extrair_irrf(bloco: str) -> float:
     """IRRF retido na nota (B3: 0,005% das vendas | BM&F: 1% do day trade positivo)."""
-    # B3 RV: "I.R.R.F s/ operações, base R$ 576,00	0,02"
+    # B3 RV e SINACOR: "I.R.R.F s/ operações, base R$ 576,00\t0,02"
     m = re.search(r"I\.?\s*R\.?\s*R\.?\s*F\s*s/\s*opera[çc][õo]es[^\n]*?([\d.]+,\d{2})\s*$",
                   bloco, re.IGNORECASE | re.MULTILINE)
     if m:
@@ -343,8 +405,44 @@ def _parse_genial_b3(linha: str, meta: dict) -> Optional[Operacao]:
     )
 
 
+def _parse_sinacor(linha: str, meta: dict) -> Optional[Operacao]:
+    """Layout SINACOR/B3 (XP, Clear, Rico, BTG, Inter, Nubank e demais).
+
+    Linha: "1-BOVESPA   C    VISTA   PETROLEO BRASILEIRO   PETR4   100   28,50   2.850,00   D"
+    A coluna Q (ambiente de negociação) começa com dígito-hífen-letras maiúsculas.
+    """
+    m = SINACOR_LINE_RE.match(linha)
+    if not m:
+        return None
+
+    quantidade = _parse_br_number(m.group("qtd"))
+    preco = _parse_br_number(m.group("preco"))
+    valor = _parse_br_number(m.group("valor"))
+    if quantidade is None or preco is None or valor is None:
+        return None
+
+    mercado_raw = m.group("mercado").strip()
+    mercado = _detect_mercado(mercado_raw) or "VISTA"
+
+    return Operacao(
+        data=meta["data"],
+        tipo=m.group("cv").upper(),
+        ticker=m.group("ticker").upper(),
+        quantidade=quantidade,
+        preco=preco,
+        valor_total=valor,
+        mercado=mercado,
+        corretora=meta["corretora"],
+        arquivo=meta["arquivo"],
+        nota=meta["nota"],
+        irrf=meta["irrf"],
+        obs=m.group("especificacao").strip(),
+        folha=meta.get("folha", ""),
+    )
+
+
 def _parse_generico(linha: str, meta: dict) -> Optional[Operacao]:
-    """Layout genérico (XP / Clear)."""
+    """Layout genérico (fallback para outros modelos)."""
     m = OP_RE.match(linha)
     if not m:
         return None
@@ -377,7 +475,7 @@ def _parse_line(linha: str, meta: dict) -> Optional[Operacao]:
     linha = linha.rstrip()
     if not linha:
         return None
-    for parser in (_parse_futuro, _parse_genial_b3, _parse_generico):
+    for parser in (_parse_futuro, _parse_genial_b3, _parse_sinacor, _parse_generico):
         op = parser(linha, meta)
         if op is not None:
             return op

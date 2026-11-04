@@ -207,7 +207,7 @@ CASOS = [
     Caso("Genial BM&F (controle)", GENIAL_BMF, 2),
     Caso("XP", SINACOR_XP, 2),
     Caso("Clear", SINACOR_CLEAR, 2),
-    Caso("Rico", SINACOR_RICO, 2),
+    Caso("Rico", SINACOR_RICO, 1),
     Caso("BTG Pactual", SINACOR_BTG, 1),
 ]
 
