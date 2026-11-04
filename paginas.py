@@ -61,6 +61,7 @@ from regras import (
     meses_ate_vencimento,
     posicao_atual,
     resultados_realizados,
+    valor_minimo_darf,
 )
 
 
@@ -251,11 +252,13 @@ def _colorir(df: pd.DataFrame, colunas: list[str]):
 
 
 def _status_darf(competencia: str, recolher: float, pagamento: dict | None) -> str:
-    """Situação da competência: Isento, Pago, Vencido ou Em aberto."""
+    """Situação da competência: Isento, Pago, Vencido, Em aberto ou Acumulado (< R$ 10)."""
     if recolher <= 0:
         return "Isento"
-    if pagamento and pagamento["pago"]:
+    if pagamento and pagamento.get("pago"):
         return "Pago"
+    if 0 < recolher < valor_minimo_darf():
+        return "Acumulado (< R$ 10)"
     if date.today() > _vencimento_darf(competencia):
         return "Vencido"
     return "Em aberto"
@@ -269,6 +272,64 @@ def _data_armazenada(texto: str | None) -> date:
         except ValueError:
             pass
     return date.today()
+
+
+def _exibir_alertas_darf() -> None:
+    """Exibe alertas de DARFs vencidos ou próximos do vencimento (Lei 9.430/96)."""
+    if tabela_ir.empty:
+        return
+
+    hoje = date.today()
+    vencidos = []
+    a_vencer = []
+    acumulados = []
+
+    for _, linha in tabela_ir.iterrows():
+        mes = str(linha["mes"])
+        recolher = float(linha.get("DARFFinal", 0.0))
+        pagamento = darf_pagamentos.get(mes)
+        if recolher > 0 and (not pagamento or not pagamento.get("pago")):
+            if 0 < recolher < valor_minimo_darf():
+                acumulados.append({"mes": mes, "valor": recolher})
+                continue
+            vencimento = _vencimento_darf(mes)
+            if hoje > vencimento:
+                dias = (hoje - vencimento).days
+                multa_pct = min(dias * 0.33, 20.0)
+                multa_valor = recolher * (multa_pct / 100.0)
+                vencidos.append({
+                    "mes": mes, "valor": recolher, "vencimento": vencimento,
+                    "dias": dias, "multa_pct": multa_pct, "multa_valor": multa_valor,
+                })
+            else:
+                dias = (vencimento - hoje).days
+                if dias <= 10:
+                    a_vencer.append({
+                        "mes": mes, "valor": recolher, "vencimento": vencimento, "dias": dias,
+                    })
+
+    for item in vencidos:
+        st.error(
+            f"🚨 **DARF VENCIDO ({_nome_mes(item['mes'])}):** Valor de **{_moeda(item['valor'])}** "
+            f"venceu em **{item['vencimento']:%d/%m/%Y}** ({item['dias']} dia(s) em atraso). "
+            f"Multa de mora estimada (0,33%/dia até 20% - Lei 9.430/96): **{item['multa_pct']:.2f}%** (+{_moeda(item['multa_valor'])}), "
+            f"mais juros Selic acumulados. [Acesse o Sicalcweb](https://sicalc.receita.fazenda.gov.br/) para emitir com código 6015."
+        )
+
+    for item in a_vencer:
+        aviso = "vence **hoje!**" if item["dias"] == 0 else f"vence em **{item['dias']} dia(s)** ({item['vencimento']:%d/%m/%Y})"
+        st.warning(
+            f"🔔 **Lembrete de Vencimento:** O DARF de **{_nome_mes(item['mes'])}** no valor de "
+            f"**{_moeda(item['valor'])}** {aviso}. "
+            f"Código de receita: **{codigo_receita_darf()}**."
+        )
+
+    for item in acumulados:
+        st.info(
+            f"ℹ️ **Imposto acumulado ({_nome_mes(item['mes'])}):** {_moeda(item['valor'])}. "
+            f"Conforme o Art. 67 da Lei 9.430/96, DARFs inferiores a R$ 10,00 não devem ser recolhidos isoladamente; "
+            "o valor fica acumulado para a próxima competência."
+        )
 
 
 
@@ -622,6 +683,7 @@ def pagina_visao() -> None:
     if not tem_dados:
         tema.vazio("Sem dados ainda. Importe notas na página **Upload de Notas**.")
     else:
+        _exibir_alertas_darf()
         custo_total = float(posicao["Custo Total"].sum()) if not posicao.empty else 0.0
         ir_total = float(tabela_ir["IRRFFinal"].sum()) if not tabela_ir.empty else 0.0
         total_proventos = float(proventos["valor"].sum()) if not proventos.empty else 0.0
@@ -880,6 +942,7 @@ def pagina_darf() -> None:
         "O valor a recolher por competência, com o código de receita e o vencimento.",
         "\U0001F9EE",
     )
+    _exibir_alertas_darf()
 
     if tabela_ir.empty:
         tema.vazio("Sem competências apuradas. Importe notas na página **Upload de Notas**.")

@@ -132,6 +132,9 @@ PARAMETROS_FISCAIS = (
      "Vendas mensais até este valor ficam isentas no swing trade.", 20000.0),
     ("isencao_eua", "Isenção de vendas — ativos dos EUA", float,
      "Limite mensal de vendas isentas de ações e ETFs dos EUA.", 35000.0),
+    ("valor_minimo_darf", "Valor mínimo para emissão de DARF", float,
+     "Limite legal (Lei 9.430/96, art. 67) abaixo do qual é vedado emitir DARF. "
+     "Valores inferiores ficam acumulados para a competência seguinte.", 10.0),
     ("meses_ate_vencimento", "Meses até o vencimento do DARF", int,
      "Quantos meses após a competência o DARF vence (1 = último dia útil do "
      "mês seguinte).", 1),
@@ -187,6 +190,11 @@ def aplicar_parametros(valores: dict) -> None:
 def codigo_receita_darf() -> str:
     """Código de receita do DARF em vigor (editável no painel administrativo)."""
     return str(PARAMETROS["codigo_receita_darf"])
+
+
+def valor_minimo_darf() -> float:
+    """Valor mínimo legal para emissão de DARF (Lei 9.430/96, art. 67, padrão R$ 10,00)."""
+    return float(PARAMETROS.get("valor_minimo_darf", 10.0))
 
 
 def meses_ate_vencimento() -> int:

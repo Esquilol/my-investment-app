@@ -47,11 +47,12 @@ import streamlit as st
 
 import admin
 import auth
+import email_service
 import landing
 import paginas
 import saas
 import tema
-from persistencia import obter_parceiro_por_codigo, obter_usuario
+from persistencia import obter_parceiro_por_codigo, obter_usuario, obter_por_email
 
 st.set_page_config(
     page_title="FiscoTrade",
@@ -125,24 +126,38 @@ def _aba_criar_conta(conexao) -> None:
 
 
 def _aba_recuperar(conexao) -> None:
-    st.caption(
-        "A recuperação é **simulada**: como o app ainda não envia e-mails, o "
-        "código é exibido aqui na tela. Gere o código e informe no formulário "
-        "de redefinição ao lado."
-    )
+    smtp_ativo = email_service.smtp_configurado()
+    if smtp_ativo:
+        st.caption("Informe seu e-mail cadastrado para enviarmos o código seguro de recuperação de senha.")
+    else:
+        st.caption(
+            "Recuperação de senha: como as credenciais SMTP ainda não foram definidas em "
+            "``st.secrets['smtp']``, o código será exibido na tela para teste."
+        )
+
     col1, col2 = st.columns(2)
     with col1:
         with st.form("form_gerar_codigo"):
             email = st.text_input("E-mail cadastrado", key="rec_email")
-            if st.form_submit_button("Gerar código"):
+            if st.form_submit_button("Gerar código", type="primary" if smtp_ativo else "secondary"):
                 token = auth.gerar_token_recuperacao(conexao, email)
                 if token is None:
                     st.error("Não há conta com esse e-mail.")
                 else:
-                    st.success(
-                        f"Código de recuperação: **{token}** "
-                        f"(válido por {auth.VALIDADE_TOKEN_HORAS} hora)."
-                    )
+                    user_info = obter_por_email(conexao, email)
+                    nome = user_info["nome"] if user_info and user_info["nome"] else ""
+                    if smtp_ativo:
+                        ok, msg = email_service.enviar_codigo_recuperacao(email, token, nome)
+                        if ok:
+                            st.success(f"Enviamos o código para **{email}**. Verifique sua caixa de entrada.")
+                        else:
+                            st.warning(f"{msg}\n\nCódigo de contingência: **{token}**")
+                    else:
+                        st.info(
+                            f"Código gerado (modo teste): **{token}** "
+                            f"(válido por {auth.VALIDADE_TOKEN_HORAS}h). Em produção com SMTP configurado, "
+                            "ele será enviado direto ao e-mail."
+                        )
     with col2:
         with st.form("form_redefinir"):
             email = st.text_input("E-mail", key="red_email")
@@ -156,7 +171,7 @@ def _aba_recuperar(conexao) -> None:
                 elif nova != confirmacao:
                     st.error("As senhas não conferem.")
                 elif auth.redefinir_senha(conexao, email, codigo, nova):
-                    st.success("Senha redefinida. Já pode entrar com a nova senha.")
+                    st.success("Senha redefinida com sucesso! Já pode entrar com a nova senha.")
                 else:
                     st.error("Código inválido ou expirado.")
 

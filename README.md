@@ -155,6 +155,16 @@ Cloud, defina em **App settings → Secrets**; localmente, em
 usuario = "admin"
 email   = "admin@exemplo.com"
 senha   = "sua-senha-segura"
+
+# Opcional: Envio real de e-mails transacionais (recuperação de senha e avisos)
+# Se omitido, o app opera em modo simulado exibindo códigos na tela para teste.
+[smtp]
+servidor  = "smtp.gmail.com"
+porta     = 587
+usuario   = "seu-email@gmail.com"
+senha     = "sua-senha-de-app"
+remetente = "FiscoTrade <suporte@fiscotrade.com>"
+usar_tls  = true
 ```
 
 Sem `senha` configurada, o administrador **não** é semeado (e o app funciona
