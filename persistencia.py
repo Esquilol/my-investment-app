@@ -1875,6 +1875,237 @@ def importar_opcoes_google_sheet(conexao: sqlite3.Connection, usuario_id: int,
     return {"importadas": importadas, "atualizadas": atualizadas, "total": importadas + atualizadas}
 
 
+def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
+                            conteudo_bytes: bytes, nome_arquivo: str) -> dict:
+    """
+    Importa operações de opções a partir de arquivo Excel (.xlsx, .xls) ou CSV anexado pelo usuário.
+    """
+    import io, unicodedata
+    import pandas as pd
+
+    def _norm(s) -> str:
+        if s is None or pd.isna(s):
+            return ""
+        return unicodedata.normalize('NFKD', str(s)).encode('ASCII', 'ignore').decode('utf-8').lower().strip()
+
+    if nome_arquivo.lower().endswith(('.xlsx', '.xls')):
+        df = pd.read_excel(io.BytesIO(conteudo_bytes), header=None)
+    else:
+        lido = False
+        for enc in ("utf-8", "latin1", "cp1252"):
+            for sep in (";", ",", "\t"):
+                try:
+                    df = pd.read_csv(io.BytesIO(conteudo_bytes), sep=sep, header=None, encoding=enc, engine="python")
+                    if df.shape[1] >= 2 and len(df) >= 1:
+                        lido = True
+                        break
+                except Exception:
+                    continue
+            if lido:
+                break
+        if not lido:
+            raise ValueError("Não foi possível ler o arquivo. Certifique-se de que é um Excel (.xlsx) ou CSV válido.")
+
+    # Detectar linha de cabeçalho
+    header_idx = None
+    for idx in range(min(15, len(df))):
+        vals = [_norm(x) for x in df.iloc[idx].values if pd.notna(x)]
+        if any("cod" in x or "ticker" in x or "opcao" in x for x in vals):
+            header_idx = idx
+            break
+
+    if header_idx is not None:
+        headers = [str(x).strip() for x in df.iloc[header_idx].values]
+        df_dados = df.iloc[header_idx + 1:].copy()
+        df_dados.columns = headers
+    else:
+        df_dados = df.copy()
+
+    # Mapear colunas semanticamente
+    col_map = {}
+    for col in df_dados.columns:
+        nc = _norm(col)
+        if any(k in nc for k in ["cod", "ticker", "opcao"]) and "codigo" not in col_map:
+            col_map["codigo"] = col
+        elif any(k in nc for k in ["estru", "estrat"]) and "estrutura" not in col_map:
+            col_map["estrutura"] = col
+        elif any(k in nc for k in ["inicio", "abert", "data ent"]) and "data_inicio" not in col_map:
+            col_map["data_inicio"] = col
+        elif any(k in nc for k in ["final", "fech", "fim", "saida", "data sai"]) and "data_fim" not in col_map:
+            col_map["data_fim"] = col
+        elif "dias" in nc and "dias" not in col_map:
+            col_map["dias"] = col
+        elif any(k in nc for k in ["receb", "saida", "venda"]) and "preco_recebido" not in col_map:
+            col_map["preco_recebido"] = col
+        elif any(k in nc for k in ["pago", "compra", "entrada"]) and "preco_pago" not in col_map:
+            col_map["preco_pago"] = col
+        elif any(k in nc for k in ["resultado %", "rentab", "%"]) and "resultado_pct" not in col_map:
+            col_map["resultado_pct"] = col
+        elif "sucesso" in nc and "sucesso" not in col_map:
+            col_map["sucesso"] = col
+        elif "status" in nc and "status" not in col_map:
+            col_map["status"] = col
+        elif any(k in nc for k in ["aloc", "invest"]) and "valor_alocado" not in col_map:
+            col_map["valor_alocado"] = col
+        elif any(k in nc for k in ["fina", "total final", "resgate"]) and "valor_final" not in col_map:
+            col_map["valor_final"] = col
+        elif any(k in nc for k in ["resultado", "lucro", "preju"]) and "resultado_financeiro" not in col_map:
+            if "%" not in nc:
+                col_map["resultado_financeiro"] = col
+        elif any(k in nc for k in ["obs", "coluna 1", "nota"]) and "observacoes" not in col_map:
+            col_map["observacoes"] = col
+
+    def _pnum(v):
+        if v is None or pd.isna(v):
+            return 0.0
+        s = str(v).replace("R$", "").replace("%", "").strip()
+        s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except Exception:
+            return 0.0
+
+    def _pdata(v):
+        if v is None or pd.isna(v):
+            return ""
+        s = str(v).strip()
+        if not s or s.lower() in ("nan", "none", "trava"):
+            return ""
+        if hasattr(v, "strftime"):
+            return v.strftime("%d/%m/%Y")
+        return s
+
+    importadas = 0
+    atualizadas = 0
+
+    for _, row in df_dados.iterrows():
+        cod_val = row.get(col_map.get("codigo", ""), "")
+        if pd.isna(cod_val) or not str(cod_val).strip() or "total" in str(cod_val).lower():
+            continue
+        codigo = str(cod_val).strip().upper()
+        if len(codigo) < 4:
+            continue
+
+        estrutura = str(row.get(col_map.get("estrutura", ""), "COMPRA DE CALL")).strip().upper()
+        if not estrutura or estrutura == "NAN":
+            estrutura = "COMPRA DE CALL"
+
+        dt_inicio = _pdata(row.get(col_map.get("data_inicio", ""))) or agora()[:10]
+        dt_fim = _pdata(row.get(col_map.get("data_fim", "")))
+
+        dias_val = row.get(col_map.get("dias", ""), "")
+        dias = int(_pnum(dias_val)) if dias_val and str(dias_val).strip().isdigit() else None
+
+        recebido = _pnum(row.get(col_map.get("preco_recebido", ""), 0))
+        pago = _pnum(row.get(col_map.get("preco_pago", ""), 0))
+        res_pct = _pnum(row.get(col_map.get("resultado_pct", ""), 0))
+        sucesso = str(row.get(col_map.get("sucesso", ""), "")).strip().lower()
+        if not sucesso or sucesso not in ("s", "n"):
+            sucesso = "s" if res_pct > 0 else "n"
+
+        status_raw = str(row.get(col_map.get("status", ""), "")).strip().lower()
+        status = "encerrada" if ("encerr" in status_raw or "fechad" in status_raw or dt_fim) else "aberta"
+
+        alocado = _pnum(row.get(col_map.get("valor_alocado", ""), 0))
+        final = _pnum(row.get(col_map.get("valor_final", ""), 0))
+        res_fin = _pnum(row.get(col_map.get("resultado_financeiro", ""), 0))
+        obs = str(row.get(col_map.get("observacoes", ""), "")).strip()
+        if obs.lower() in ("nan", "none"):
+            obs = ""
+
+        qtd = 100.0
+        if alocado > 0 and pago > 0:
+            qtd = round(alocado / pago)
+
+        existente = conexao.execute(
+            "SELECT id FROM opcoes_operacoes WHERE usuario_id = ? AND codigo = ? AND data_inicio = ?",
+            (int(usuario_id), codigo, dt_inicio)
+        ).fetchone()
+
+        if existente:
+            conexao.execute("""
+                UPDATE opcoes_operacoes SET
+                    estrutura = ?, data_fim = ?, dias = ?, quantidade = ?,
+                    preco_pago = ?, preco_recebido = ?, valor_alocado = ?,
+                    valor_final = ?, resultado_financeiro = ?, resultado_pct = ?,
+                    sucesso = ?, status = ?, observacoes = ?
+                WHERE id = ?
+            """, (
+                estrutura, dt_fim, dias, qtd, pago, recebido, alocado,
+                final, res_fin, res_pct, sucesso, status, obs, int(existente[0])
+            ))
+            atualizadas += 1
+        else:
+            salvar_opcao_operacao(conexao, usuario_id, {
+                "codigo": codigo,
+                "estrutura": estrutura,
+                "data_inicio": dt_inicio,
+                "data_fim": dt_fim,
+                "dias": dias,
+                "quantidade": qtd,
+                "preco_pago": pago,
+                "preco_recebido": recebido,
+                "preco_atual": pago if status == "aberta" else 0.0,
+                "valor_alocado": alocado,
+                "valor_final": final,
+                "resultado_financeiro": res_fin,
+                "resultado_pct": res_pct,
+                "sucesso": sucesso,
+                "status": status,
+                "observacoes": obs,
+            })
+            importadas += 1
+
+    conexao.commit()
+    return {"importadas": importadas, "atualizadas": atualizadas, "total": importadas + atualizadas}
+
+
+def gerar_modelo_planilha_opcoes() -> bytes:
+    """Gera um arquivo Excel modelo (.xlsx) com o formato padrão para preenchimento de opções."""
+    import io
+    import pandas as pd
+
+    dados_modelo = [
+        {
+            "CÓDIGO": "BOVAI42",
+            "ESTRUTURA": "COMPRA DE CALL",
+            "DATA INICIO": "24/08/2026",
+            "DATA FINAL": "31/08/2026",
+            "DIAS": 7,
+            "RECEBIDO": 3.27,
+            "PAGO": 0.98,
+            "RESULTADO %": "233,7%",
+            "SUCESSO": "s",
+            "STATUS": "Encerrada",
+            "Valor Alocado": 196.00,
+            "Valor Final": 654.00,
+            "Resultado R$": 458.00,
+            "Observações": "Exemplo de operação encerrada",
+        },
+        {
+            "CÓDIGO": "BEEFX400",
+            "ESTRUTURA": "COMPRA DE PUT",
+            "DATA INICIO": "29/10/2026",
+            "DATA FINAL": "",
+            "DIAS": "",
+            "RECEBIDO": "",
+            "PAGO": 0.17,
+            "RESULTADO %": "",
+            "SUCESSO": "",
+            "STATUS": "Aberta",
+            "Valor Alocado": 170.00,
+            "Valor Final": "",
+            "Resultado R$": "",
+            "Observações": "Rolagem com 50% de lucro no bolso",
+        },
+    ]
+    df = pd.DataFrame(dados_modelo)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Minhas Operacoes")
+    return buf.getvalue()
+
+
 __all__ = [
     "CAMINHO_PADRAO", "VERSAO_ESQUEMA", "PLANOS_PADRAO", "agora", "conectar",
     "garantir_esquema",
@@ -1901,4 +2132,5 @@ __all__ = [
     "identificar_opcao", "listar_opcoes_operacoes", "salvar_opcao_operacao",
     "encerrar_opcao_operacao", "rolar_opcao_operacao", "atualizar_cotacao_opcao",
     "excluir_opcao_operacao", "atualizar_modulos_usuario", "importar_opcoes_google_sheet",
+    "importar_opcoes_arquivo", "gerar_modelo_planilha_opcoes",
 ]

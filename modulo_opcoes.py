@@ -247,18 +247,20 @@ def pagina_diario_opcoes() -> None:
         </div>
         """, unsafe_allow_html=True)
 
-        col_in1, col_in2 = st.columns(2)
+        col_in1, col_in2 = st.columns([1.5, 1])
         with col_in1:
-            if st.button("📥 Sincronizar com Minha Planilha Google", type="primary", use_container_width=True, icon=":material/sync:"):
-                try:
-                    with st.spinner("Importando operações da planilha Google..."):
-                        res = bd.importar_opcoes_google_sheet(conexao, usuario_id)
-                        st.success(f"Sucesso! {res['importadas']} operações importadas e {res['atualizadas']} atualizadas.")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao importar da planilha: {e}")
+            st.markdown("**Como deseja começar?**")
+            st.caption("Você pode anexar um arquivo Excel/CSV existente na aba 'Importar Planilha' ou cadastrar sua primeira operação na aba 'Nova Operação'.")
         with col_in2:
-            st.caption("Ou utilize as abas abaixo para cadastrar suas operações manualmente.")
+            st.download_button(
+                "⬇️ Baixar Modelo de Planilha (.xlsx)",
+                data=bd.gerar_modelo_planilha_opcoes(),
+                file_name="modelo_diario_opcoes.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                icon=":material/download:",
+                help="Baixe o arquivo Excel pré-formatado para preencher seus trades e importar."
+            )
 
     # 2. Métricas Consolidadas
     encerradas = [o for o in ops if o["status"] in ("encerrada", "rolada")]
@@ -316,7 +318,7 @@ def pagina_diario_opcoes() -> None:
         f"🟢 Posições Abertas ({len(abertas)})",
         f"📜 Histórico Encerradas ({len(encerradas)})",
         "➕ Nova Operação",
-        "📥 Sincronização & Dados"
+        "📥 Importar Planilha"
     ])
 
     # --- ABA 1: POSIÇÕES ABERTAS ---
@@ -486,26 +488,45 @@ def pagina_diario_opcoes() -> None:
                     st.success(f"Operação {cod_in} cadastrada com sucesso!")
                     st.rerun()
 
-    # --- ABA 4: IMPORTAÇÃO E SINCRONIZAÇÃO ---
+    # --- ABA 4: IMPORTAÇÃO DE PLANILHA ---
     with aba_importar:
-        st.markdown("#### Sincronização com Planilha Google")
+        st.markdown("#### Importar Planilha de Operações (Excel ou CSV)")
         st.write(
-            "Você pode sincronizar ou reimportar as operações diretamente da sua planilha Google. "
-            "A sincronização apenas lê os dados em modo **somente leitura**, sem fazer nenhuma alteração na sua planilha original."
+            "Anexe a planilha com o histórico das suas operações. O leitor identifica automaticamente "
+            "as colunas de **Código/Ticker**, **Estrutura**, **Datas**, **Preço Pago**, **Preço Recebido**, "
+            "**Valor Alocado** e **Status**."
         )
 
-        sheet_id_input = st.text_input(
-            "ID da Planilha Google (Spreadsheet ID)",
-            value="1N2Sv8LwM_VTT5SVKorBAGS2vUKoKdvn3jdvhlwaUl5k"
-        )
-        if st.button("📥 Importar / Sincronizar Agora", type="primary", icon=":material/sync:"):
-            try:
-                with st.spinner("Lendo planilha 'Minhas Operacoes'..."):
-                    res = bd.importar_opcoes_google_sheet(conexao, usuario_id, sheet_id_input)
-                    st.success(f"Sincronização concluída! {res['importadas']} nova(s) operação(ões) inserida(s) e {res['atualizadas']} atualizada(s).")
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Erro na sincronização: {e}")
+        col_up, col_mod = st.columns([2, 1.2])
+        with col_up:
+            arquivo_subido = st.file_uploader(
+                "Arraste ou selecione sua planilha",
+                type=["xlsx", "xls", "csv"],
+                key="upload_planilha_opcoes",
+                help="Suporta planilhas padrão com colunas: Código, Estrutura, Data Início, Pago, Recebido, etc."
+            )
+        with col_mod:
+            st.markdown("**Modelo padrão:**")
+            st.caption("Baixe nossa planilha modelo pré-configurada para preencher seus trades:")
+            st.download_button(
+                "⬇️ Baixar Modelo Excel (.xlsx)",
+                data=bd.gerar_modelo_planilha_opcoes(),
+                file_name="modelo_diario_opcoes.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                icon=":material/download:",
+            )
+
+        if arquivo_subido is not None:
+            if st.button("🚀 Processar e Importar Planilha", type="primary", use_container_width=True, icon=":material/upload_file:"):
+                try:
+                    with st.spinner("Processando e cadastrando operações..."):
+                        bytes_arquivo = arquivo_subido.getvalue()
+                        res = bd.importar_opcoes_arquivo(conexao, usuario_id, bytes_arquivo, arquivo_subido.name)
+                        st.success(f"Importação realizada com sucesso! {res['importadas']} nova(s) operação(ões) inserida(s) e {res['atualizadas']} atualizada(s).")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao processar o arquivo: {e}")
 
     # 5. Banner de Upsell Fiscal Trade se o usuário não possuir o módulo fiscal ativo
     if not st.session_state.get("modulo_fiscal", True):
