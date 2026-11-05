@@ -1,10 +1,9 @@
 """
 Módulo de Gestão e Diário de Operações de Opções — FiscoTrade.
 
-Permite ao operador de renda variável acompanhar posições abertas, monitorar
-o rendimento das opções em carteira, registrar rolagens com preservação de capital
-(50% no bolso e 50% reinvestido em opções líquidas próximas do dinheiro),
-além de sincronizar dados com planilhas e exportar relatórios.
+Permite ao investidor de derivativos acompanhar suas posições abertas em formato slim,
+monitorar o rendimento %, acionar a rolagem com preservação de capital (50% no bolso e 50% reinvestido
+em opções líquidas próximas do dinheiro), registrar operações de forma ultra-rápida e importar planilhas Excel/CSV.
 """
 
 from __future__ import annotations
@@ -47,10 +46,9 @@ def modal_rolar_opcao(op: dict) -> None:
 
     st.markdown(f"### Rolagem da Opção **{codigo}** ({op.get('estrutura', 'COMPRA')})")
     st.info(
-        "💡 **Regra de Ouro da Rolagem**: Ao atingir a meta de lucro (ex: +100%), o operador "
-        "encerra a posição, guarda **50% do valor final obtido no bolso** (garantindo lucro líquido) "
-        "e reinveste os outros **50% na nova opção**, buscando **boa liquidez** e preço de exercício "
-        "**mais próximo da linha do dinheiro (ATM)** para continuar surfando a tendência."
+        "💡 **Critério de Rolagem**: Ao bater a meta de lucro (ex: +100%), o operador "
+        "guarda **~50% do valor final no bolso** (lucro garantido) e reinveste os outros **50% "
+        "na nova opção**, buscando **boa liquidez** e preço de exercício **mais próximo da linha do dinheiro (ATM)**."
     )
 
     c1, c2 = st.columns(2)
@@ -64,7 +62,7 @@ def modal_rolar_opcao(op: dict) -> None:
             value=float(preco_atual if preco_atual > 0 else preco_pago * 2.0),
             step=0.01,
             format="%.2f",
-            help="Preço unitário de venda para encerrar a perna atual."
+            help="Preço unitário de saída para encerrar a perna atual."
         )
 
     valor_final = quantidade * preco_saida
@@ -79,18 +77,16 @@ def modal_rolar_opcao(op: dict) -> None:
     metade_reinvestir = valor_final * 0.50
 
     st.markdown("---")
-    st.markdown("#### Simulação Financeira da Rolagem")
     m1, m2, m3 = st.columns(3)
     with m1:
-        st.metric("Montante Final Obtido", _moeda(valor_final), f"+{lucro_pct:.1f}%")
+        st.metric("Total Obtido", _moeda(valor_final), f"+{lucro_pct:.1f}%")
     with m2:
-        st.metric("💰 50% Lucro no Bolso", _moeda(metade_bolso), help="Preservação de capital garantida!")
+        st.metric("💰 50% Lucro no Bolso", _moeda(metade_bolso))
     with m3:
-        st.metric("🚀 50% Reinvestir (Novo Alvo)", _moeda(metade_reinvestir))
+        st.metric("🚀 50% Reinvestir", _moeda(metade_reinvestir))
 
     st.markdown("---")
-    st.markdown("#### Dados da Nova Opção (Perna Futura)")
-    info_sugestao = bd.identificar_opcao(codigo)
+    st.markdown("#### Nova Opção (Perna Futura)")
 
     nc1, nc2, nc3 = st.columns(3)
     with nc1:
@@ -98,11 +94,11 @@ def modal_rolar_opcao(op: dict) -> None:
             "Novo Código da Opção",
             value="",
             placeholder="Ex: BEEFX400",
-            help="Escolha uma opção com boa liquidez mais próxima do dinheiro (ATM) para a próxima série."
+            help="Escolha uma opção com boa liquidez mais próxima do dinheiro (ATM)."
         ).strip().upper()
     with nc2:
         novo_preco = st.number_input(
-            "Preço Unitário da Nova Opção (R$)",
+            "Preço Unitário da Nova (R$)",
             min_value=0.01,
             value=float(preco_pago),
             step=0.01,
@@ -119,15 +115,15 @@ def modal_rolar_opcao(op: dict) -> None:
         )
 
     novo_alocado_calc = nova_qtd * novo_preco
-    st.caption(f"Valor a ser alocado na nova opção: **{_moeda(novo_alocado_calc)}**")
+    st.caption(f"Valor a alocar na nova opção: **{_moeda(novo_alocado_calc)}**")
 
-    obs = st.text_input("Observações da Rolagem", value="Rolagem com preservação de 50% de lucro.")
+    obs = st.text_input("Observações", value="Rolagem com preservação de 50% de lucro.")
 
     if st.button("Confirmar Rolagem", type="primary", use_container_width=True, icon=":material/sync:"):
         if not novo_codigo:
-            st.error("Informe o novo código da opção para onde a posição será rolada.")
+            st.error("Informe o novo código da opção.")
         else:
-            nova_id = bd.rolar_opcao_operacao(
+            bd.rolar_opcao_operacao(
                 conexao, usuario_id, op["id"],
                 data_rolagem=data_str,
                 preco_fechamento=preco_saida,
@@ -136,7 +132,7 @@ def modal_rolar_opcao(op: dict) -> None:
                 nova_quantidade=nova_qtd,
                 observacoes=obs,
             )
-            st.success(f"Rolagem executada com sucesso! A opção {codigo} foi encerrada e a nova opção {novo_codigo} foi aberta.")
+            st.success(f"Rolagem executada! {codigo} encerrada e {novo_codigo} aberta.")
             st.rerun()
 
 
@@ -163,7 +159,6 @@ def modal_encerrar_opcao(op: dict) -> None:
             value=float(preco_atual),
             step=0.01,
             format="%.2f",
-            help="Preço pelo qual a opção foi vendida (ou recomprada no caso de venda coberta)."
         )
 
     valor_final = quantidade * preco_saida
@@ -187,11 +182,11 @@ def modal_encerrar_opcao(op: dict) -> None:
             preco_recebido=preco_saida,
             observacoes=obs,
         )
-        st.success(f"Operação {codigo} encerrada com sucesso!")
+        st.success(f"Operação {codigo} encerrada!")
         st.rerun()
 
 
-@st.dialog("⚡ Atualizar Cotação Atual")
+@st.dialog("✏️ Atualizar Cotação")
 def modal_atualizar_cotacao(op: dict) -> None:
     conexao = paginas.obter_conexao()
     usuario_id = int(st.session_state["usuario_id"])
@@ -213,9 +208,9 @@ def modal_atualizar_cotacao(op: dict) -> None:
 
     if preco_pago > 0:
         rend_pct = ((novo_preco - preco_pago) / preco_pago) * 100
-        st.markdown(f"**Rendimento projetado no preço:** `{rend_pct:+.1f}%`")
+        st.markdown(f"**Rendimento no preço atual:** `{rend_pct:+.1f}%`")
         if rend_pct >= float(op.get("meta_rolagem_pct", 100.0)):
-            st.success("🎯 **Meta de Rolagem Atingida!** Essa operação está pronta para rolagem.")
+            st.success("🎯 **Meta de Rolagem Atingida!** Opção pronta para rolagem.")
 
     if st.button("Salvar Cotação", type="primary", use_container_width=True):
         bd.atualizar_cotacao_opcao(conexao, usuario_id, op["id"], novo_preco)
@@ -236,31 +231,7 @@ def pagina_diario_opcoes() -> None:
 
     # 1. Onboarding se o diário estiver vazio
     if not ops:
-        st.markdown("""
-        <div style="background: linear-gradient(135deg, #f0fdf4 0%, #e6f7ec 100%); border: 1px solid #86efac; border-radius: 12px; padding: 24px; margin-bottom: 24px;">
-            <h3 style="color: #166534; margin: 0 0 10px 0;">👋 Bem-vindo ao Diário de Operações de Opções!</h3>
-            <p style="color: #14532d; font-size: 0.95rem; line-height: 1.5; margin-bottom: 16px;">
-                Organize todas as suas compras de CALLs, PUTs, lançamentos e travas. 
-                Monitore o rendimento das suas posições abertas e seja avisado na hora certa de efetuar a 
-                <strong>rolagem com preservação de 50% de lucro no bolso</strong>.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        col_in1, col_in2 = st.columns([1.5, 1])
-        with col_in1:
-            st.markdown("**Como deseja começar?**")
-            st.caption("Você pode anexar um arquivo Excel/CSV existente na aba 'Importar Planilha' ou cadastrar sua primeira operação na aba 'Nova Operação'.")
-        with col_in2:
-            st.download_button(
-                "⬇️ Baixar Modelo de Planilha (.xlsx)",
-                data=bd.gerar_modelo_planilha_opcoes(),
-                file_name="modelo_diario_opcoes.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                icon=":material/download:",
-                help="Baixe o arquivo Excel pré-formatado para preencher seus trades e importar."
-            )
+        st.info("👋 **Bem-vindo ao Diário de Opções!** Você ainda não possui operações cadastradas. Anexe sua planilha Excel/CSV na aba 'Importar Planilha' ou cadastre sua primeira operação abaixo.")
 
     # 2. Métricas Consolidadas
     encerradas = [o for o in ops if o["status"] in ("encerrada", "rolada")]
@@ -294,26 +265,20 @@ def pagina_diario_opcoes() -> None:
 
     # 3. Alerta de Destaque para Rolagem
     if rolagens_prontas:
-        st.markdown("""
-        <div style="background: #fffbeb; border: 1.5px solid #f59e0b; border-radius: 10px; padding: 14px 18px; margin: 16px 0;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="font-size: 1.3rem;">🎯</span>
-                <strong style="color: #92400e; font-size: 1.05rem;">Gatilho de Rolagem Atingido!</strong>
-            </div>
-            <div style="color: #78350f; font-size: 0.9rem; margin-top: 4px;">
-                Uma ou mais opções atingiram a meta de rendimento. Recomendação: <strong>colocar ~50% no bolso</strong> e rolar os outros 50% para a opção ATM mais líquida da próxima série.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        for op_pronta, rend_pct in rolagens_prontas:
-            col_al1, col_al2 = st.columns([3, 1])
-            with col_al1:
-                st.markdown(f"**{op_pronta['codigo']}** ({op_pronta.get('estrutura')}) — Entrada: `{_moeda(op_pronta['preco_pago'])}` | Atual: `{_moeda(op_pronta['preco_atual'])}` | Rendimento: **+{rend_pct:.1f}%** 🚀")
-            with col_al2:
-                if st.button(f"🔄 Rolar {op_pronta['codigo']}", key=f"btn_alerta_rol_{op_pronta['id']}", type="primary", use_container_width=True):
-                    modal_rolar_opcao(op_pronta)
+        with st.container():
+            st.warning(
+                f"🎯 **Gatilho de Rolagem Atingido!** {len(rolagens_prontas)} opção(ões) atingiram a meta de lucro (≥100%). "
+                "Critério sugerido: **embolsar 50% do valor final** e **rolar os outros 50%** para a opção ATM mais líquida da próxima série."
+            )
+            for op_pronta, rend_pct in rolagens_prontas:
+                c_al1, c_al2 = st.columns([3, 1])
+                with c_al1:
+                    st.markdown(f"**{op_pronta['codigo']}** ({op_pronta.get('estrutura')}) — Entrada: `{_moeda(op_pronta['preco_pago'])}` | Atual: `{_moeda(op_pronta['preco_atual'])}` | Rendimento: **+{rend_pct:.1f}%** 🚀")
+                with c_al2:
+                    if st.button(f"🔄 Rolar {op_pronta['codigo']}", key=f"btn_alerta_rol_{op_pronta['id']}", type="primary", use_container_width=True):
+                        modal_rolar_opcao(op_pronta)
 
-    # 4. Abas do Diário
+    # 4. Abas do Diário (Slim & Rápido)
     aba_abertas, aba_encerradas, aba_nova, aba_importar = st.tabs([
         f"🟢 Posições Abertas ({len(abertas)})",
         f"📜 Histórico Encerradas ({len(encerradas)})",
@@ -321,74 +286,107 @@ def pagina_diario_opcoes() -> None:
         "📥 Importar Planilha"
     ])
 
-    # --- ABA 1: POSIÇÕES ABERTAS ---
+    # --- ABA 1: POSIÇÕES ABERTAS (FORMATO SLIM TABLE) ---
     with aba_abertas:
         if not abertas:
             st.info("Nenhuma posição aberta no momento.")
         else:
-            st.caption("Acompanhe o rendimento não realizado das suas opções e acione a rolagem ou encerramento a qualquer momento.")
+            st.caption(f"{len(abertas)} opções abertas em carteira. Visualize o rendimento e acione as ações rapidamente.")
 
+            # Montagem do DataFrame slim
+            linhas_abertas = []
             for op in abertas:
                 p_pago = float(op["preco_pago"])
                 p_atual = float(op.get("preco_atual") or p_pago)
                 meta = float(op.get("meta_rolagem_pct") or 100.0)
                 alocado_op = float(op["valor_alocado"])
+                qtd_op = float(op["quantidade"])
+
                 if p_pago > 0:
                     rend_pct = ((p_atual - p_pago) / p_pago) * 100
                 else:
                     rend_pct = 0.0
 
-                atingiu_meta = rend_pct >= meta
+                atingiu = rend_pct >= meta
+                status_aviso = f"🎯 ROLAR (+{rend_pct:.1f}%)" if atingiu else (f"+{rend_pct:.1f}%" if rend_pct > 0 else f"{rend_pct:.1f}%")
 
-                card_bg = "#f0fdf4" if atingiu_meta else "#ffffff"
-                card_border = "#22c55e" if atingiu_meta else "#e2e8f0"
+                linhas_abertas.append({
+                    "ID": op["id"],
+                    "Código": op["codigo"],
+                    "Ativo": op.get("ativo_subjacente", "—"),
+                    "Estrutura": op.get("estrutura", "—"),
+                    "Início": _p_data(op["data_inicio"]),
+                    "Qtd": int(qtd_op),
+                    "Pago (R$)": p_pago,
+                    "Atual (R$)": p_atual,
+                    "Rendimento %": f"{rend_pct:+.1f}%",
+                    "Alocado (R$)": alocado_op,
+                    "Meta": f"{meta:.0f}%",
+                    "Gatilho": "🎯 ROLAR" if atingiu else "Em andamento"
+                })
 
-                st.markdown(f"""
-                <div style="background: {card_bg}; border: 1.5px solid {card_border}; border-radius: 10px; padding: 14px 16px; margin-bottom: 8px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                        <div>
-                            <span style="font-size: 1.15rem; font-weight: 800; color: #0f172a;">{op['codigo']}</span>
-                            <span style="font-size: 0.8rem; background: #e2e8f0; color: #334155; padding: 2px 8px; border-radius: 4px; margin-left: 8px; font-weight: 600;">{op.get('estrutura')}</span>
-                            <span style="font-size: 0.8rem; color: #64748b; margin-left: 8px;">Início: {_p_data(op['data_inicio'])}</span>
-                        </div>
-                        <div>
-                            <span style="font-size: 1.1rem; font-weight: 800; color: {'#16a34a' if rend_pct >= 0 else '#dc2626'};">
-                                {rend_pct:+.1f}%
-                            </span>
-                            {'<span style="background: #fef08a; color: #854d0e; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; margin-left: 6px;">🎯 ROLAR</span>' if atingiu_meta else ''}
-                        </div>
-                    </div>
-                    <div style="display: flex; gap: 20px; font-size: 0.85rem; color: #475569;">
-                        <div>Pago: <strong>{_moeda(p_pago)}</strong></div>
-                        <div>Cotação Atual: <strong>{_moeda(p_atual)}</strong></div>
-                        <div>Alocado: <strong>{_moeda(alocado_op)}</strong></div>
-                        <div>Meta Rolagem: <strong>{meta:.0f}%</strong></div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+            df_ab_view = pd.DataFrame(linhas_abertas)
+            st.dataframe(
+                df_ab_view.drop(columns=["ID"]),
+                use_container_width=True,
+                hide_index=True
+            )
 
-                c_b1, c_b2, c_b3, c_b4 = st.columns([1.2, 1.2, 1.2, 1])
-                with c_b1:
-                    if st.button("✏️ Cotação", key=f"btn_cot_{op['id']}", use_container_width=True):
-                        modal_atualizar_cotacao(op)
-                with c_b2:
-                    if st.button("🔄 Rolar Opção", key=f"btn_rol_{op['id']}", type="primary" if atingiu_meta else "secondary", use_container_width=True):
-                        modal_rolar_opcao(op)
-                with c_b3:
-                    if st.button("🏁 Encerrar", key=f"btn_enc_{op['id']}", use_container_width=True):
-                        modal_encerrar_opcao(op)
-                with c_b4:
-                    if st.button("💨 Virou Pó", key=f"btn_po_{op['id']}", use_container_width=True, help="Encerra a R$ 0,00"):
+            # Barra de Ações Rápidas por Opção
+            st.markdown("##### ⚡ Ações Rápidas para Posições Abertas")
+            col_sel, col_act1, col_act2, col_act3, col_act4 = st.columns([2.5, 1.2, 1.2, 1.2, 1])
+
+            opcoes_dict = {o["id"]: f"{o['codigo']} ({o.get('estrutura')}) - Pago {_moeda(o['preco_pago'])}" for o in abertas}
+            with col_sel:
+                op_escolhida_id = st.selectbox(
+                    "Selecione uma opção:",
+                    options=list(opcoes_dict.keys()),
+                    format_func=lambda i: opcoes_dict[i],
+                    key="sel_op_aberta_acao"
+                )
+
+            op_alvo = next((o for o in abertas if o["id"] == op_escolhida_id), None)
+            if op_alvo:
+                with col_act1:
+                    if st.button("🔄 Rolar", type="primary", use_container_width=True, help="Rolar com 50% no bolso"):
+                        modal_rolar_opcao(op_alvo)
+                with col_act2:
+                    if st.button("✏️ Cotação", use_container_width=True, help="Atualizar preço corrente"):
+                        modal_atualizar_cotacao(op_alvo)
+                with col_act3:
+                    if st.button("🏁 Encerrar", use_container_width=True, help="Encerrar posição"):
+                        modal_encerrar_opcao(op_alvo)
+                with col_act4:
+                    if st.button("💨 Pó", use_container_width=True, help="Encerrar a R$ 0,00"):
                         bd.encerrar_opcao_operacao(
-                            conexao, usuario_id, op["id"],
+                            conexao, usuario_id, op_alvo["id"],
                             data_fim=date.today().strftime("%d/%m/%Y"),
                             preco_recebido=0.00,
                             observacoes="Expirou no pó"
                         )
-                        st.success(f"{op['codigo']} encerrada no pó.")
+                        st.success(f"{op_alvo['codigo']} encerrada no pó.")
                         st.rerun()
 
-    # --- ABA 2: HISTÓRICO DE ENCERRADAS ---
+            # Editor rápido de cotações em massa
+            with st.expander("⚡ Atualizar Cotações de Todas as Opções Abertas (Tabela Rápida)"):
+                st.caption("Edite a coluna 'Atual (R$)' das opções e clique no botão abaixo para recalcular todos os rendimentos:")
+                df_editor = df_ab_view[["ID", "Código", "Pago (R$)", "Atual (R$)"]].copy()
+                editado = st.data_editor(
+                    df_editor,
+                    disabled=["ID", "Código", "Pago (R$)"],
+                    use_container_width=True,
+                    hide_index=True,
+                    key="editor_cotacoes_em_massa"
+                )
+                if st.button("Salvar Todas as Cotações", type="primary", icon=":material/save:"):
+                    for _, row in editado.iterrows():
+                        oid = int(row["ID"])
+                        nova_cot = float(row["Atual (R$)"])
+                        bd.atualizar_cotacao_opcao(conexao, usuario_id, oid, nova_cot)
+                    st.success("Todas as cotações foram atualizadas com sucesso!")
+                    st.rerun()
+
+    # --- ABA 2: HISTÓRICO DE ENCERRADAS (SLIM TABLE) ---
     with aba_encerradas:
         if not encerradas:
             st.info("Nenhuma operação encerrada ainda.")
@@ -397,10 +395,10 @@ def pagina_diario_opcoes() -> None:
             col_fil1, col_fil2 = st.columns(2)
             with col_fil1:
                 ativos_unicos = ["Todos"] + sorted(list({str(x) for x in df_enc["ativo_subjacente"] if pd.notna(x)}))
-                filtro_ativo = st.selectbox("Filtrar por Ativo Subjacente", ativos_unicos)
+                filtro_ativo = st.selectbox("Filtrar por Ativo Subjacente", ativos_unicos, key="fil_enc_ativo")
             with col_fil2:
                 estruturas = ["Todas"] + sorted(list({str(x) for x in df_enc["estrutura"] if pd.notna(x)}))
-                filtro_est = st.selectbox("Filtrar por Estrutura", estruturas)
+                filtro_est = st.selectbox("Filtrar por Estrutura", estruturas, key="fil_enc_est")
 
             df_view = df_enc.copy()
             if filtro_ativo != "Todos":
@@ -423,53 +421,47 @@ def pagina_diario_opcoes() -> None:
             ]
             st.dataframe(df_show, use_container_width=True, hide_index=True)
 
-            # Botão de exclusão com segurança
             with st.expander("🗑️ Excluir ou Corrigir uma Operação"):
                 op_del = st.selectbox(
                     "Selecione a operação",
                     options=encerradas,
-                    format_func=lambda o: f"{o['codigo']} ({_p_data(o['data_inicio'])} a {_p_data(o['data_fim'])}) — Lucro: {_moeda(o['resultado_financeiro'])}"
+                    format_func=lambda o: f"{o['codigo']} ({_p_data(o['data_inicio'])} a {_p_data(o['data_fim'])}) — Lucro: {_moeda(o['resultado_financeiro'])}",
+                    key="sel_op_del"
                 )
                 if st.button("Excluir Operação Selecionada", type="secondary"):
                     bd.excluir_opcao_operacao(conexao, usuario_id, op_del["id"])
                     st.success("Operação excluída.")
                     st.rerun()
 
-    # --- ABA 3: NOVA OPERAÇÃO MANUAL ---
+    # --- ABA 3: NOVA OPERAÇÃO MANUAL (SIMPLES COMO PREENCHER PLANILHA) ---
     with aba_nova:
-        st.markdown("#### Cadastrar Nova Operação")
-        st.caption("Preencha os dados da sua operação. O ticker preenche automaticamente o ativo base e tipo de opção.")
+        st.markdown("#### ⚡ Adicionar Operação Rápida")
+        st.caption("Preencha apenas o código, estrutura, data e preço pago. O ativo base e tipo são identificados na hora.")
 
-        with st.form("form_nova_operacao"):
-            fc1, fc2, fc3 = st.columns(3)
-            with fc1:
-                cod_in = st.text_input("Código da Opção", placeholder="Ex: PETRK511 ou BOVAI42").strip().upper()
-            with fc2:
+        with st.form("form_nova_operacao_rapida"):
+            r1, r2, r3, r4, r5 = st.columns([1.5, 1.8, 1.2, 1.2, 1.3])
+            with r1:
+                cod_in = st.text_input("Código da Opção", placeholder="Ex: BEEFX400").strip().upper()
+            with r2:
                 estrutura_in = st.selectbox(
-                    "Estrutura / Estratégia",
+                    "Estrutura",
                     ["COMPRA DE CALL", "COMPRA DE PUT", "VENDA DE CALL", "VENDA DE PUT", "TRAVA", "OUTRA"]
                 )
-            with fc3:
-                dt_in = st.date_input("Data de Início", value=date.today())
+            with r3:
+                dt_in = st.date_input("Data Início", value=date.today())
+            with r4:
+                preco_in = st.number_input("Preço Pago (R$)", min_value=0.01, value=0.50, step=0.01, format="%.2f")
+            with r5:
+                aloc_in = st.number_input("Valor Alocado (R$)", min_value=1.0, value=150.0, step=10.0, format="%.2f")
 
-            info_auto = bd.identificar_opcao(cod_in) if cod_in else {}
-            st.caption(f"Detectado: Ativo: **{info_auto.get('ativo_subjacente', '—')}** | Tipo: **{info_auto.get('tipo_opcao', '—')}** | Vencimento: **{info_auto.get('mes_vencimento', '—')}**")
+            obs_in = st.text_input("Observações (opcional)", placeholder="Ex: Entrada por tendência / rompimento")
 
-            fc4, fc5, fc6 = st.columns(3)
-            with fc4:
-                preco_in = st.number_input("Preço Pago Unitário (R$)", min_value=0.01, value=1.00, step=0.01, format="%.2f")
-            with fc5:
-                qtd_in = st.number_input("Quantidade de Contratos", min_value=1.0, value=100.0, step=100.0)
-            with fc6:
-                meta_in = st.number_input("Meta de Rolagem (%)", min_value=10.0, value=100.0, step=10.0, help="Alvo de rendimento para disparo do alerta de rolagem.")
+            # Cálculo automático de quantidade
+            qtd_estimada = round(aloc_in / preco_in) if preco_in > 0 else 100
+            st.caption(f"Quantidade estimada de contratos: **{qtd_estimada}** | Preço unitário: **{_moeda(preco_in)}**")
 
-            alocado_estimado = qtd_in * preco_in
-            st.info(f"Capital total a ser alocado: **{_moeda(alocado_estimado)}**")
-
-            obs_in = st.text_input("Observações / Tese do trade", placeholder="Ex: Rompimento de resistência, volatilidade baixa...")
-
-            submit = st.form_submit_button("Salvar Operação no Diário", type="primary", icon=":material/add:")
-            if submit:
+            salvar = st.form_submit_button("➕ Salvar Operação no Diário", type="primary", use_container_width=True)
+            if salvar:
                 if not cod_in:
                     st.error("Informe o código da opção.")
                 else:
@@ -477,18 +469,18 @@ def pagina_diario_opcoes() -> None:
                         "codigo": cod_in,
                         "estrutura": estrutura_in,
                         "data_inicio": dt_in.strftime("%d/%m/%Y"),
-                        "quantidade": qtd_in,
+                        "quantidade": qtd_estimada,
                         "preco_pago": preco_in,
                         "preco_atual": preco_in,
-                        "valor_alocado": alocado_estimado,
-                        "meta_rolagem_pct": meta_in,
+                        "valor_alocado": aloc_in,
+                        "meta_rolagem_pct": 100.0,
                         "observacoes": obs_in,
                         "status": "aberta"
                     })
                     st.success(f"Operação {cod_in} cadastrada com sucesso!")
                     st.rerun()
 
-    # --- ABA 4: IMPORTAÇÃO DE PLANILHA ---
+    # --- ABA 4: IMPORTAR PLANILHA ---
     with aba_importar:
         st.markdown("#### Importar Planilha de Operações (Excel ou CSV)")
         st.write(

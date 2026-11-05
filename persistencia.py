@@ -1797,10 +1797,17 @@ def importar_opcoes_google_sheet(conexao: sqlite3.Connection, usuario_id: int,
         rows = res.get("values", [])
 
     def _pnum(v):
-        if not v:
+        if v is None or pd.isna(v):
             return 0.0
-        s = str(v).replace("R$", "").replace("%", "").strip()
-        s = s.replace(".", "").replace(",", ".")
+        if isinstance(v, (int, float)):
+            return float(v)
+        s = str(v).replace("R$", "").replace("%", "").replace(" ", "").strip()
+        if not s or s.lower() in ("nan", "none", "-", "—"):
+            return 0.0
+        if "," in s and "." in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:
+            s = s.replace(",", ".")
         try:
             return float(s)
         except Exception:
@@ -1821,11 +1828,21 @@ def importar_opcoes_google_sheet(conexao: sqlite3.Connection, usuario_id: int,
         pago = _pnum(r[6]) if len(r) > 6 else 0.0
         res_pct = _pnum(r[7]) if len(r) > 7 else 0.0
         sucesso = str(r[8]).strip().lower() if len(r) > 8 and r[8] else ("s" if res_pct > 0 else "n")
-        status_raw = str(r[9]).strip().lower() if len(r) > 9 and r[9] else ("encerrada" if dt_fim else "aberta")
-        status = "encerrada" if "encerr" in status_raw or "fechad" in status_raw else "aberta"
+        status_raw = str(r[9]).strip().lower() if len(r) > 9 and r[9] else ""
+        if "abert" in status_raw:
+            status = "aberta"
+        elif "encerr" in status_raw or "fechad" in status_raw or "rolad" in status_raw:
+            status = "encerrada"
+        elif dt_fim and dt_fim.lower() not in ("", "nan", "none", "trava"):
+            status = "encerrada"
+        else:
+            status = "aberta"
+
         alocado = _pnum(r[10]) if len(r) > 10 else 0.0
         final = _pnum(r[11]) if len(r) > 11 else 0.0
         res_fin = _pnum(r[12]) if len(r) > 12 else 0.0
+        if status == "aberta":
+            res_fin = 0.0
         obs = str(r[13]).strip() if len(r) > 13 else ""
 
         qtd = 100.0
@@ -1910,7 +1927,7 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
     header_idx = None
     for idx in range(min(15, len(df))):
         vals = [_norm(x) for x in df.iloc[idx].values if pd.notna(x)]
-        if any("cod" in x or "ticker" in x or "opcao" in x for x in vals):
+        if any(k in x for x in vals for k in ["digo", "ticker", "opcao", "estrutura", "pago", "recebido"]):
             header_idx = idx
             break
 
@@ -1925,7 +1942,7 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
     col_map = {}
     for col in df_dados.columns:
         nc = _norm(col)
-        if any(k in nc for k in ["cod", "ticker", "opcao"]) and "codigo" not in col_map:
+        if any(k in nc for k in ["digo", "cod", "ticker", "opcao"]) and "codigo" not in col_map:
             col_map["codigo"] = col
         elif any(k in nc for k in ["estru", "estrat"]) and "estrutura" not in col_map:
             col_map["estrutura"] = col
@@ -1958,8 +1975,15 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
     def _pnum(v):
         if v is None or pd.isna(v):
             return 0.0
-        s = str(v).replace("R$", "").replace("%", "").strip()
-        s = s.replace(".", "").replace(",", ".")
+        if isinstance(v, (int, float)):
+            return float(v)
+        s = str(v).replace("R$", "").replace("%", "").replace(" ", "").strip()
+        if not s or s.lower() in ("nan", "none", "-", "—"):
+            return 0.0
+        if "," in s and "." in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:
+            s = s.replace(",", ".")
         try:
             return float(s)
         except Exception:
@@ -2004,11 +2028,22 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
             sucesso = "s" if res_pct > 0 else "n"
 
         status_raw = str(row.get(col_map.get("status", ""), "")).strip().lower()
-        status = "encerrada" if ("encerr" in status_raw or "fechad" in status_raw or dt_fim) else "aberta"
+        if "abert" in status_raw:
+            status = "aberta"
+        elif "encerr" in status_raw or "fechad" in status_raw or "rolad" in status_raw:
+            status = "encerrada"
+        elif dt_fim and dt_fim.lower() not in ("", "nan", "none", "trava"):
+            status = "encerrada"
+        else:
+            status = "aberta"
 
         alocado = _pnum(row.get(col_map.get("valor_alocado", ""), 0))
         final = _pnum(row.get(col_map.get("valor_final", ""), 0))
         res_fin = _pnum(row.get(col_map.get("resultado_financeiro", ""), 0))
+        if status == "aberta":
+            res_fin = 0.0
+            final = 0.0
+
         obs = str(row.get(col_map.get("observacoes", ""), "")).strip()
         if obs.lower() in ("nan", "none"):
             obs = ""
