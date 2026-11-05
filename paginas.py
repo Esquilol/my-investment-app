@@ -669,6 +669,130 @@ def pagina_upload() -> None:
         st.rerun()
 
 
+
+def _secao_termometro_isencao() -> None:
+    """Termômetro de Isenção dos R$ 20.000 em Ações e Tax-Gain Harvesting (Estratégia 1)."""
+    if resultados is None or resultados.empty:
+        return
+
+    competencia = str(tabela_ir["mes"].iloc[-1]) if not tabela_ir.empty else str(resultados["mes"].iloc[-1])
+    acoes_mes = resultados[
+        (resultados["mes"] == competencia)
+        & (resultados["grupo"] == "STOCK")
+        & (resultados["categoria"] == "Swing Trade")
+    ]
+    vendas = float(acoes_mes["vendas"].sum()) if not acoes_mes.empty else 0.0
+    lucro = float(acoes_mes["resultado"].sum()) if not acoes_mes.empty else 0.0
+    limite = float(PARAMETROS.get("isencao_acoes", 20000.0))
+    margem = max(0.0, limite - vendas)
+    pct = min(vendas / limite, 1.0) if limite > 0 else 0.0
+
+    tema.secao(f"Termômetro de Isenção Fiscal — {_nome_mes(competencia)}")
+    col_bar, col_metric = st.columns([2, 1])
+    with col_bar:
+        st.progress(pct, text=f"Vendas de Ações no Mês: {_moeda(vendas)} de {_moeda(limite)} ({pct * 100:.1f}%)")
+        if vendas <= limite:
+            st.success(
+                f"""🟢 **Isenção Ativa (Art. 22 Lei 11.033/04):** Você ainda pode realizar até **{_moeda(margem)}** em vendas de ações com **0% de imposto** até o encerramento do mês!
+
+💡 **Estratégia 1 (Tax-Gain Harvesting):** Se você tem papéis com lucro na carteira e ainda tem margem isenta, vender dentro do limite e recomprar zera o IR e eleva o seu Preço Médio (Custo de Aquisição) para o futuro a custo fiscal zero."""
+            )
+        else:
+            st.warning(
+                f"🟠 **Limite Ultrapassado:** Vendas de ações no mês somaram {_moeda(vendas)}, ultrapassando os {_moeda(limite)}. "
+                f"Conforme a legislação, todo o lucro líquido em ações neste mês ({_moeda(lucro)}) passa a ser tributado à alíquota de 15%."
+            )
+    with col_metric:
+        cor_margem = "#10b981" if margem > 0 else "#ef4444"
+        cor_lucro = "#10b981" if lucro >= 0 else "#ef4444"
+        st.markdown(f"""
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px; margin-bottom: 8px;">
+            <small style="color: #888;">Margem de Vendas Isentas</small><br>
+            <strong style="font-size: 1.2em; color: {cor_margem};">{_moeda(margem)}</strong>
+        </div>
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px;">
+            <small style="color: #888;">Resultado em Ações no Mês</small><br>
+            <strong style="font-size: 1.2em; color: {cor_lucro};">{_moeda(lucro)}</strong>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+def _secao_estoque_prejuizos_estrategias() -> None:
+    """Estoque de prejuízos acumulados (Estratégia 3) e alerta de Tax-Loss Harvesting (Estratégia 2)."""
+    if not tem_dados or saldos_finais is None:
+        return
+
+    prej_st = abs(min(saldos_finais.get("SwingTrade", 0.0), 0.0))
+    prej_dt = abs(min(saldos_finais.get("DayTrade", 0.0), 0.0))
+    prej_fii = abs(min(saldos_finais.get("FII", 0.0), 0.0))
+
+    tema.secao("Estoque de Prejuízos Fiscais & Inteligência Tributária")
+
+    c1, c2, c3 = st.columns(3)
+    cor_st = "#ef4444" if prej_st > 0 else "#888"
+    cor_dt = "#ef4444" if prej_dt > 0 else "#888"
+    cor_fii = "#ef4444" if prej_fii > 0 else "#888"
+
+    with c1:
+        st.markdown(f"""
+        <div style="background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 8px; padding: 12px;">
+            <small style="color: #888;">Prejuízo Swing Trade</small><br>
+            <strong style="font-size: 1.15em; color: {cor_st};">{_moeda(prej_st)}</strong><br>
+            <small style="color: #10b981;">Protege até {_moeda(prej_st * 0.15)} de IR futuro</small>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div style="background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 8px; padding: 12px;">
+            <small style="color: #888;">Prejuízo Day Trade</small><br>
+            <strong style="font-size: 1.15em; color: {cor_dt};">{_moeda(prej_dt)}</strong><br>
+            <small style="color: #10b981;">Protege até {_moeda(prej_dt * 0.20)} de IR futuro</small>
+        </div>
+        """, unsafe_allow_html=True)
+    with c3:
+        st.markdown(f"""
+        <div style="background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 8px; padding: 12px;">
+            <small style="color: #888;">Prejuízo FII / FIAGRO</small><br>
+            <strong style="font-size: 1.15em; color: {cor_fii};">{_moeda(prej_fii)}</strong><br>
+            <small style="color: #10b981;">Protege até {_moeda(prej_fii * 0.20)} de IR futuro</small>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with st.expander("🛡️ Estratégia 3: Por que o Prejuízo Fiscal no Brasil Não Prescreve? (Clique para saber mais)"):
+        st.markdown(
+            "Diferente de jurisdições como a americana (onde existem limites anuais e prazos de expiração), "
+            "no Brasil a **Lei 8.981/95 (art. 72)** e a **IN RFB 1.585/15** determinam que o prejuízo apurado em renda variável "
+            "**NUNCA expira**.\n\n"
+            "O FiscoTrade transporta seus saldos negativos mês a mês indefinidamente. Você pode passar anos sem operar, "
+            "e quando voltar a lucrar, o sistema continuará abatendo cada centavo automaticamente antes de cobrar qualquer imposto."
+        )
+
+    # Tax-Loss Harvesting alert se houver base tributável apurada no mês
+    if not tabela_ir.empty:
+        linha_recente = tabela_ir.iloc[-1]
+        base_tributavel = float(linha_recente["BaseCalcSwingTrade"] + linha_recente["BaseCalcDayTrade"] + linha_recente.get("BaseCalcFII", 0.0))
+        if base_tributavel > 0:
+            st.info(
+                f"""💡 **Estratégia 2 (Tax-Loss Harvesting Recomendado para {_nome_mes(str(linha_recente['mes']))}):**
+
+Você possui **{_moeda(base_tributavel)}** de base tributável apurada. Caso possua na carteira ativos com prejuízo latente (não realizado) que você já planejava encerrar ou rebalancear, efetuar a venda antes do fechamento deste mês abaterá o imposto devido direto na fonte!"""
+            )
+
+
+def _secao_guia_estrategias() -> None:
+    """Guia consolidado das 5 estratégias de inteligência fiscal."""
+    with st.expander("📚 Guia das 5 Estratégias de Inteligência Fiscal Integradas no FiscoTrade", expanded=False):
+        st.markdown("""
+        O FiscoTrade opera 100% alinhado à legislação tributária federal para proteger o seu patrimônio com a máxima eficiência legal:
+        
+        1. **Tax-Gain Harvesting (Isenção dos R$ 20.000):** *Art. 22 da Lei 11.033/04*. Vendas mensais de ações no mercado à vista até R$ 20.000 têm lucro 100% isento de IR. Realizar lucros dentro do limite e recomprar eleva o seu Preço Médio sem pagar imposto.
+        2. **Tax-Loss Harvesting (Realização Estratégica de Prejuízo):** Realizar prejuízos em posições perdedoras antes de fechar o mês para abater lucros tributáveis de outros ativos, reduzindo ou zerando o DARF devido.
+        3. **O Prejuízo Fiscal Não Prescreve:** *Art. 72 da Lei 8.981/95 e IN RFB 1.585/15*. Prejuízos acumulados nunca expiram e continuam compensando lucros futuros indefinidamente.
+        4. **Compensação Integral do IRRF ('Dedo-Duro'):** *Art. 64 da IN RFB 1.585/15*. A retenção na fonte (0,005% em swing trade e 1% em day trade) é compensada centavo a centavo no DARF ou acumulada para meses posteriores.
+        5. **Declaração pelo Custo Histórico de Aquisição:** *Art. 19 da IN RFB 1.585/15*. Na ficha de Bens e Direitos do IRPF anual, declare SEMPRE pelo custo histórico com taxas, nunca pela cotação de mercado, prevenindo a malha fina.
+        """)
+
+
 # ---------------------------------------------------------------------------
 # Página 2 — Visão Geral
 # ---------------------------------------------------------------------------
@@ -698,6 +822,9 @@ def pagina_visao() -> None:
              "icone": "\U0001F4B5"},
         ])
 
+        _secao_termometro_isencao()
+        _secao_estoque_prejuizos_estrategias()
+
         tema.secao("Resultado realizado por mês")
         if resultados.empty:
             tema.vazio("Nenhum resultado realizado no período.")
@@ -714,6 +841,8 @@ def pagina_visao() -> None:
             ultimos[["data", "ticker", "tipo", "quantidade", "preco", "mercado", "nota"]],
             width="stretch", hide_index=True,
         )
+
+        _secao_guia_estrategias()
 
 
 # ---------------------------------------------------------------------------
@@ -783,6 +912,89 @@ def pagina_extrato() -> None:
         )
 
 
+
+def _secao_irpf_bens_e_direitos() -> None:
+    """Relatório Copia e Cola para Declaração Anual de IRPF (Bens e Direitos) - Estratégia 5."""
+    if posicao.empty:
+        return
+
+    tema.secao("Declaração Anual IRPF — Bens e Direitos (Copia e Cola)")
+    
+    st.warning(
+        """⚠️ **Estratégia 5 — Prevenção de Malha Fina (Custo Histórico Obrigatório):**
+
+Na ficha de **Bens e Direitos** do programa da Receita Federal, informe **SEMPRE o Custo de Aquisição Histórico Total** (valor de compra somado a emolumentos e taxas de corretagem). **NUNCA declare pela cotação de fechamento em 31/12!** A variação de mercado não altera o custo de aquisição na declaração de bens; alterar esse valor gera variação patrimonial fictícia e é um dos principais motivos de retenção em malha fina."""
+    )
+
+    mapa_rfb = {
+        "STOCK": {"grupo": "03 - Participações Societárias", "codigo": "01 - Ações (inclusive as provenientes de linha telefônica)", "desc_tipo": "ações"},
+        "FII": {"grupo": "07 - Fundos", "codigo": "03 - Fundos de Investimento Imobiliário (FII)", "desc_tipo": "cotas de FII"},
+        "BDR": {"grupo": "04 - Aplicações e Investimentos", "codigo": "04 - Ativos negociados no exterior (BDRs)", "desc_tipo": "certificados BDR"},
+        "ETF": {"grupo": "07 - Fundos", "codigo": "09 - Demais fundos de índice de mercado (ETFs)", "desc_tipo": "cotas de ETF"},
+        "GOLD": {"grupo": "04 - Aplicações e Investimentos", "codigo": "01 - Ouro ativo financeiro", "desc_tipo": "gramas de ouro ativo financeiro"},
+    }
+
+    linhas_irpf = []
+    for _, row in posicao.iterrows():
+        ticker = str(row["Ticker"])
+        grupo_fee = str(row["Grupo"])
+        qtd = float(row["Quantidade"])
+        pm = float(row["Preço Médio"])
+        custo = float(row["Custo Total"])
+
+        rfb_info = mapa_rfb.get(grupo_fee, {
+            "grupo": "99 - Outros Bens e Direitos",
+            "codigo": "99 - Outros bens e direitos",
+            "desc_tipo": "ativos de renda variável",
+        })
+
+        corretora = "corretora de valores nacional"
+        if not operacoes.empty and "corretora" in operacoes.columns:
+            ops_t = operacoes[operacoes["ticker"] == ticker]
+            if not ops_t.empty and ops_t["corretora"].iloc[-1]:
+                corretora = ops_t["corretora"].iloc[-1]
+
+        qtd_txt = f"{int(qtd)}" if qtd.is_integer() else f"{qtd:.4f}".rstrip("0").rstrip(".")
+        discriminacao = (
+            f"{qtd_txt} {rfb_info['desc_tipo']} de {ticker}, custodiadas na {corretora}, "
+            f"ao custo total de aquisição de {_moeda(custo)} (preço médio de {_moeda(pm)} com taxas e emolumentos incluídos)."
+        )
+
+        linhas_irpf.append({
+            "Ticker": ticker,
+            "Grupo RFB": rfb_info["grupo"],
+            "Código RFB": rfb_info["codigo"],
+            "Quantidade": qtd_txt,
+            "Custo Total (Situação em 31/12)": _moeda(custo),
+            "Discriminação": discriminacao,
+        })
+
+    df_irpf = pd.DataFrame(linhas_irpf)
+
+    with st.expander("📋 Ver Tabela de Bens e Direitos & Textos Prontos para Copiar", expanded=True):
+        st.dataframe(
+            df_irpf[["Ticker", "Grupo RFB", "Código RFB", "Quantidade", "Custo Total (Situação em 31/12)"]],
+            width="stretch", hide_index=True,
+        )
+
+        st.caption("Selecione o ativo abaixo para visualizar e copiar a discriminação formatada para a Receita Federal:")
+        ticker_sel = st.selectbox(
+            "Selecionar ativo para copiar discriminação:",
+            df_irpf["Ticker"].tolist(),
+            key="sel_irpf_ativo",
+        )
+        item_sel = df_irpf[df_irpf["Ticker"] == ticker_sel].iloc[0]
+
+        c_g, c_c = st.columns(2)
+        with c_g:
+            st.info(f"**Grupo:** {item_sel['Grupo RFB']}")
+        with c_c:
+            st.info(f"**Código:** {item_sel['Código RFB']}")
+
+        st.caption("Discriminação pronta para colar no programa do IRPF:")
+        st.code(item_sel["Discriminação"], language="text")
+
+
 # ---------------------------------------------------------------------------
 # Página 4 — Meu Patrimônio
 # ---------------------------------------------------------------------------
@@ -817,6 +1029,8 @@ def pagina_patrimonio() -> None:
             "Preço médio ponderado com as taxas de corretagem somadas ao custo "
             "(item 3 do checklist de reconstrução)."
         )
+
+        _secao_irpf_bens_e_direitos()
 
 
 # ---------------------------------------------------------------------------
@@ -1018,16 +1232,34 @@ def pagina_darf() -> None:
     st.divider()
     col1, col2 = st.columns(2)
     with col1:
-        tema.secao("Dados para emissão no Sicalc / internet banking")
-        st.code(
-            f"Código de receita: {codigo_receita_darf()}\n"
-            f"Período de apuração: {competencia}\n"
-            f"Vencimento: {_vencimento_darf(competencia):%d/%m/%Y}\n"
-            f"Valor: {_moeda(linha['DARFFinal'])}",
-            language="text",
+        tema.secao("Dados para Internet Banking / Pix")
+        venc_str = _vencimento_darf(competencia).strftime("%d/%m/%Y")
+        cod_rec = codigo_receita_darf()
+        val_darf = _moeda(recolher)
+
+        st.markdown(f"""
+        <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 14px; margin-bottom: 12px;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div><span style="color: #9ca3af; font-size: 0.85em;">Código de Receita</span><br><strong style="font-size: 1.1em;">{cod_rec}</strong></div>
+                <div><span style="color: #9ca3af; font-size: 0.85em;">Período de Apuração</span><br><strong style="font-size: 1.1em;">{competencia}</strong></div>
+                <div><span style="color: #9ca3af; font-size: 0.85em;">Data de Vencimento</span><br><strong style="font-size: 1.1em;">{venc_str}</strong></div>
+                <div><span style="color: #9ca3af; font-size: 0.85em;">Valor a Recolher</span><br><strong style="font-size: 1.15em; color: {'#10b981' if recolher > 0 else '#888'};">{val_darf}</strong></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.caption("Texto formatado para copiar e pagar no app do seu banco ou Sicalc:")
+        texto_copia = (
+            f"DARF RENDA VARIÁVEL - {competencia}\n"
+            f"Código de Receita: {cod_rec}\n"
+            f"Período de Apuração: {competencia}\n"
+            f"Data de Vencimento: {venc_str}\n"
+            f"Valor do Principal: {val_darf}"
         )
+        st.code(texto_copia, language="text")
+
     with col2:
-        tema.secao("Composição")
+        tema.secao("Composição da Competência")
         composicao = pd.DataFrame([
             {"Item": "Base de cálculo Day Trade", "Valor": linha["BaseCalcDayTrade"]},
             {"Item": "Base de cálculo Swing Trade", "Valor": linha["BaseCalcSwingTrade"]},
@@ -1040,6 +1272,26 @@ def pagina_darf() -> None:
         st.dataframe(
             _colorir(_tabela_moeda(composicao, ["Valor"]), ["Valor"]),
             width="stretch", hide_index=True,
+        )
+
+    # --- Estratégia 4: Compensação Integral do IRRF Dedo-Duro ---
+    irrf_mes = float(linha["IRRFMonthlyDayTrade"] + linha["IRRFMonthlySwingTrade"])
+    irrf_usado = float(linha["IRRFUsedDayTrade"] + linha["IRRFUsedSwingTrade"])
+    irrf_proximo = float(linha["IRRFNextMonthDayTrade"] + linha["IRRFNextMonthSwingTrade"])
+
+    with st.expander("🎯 Estratégia 4: Compensação Integral do IRRF ('Dedo-Duro')", expanded=irrf_mes > 0 or irrf_usado > 0):
+        c_i1, c_i2, c_i3 = st.columns(3)
+        with c_i1:
+            st.metric("IRRF Retido no Mês", _moeda(irrf_mes))
+        with c_i2:
+            st.metric("IRRF Abatido no DARF", _moeda(irrf_usado))
+        with c_i3:
+            st.metric("IRRF a Transportar", _moeda(irrf_proximo))
+
+        st.caption(
+            "Conforme a Instrução Normativa RFB nº 1.585/15, a retenção na fonte (0,005% em swing trade "
+            "e 1% em day trade) é abatida centavo a centavo do seu imposto. O valor que não for aproveitado no mês "
+            "fica acumulado e protegido para abater futuros DARFs automaticamente."
         )
 
     # -- Controle de pagamento --------------------------------------------
