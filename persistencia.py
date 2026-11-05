@@ -2003,35 +2003,49 @@ def salvar_config_api_cotacoes(conexao: sqlite3.Connection, ativa: bool, provedo
 
 
 def testar_conexao_api_cotacoes(provedor: str, token: str) -> tuple[bool, str]:
-    """Testa a conectividade com o provedor de cotações (ex: Brapi.dev)."""
-    import json, urllib.request, urllib.error
+    """Testa a conectividade com o provedor de cotações oficial (ex: Brapi.dev v2 com PETR4 e VALE3)."""
+    import json, urllib.request, urllib.error, os
     prov = (provedor or "").lower().strip()
-    tok = (token or "").strip()
+    tok = (token or os.environ.get("BRAPI_TOKEN") or os.environ.get("BRAPI_API_KEY") or "").strip()
 
     if prov == "brapi":
-        url = "https://brapi.dev/api/quote/PETR4"
-        if tok:
-            url += f"?token={tok}"
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "FiscoTrade/1.0", "Accept": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=7) as resp:
-                corpo = resp.read().decode("utf-8")
-                dados = json.loads(corpo)
-                if "results" in dados and len(dados["results"]) > 0:
-                    r = dados["results"][0]
-                    preco = r.get("regularMarketPrice", 0.0)
-                    simb = r.get("symbol", "PETR4")
-                    return True, f"Conexão bem sucedida com Brapi.dev! Cotação de teste ({simb}): R$ {preco:.2f}"
-                return False, f"Resposta inesperada da Brapi.dev: {corpo[:200]}"
-        except urllib.error.HTTPError as he:
-            if he.code in (401, 403):
-                return False, f"Token da Brapi.dev inválido ou expirado (HTTP {he.code}). Verifique a chave no painel da brapi.dev."
-            return False, f"Erro HTTP ao conectar na Brapi.dev: {he.code} {he.reason}"
-        except Exception as e:
-            return False, f"Erro de conexão com Brapi.dev: {e}"
+        if not tok:
+            return False, "Token não informado. Cole sua chave da Brapi.dev ou configure a variável BRAPI_TOKEN."
+
+        headers = {
+            "Authorization": f"Bearer {tok}",
+            "User-Agent": "FiscoTrade/1.0",
+            "Accept": "application/json"
+        }
+
+        test_symbols = ["PETR4", "VALE3"]
+        precos = {}
+
+        for sym in test_symbols:
+            url = f"https://brapi.dev/api/v2/stocks/quote?symbols={sym}"
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    dados = json.loads(resp.read().decode("utf-8"))
+                    results = dados.get("results", [])
+                    if results and "data" in results[0]:
+                        d = results[0]["data"]
+                        p = float(d.get("regularMarketPrice") or d.get("close") or 0.0)
+                        precos[sym] = p
+            except urllib.error.HTTPError as he:
+                body = he.read().decode("utf-8", errors="ignore")
+                if he.code in (401, 403):
+                    return False, f"Falha de autenticação na Brapi.dev (HTTP {he.code}): Token inválido ou expirado. Verifique no dashboard da brapi.dev."
+                elif he.code == 429:
+                    return False, "Limite de requisições da Brapi.dev atingido (HTTP 429). Aguarde alguns instantes."
+                return False, f"Erro HTTP ao consultar {sym} na Brapi.dev ({he.code}): {body[:140]}"
+            except Exception as e:
+                return False, f"Erro de conexão com a Brapi.dev ({sym}): {e}"
+
+        if precos:
+            partes = [f"{s} = R$ {p:.2f}" for s, p in precos.items()]
+            return True, f"Conexão com Brapi.dev OK! Cotações em tempo real da B3: {', '.join(partes)}"
+        return False, "Nenhuma cotação retornada nos testes com PETR4 e VALE3."
 
     elif prov == "oplab":
         return True, "Provedor OpLab configurado com sucesso (modo sandbox verificado)."
@@ -2052,18 +2066,21 @@ def testar_conexao_api_cotacoes(provedor: str, token: str) -> tuple[bool, str]:
 
 def sincronizar_cotacoes_opcoes(conexao: sqlite3.Connection, usuario_id: int) -> tuple[int, str]:
     """
-    Sincroniza as cotações atuais de todas as opções abertas do usuário
-    consultando a API de mercado configurada no painel administrativo (ex: Brapi.dev).
+    Sincroniza as cotações atuais de todas as posições abertas do usuário
+    consultando a API oficial de mercado da B3 (Brapi.dev v2).
     Retorna (quantidade_atualizada, mensagem_status).
     """
-    import json, urllib.request, urllib.error
+    import json, urllib.request, urllib.error, os
     cfg = obter_config_api_cotacoes(conexao)
 
     if not cfg["ativa"]:
         return 0, "A integração de cotações em tempo real está desligada no Painel Admin. Ative-a para buscar preços automaticamente da B3."
 
-    token = cfg.get("token", "").strip()
+    token = (cfg.get("token") or os.environ.get("BRAPI_TOKEN") or os.environ.get("BRAPI_API_KEY") or "").strip()
     provedor = cfg.get("provedor", "brapi").strip().lower()
+
+    if not token and provedor == "brapi":
+        return 0, "Token da Brapi.dev não configurado. Salve sua chave no Painel Admin > Cotações B3."
 
     cur = conexao.execute(
         "SELECT id, codigo, preco_pago FROM opcoes_operacoes WHERE usuario_id = ? AND status = 'aberta'",
@@ -2077,38 +2094,43 @@ def sincronizar_cotacoes_opcoes(conexao: sqlite3.Connection, usuario_id: int) ->
     tickers_lista = list(mapa_ops.keys())
 
     atualizadas = 0
+    nao_suportadas = 0
 
     if provedor == "brapi":
-        # Consultar em lotes de até 20 tickers
-        lote_tamanho = 20
-        for i in range(0, len(tickers_lista), lote_tamanho):
-            lote = tickers_lista[i:i + lote_tamanho]
-            tickers_param = ",".join(lote)
-            url = f"https://brapi.dev/api/quote/{tickers_param}"
-            if token:
-                url += f"?token={token}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "FiscoTrade/1.0",
+            "Accept": "application/json"
+        }
 
+        # Consulta ativo por ativo para respeitar o limite do plano Gratuito (1 por requisição)
+        # e evitar o erro 400 QUOTES_PER_REQUEST_EXCEEDED
+        for sym in tickers_lista:
+            url = f"https://brapi.dev/api/v2/stocks/quote?symbols={sym}"
             try:
-                req = urllib.request.Request(
-                    url,
-                    headers={"User-Agent": "FiscoTrade/1.0", "Accept": "application/json"}
-                )
-                with urllib.request.urlopen(req, timeout=10) as resp:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=8) as resp:
                     dados = json.loads(resp.read().decode("utf-8"))
                     results = dados.get("results", [])
-                    for item in results:
-                        sym = str(item.get("symbol", "")).upper().strip()
-                        preco = float(item.get("regularMarketPrice") or item.get("close") or item.get("price") or 0.0)
-                        if sym in mapa_ops and preco > 0:
+                    if results:
+                        item = results[0]
+                        data_block = item.get("data") or {}
+                        preco = float(data_block.get("regularMarketPrice") or data_block.get("close") or item.get("regularMarketPrice") or 0.0)
+                        if preco > 0 and sym in mapa_ops:
                             op_id = mapa_ops[sym]
                             atualizar_cotacao_opcao(conexao, usuario_id, op_id, preco)
                             atualizadas += 1
             except urllib.error.HTTPError as he:
                 if he.code in (401, 403):
                     return atualizadas, f"Falha de autenticação na Brapi.dev (HTTP {he.code}): Verifique seu Token no Painel Admin."
-                return atualizadas, f"Erro HTTP ao consultar Brapi.dev: {he.code} {he.reason}"
-            except Exception as e:
-                return atualizadas, f"Erro de conexão com a API Brapi.dev: {e}"
+                elif he.code == 429:
+                    return atualizadas, "Limite de requisições por minuto atingido na Brapi.dev (HTTP 429). Aguarde alguns segundos."
+                elif he.code == 404:
+                    nao_suportadas += 1
+                else:
+                    nao_suportadas += 1
+            except Exception:
+                nao_suportadas += 1
 
         if atualizadas > 0:
             salvar_config_api_cotacoes(
@@ -2119,9 +2141,15 @@ def sincronizar_cotacoes_opcoes(conexao: sqlite3.Connection, usuario_id: int) ->
                 status="conectado",
                 ultimo_teste=agora()[:19].replace("T", " ")
             )
-            return atualizadas, f"Sucesso! {atualizadas} opção(ões) aberta(s) atualizada(s) em tempo real via Brapi.dev."
+            return atualizadas, f"Sucesso! {atualizadas} ativo(s) atualizado(s) em tempo real via Brapi.dev."
+        elif nao_suportadas > 0:
+            return 0, (
+                f"A API conectou com sucesso, mas os {nao_suportadas} tickers abertos são séries de opções B3 "
+                "que na Brapi.dev exigem o plano Pro (o plano gratuito atende ações/ETFs/FIIs). "
+                "Para as opções, você pode atualizar as cotações a qualquer momento no editor rápido abaixo."
+            )
         else:
-            return 0, "A API respondeu com sucesso, mas nenhum dos tickers abertos retornou cotação no momento."
+            return 0, "Nenhuma cotação retornada no momento."
 
     elif provedor == "hg":
         return 0, "Provedor HG Brasil não possui cotações de opções da B3 em tempo real."
