@@ -265,7 +265,13 @@ pagina_upload = st.Page(paginas.pagina_upload, title="Upload de Notas",
                         icon=":material/upload_file:")
 pagina_darf = st.Page(paginas.pagina_darf, title="DARF",
                       icon=":material/request_quote:")
-pagina_otimizacao = st.Page(paginas.pagina_otimizacao, title="Otimização Fiscal",
+funcao_otimizacao = getattr(paginas, "pagina_otimizacao", None)
+if funcao_otimizacao is None:
+    import importlib
+    importlib.reload(paginas)
+    funcao_otimizacao = getattr(paginas, "pagina_otimizacao", paginas.pagina_ir)
+
+pagina_otimizacao = st.Page(funcao_otimizacao, title="Otimização Fiscal",
                             icon=":material/tune:")
 
 paginas.PAGINA_VISAO = pagina_visao
