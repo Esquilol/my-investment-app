@@ -282,6 +282,7 @@ pagina_otimizacao = st.Page(funcao_otimizacao, title="Otimização Fiscal",
 paginas.PAGINA_VISAO = pagina_visao
 paginas.PAGINA_UPLOAD = pagina_upload
 paginas.PAGINA_DARF = pagina_darf
+paginas.PAGINA_OTIMIZACAO = pagina_otimizacao
 
 paginas_investidor = [
     pagina_visao,

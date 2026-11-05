@@ -245,12 +245,14 @@ h1, h2, h3, h4, h5 {{
 .mp-marca h1 {{ font-size: 1.55rem; margin: .35rem 0 0; }}
 
 /* ---------------- Telas pequenas ---------------- */
-@media (max-width: 640px) {{
+@media (max-width: 768px) {{
   .block-container {{ padding-left: 1rem; padding-right: 1rem; padding-top: 1rem; }}
   .mp-hero {{ padding: 20px; }} .mp-hero h1 {{ font-size: 1.34rem; }}
   .mp-hero .mp-hero-ico {{ font-size: 3.6rem; right: 12px; }}
   .mp-kpi .valor {{ font-size: 1.26rem; }}
   .mp-cabecalho h2 {{ font-size: 1.15rem; }}
+  [data-testid="column"] {{ min-width: 45% !important; margin-bottom: 8px !important; }}
+  .stButton > button {{ font-size: 0.82rem !important; padding: 0.4rem 0.5rem !important; }}
 }}
 </style>
 """

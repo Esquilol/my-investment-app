@@ -670,6 +670,7 @@ tem_dados = False
 PAGINA_DARF = None
 PAGINA_UPLOAD = None
 PAGINA_VISAO = None
+PAGINA_OTIMIZACAO = None
 
 
 def carregar(identificador: int) -> None:
@@ -1452,19 +1453,25 @@ def _dashboard_cards_visao() -> None:
         margem = max(0.0, limite - vendas_acoes)
         pct_isen = min(vendas_acoes / limite, 1.0) if limite > 0 else 0.0
         st.markdown(f"""
-        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); min-height: 140px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span style="font-size: 0.75rem; color: #0284c7; font-weight: 700; text-transform: uppercase;">📊 Isenção R$ 20k</span>
-                <span style="font-size: 0.72rem; background: #e0f2fe; color: #0369a1; padding: 2px 7px; border-radius: 6px; font-weight: 600;">0% de IR</span>
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); min-height: 145px; display: flex; flex-direction: column; justify-content: space-between;">
+            <div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <span style="font-size: 0.75rem; color: #0284c7; font-weight: 700; text-transform: uppercase;">📊 Isenção R$ 20k</span>
+                    <span style="font-size: 0.72rem; background: #e0f2fe; color: #0369a1; padding: 2px 7px; border-radius: 6px; font-weight: 600;">0% de IR</span>
+                </div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #0284c7; margin: 4px 0;">{_moeda(margem)}</div>
+                <div style="font-size: 0.8rem; color: #475569; margin-bottom: 6px;">Margem restante para vendas isentas</div>
             </div>
-            <div style="font-size: 1.5rem; font-weight: 800; color: #0284c7; margin: 4px 0;">{_moeda(margem)}</div>
-            <div style="font-size: 0.8rem; color: #64748b; margin-bottom: 6px;">Margem restante para vendas isentas</div>
-            <div style="background: #e2e8f0; border-radius: 4px; height: 6px; width: 100%; overflow: hidden;">
-                <div style="background: #0284c7; width: {pct_isen*100:.1f}%; height: 100%;"></div>
+            <div>
+                <div style="background: #e2e8f0; border-radius: 4px; height: 6px; width: 100%; overflow: hidden; margin-bottom: 4px;">
+                    <div style="background: #0284c7; width: {pct_isen*100:.1f}%; height: 100%;"></div>
+                </div>
+                <div style="font-size: 0.72rem; color: #64748b;">Vendas: {_moeda(vendas_acoes)} de {_moeda(limite)}</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
-        st.caption(f"Vendas: {_moeda(vendas_acoes)} de {_moeda(limite)}")
+        if st.button("Ver Otimização Fiscal", key="dash_btn_isen", type="secondary", use_container_width=True, disabled=PAGINA_OTIMIZACAO is None):
+            st.switch_page(PAGINA_OTIMIZACAO)
 
     # Card 3: Prejuízos Fiscais
     with col3:
@@ -1473,17 +1480,23 @@ def _dashboard_cards_visao() -> None:
         prej_fii = abs(min(saldos_finais.get("FII", 0.0), 0.0)) if saldos_finais else 0.0
         total_prej = prej_st + prej_dt + prej_fii
         st.markdown(f"""
-        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); min-height: 140px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span style="font-size: 0.75rem; color: #6366f1; font-weight: 700; text-transform: uppercase;">🛡️ Prejuízos Fiscais</span>
-                <span style="font-size: 0.72rem; background: #eef2ff; color: #4338ca; padding: 2px 7px; border-radius: 6px; font-weight: 600;">Eterno</span>
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); min-height: 145px; display: flex; flex-direction: column; justify-content: space-between;">
+            <div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <span style="font-size: 0.75rem; color: #6366f1; font-weight: 700; text-transform: uppercase;">🛡️ Prejuízos Fiscais</span>
+                    <span style="font-size: 0.72rem; background: #eef2ff; color: #4338ca; padding: 2px 7px; border-radius: 6px; font-weight: 600;">Eterno</span>
+                </div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #4f46e5; margin: 4px 0;">{_moeda(total_prej)}</div>
+                <div style="font-size: 0.8rem; color: #475569;">Abatimento automático em lucros futuros</div>
             </div>
-            <div style="font-size: 1.5rem; font-weight: 800; color: #4f46e5; margin: 4px 0;">{_moeda(total_prej)}</div>
-            <div style="font-size: 0.8rem; color: #64748b;">Abatimento automático em lucros futuros</div>
-            <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;">ST: {_moeda(prej_st)} | DT: {_moeda(prej_dt)}</div>
+            <div>
+                <div style="font-size: 0.75rem; color: #64748b; margin-top: 2px;">ST: {_moeda(prej_st)} | DT: {_moeda(prej_dt)}</div>
+                <div style="font-size: 0.72rem; color: #94a3b8;">Lei 8.981/95 — Não prescreve</div>
+            </div>
         </div>
         """, unsafe_allow_html=True)
-        st.caption("Lei 8.981/95 — Não prescreve")
+        if st.button("Histórico de Prejuízos", key="dash_btn_prej", type="secondary", use_container_width=True, disabled=PAGINA_DARF is None):
+            st.switch_page(PAGINA_DARF)
 
     # Card 4: Custódia & Carteira
     with col4:
@@ -2379,7 +2392,7 @@ def pagina_darf() -> None:
             """, unsafe_allow_html=True)
 
             # Botões de Ação nativos alinhados confortavelmente
-            c_sp, c_act1, c_act2 = st.columns([5.5, 2.2, 2.3])
+            c_sp, c_act1, c_act2 = st.columns([2.5, 2.2, 2.3])
             with c_act1:
                 if rec > 0:
                     if st.button("💵 Gerar DARF", key=f"btn_gdarf_{mes}", type="primary", use_container_width=True):

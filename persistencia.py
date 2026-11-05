@@ -1005,32 +1005,30 @@ def salvar_notas(conexao: sqlite3.Connection, notas: list[Nota],
                     "WHERE usuario_id = ? AND nota = ? AND folha = ?",
                     (nota.corretora, int(usuario_id), str(nota.numero), folha),
                 )
-            continue  # Nota já importada, ignora para não duplicar operações
-
-        categoria_irrf = (
-            "DayTrade"
-            if nota.operacoes and all(op.day_trade for op in nota.operacoes)
-            else "SwingTrade"
-        )
-        cur = conexao.execute(
-            "INSERT OR IGNORE INTO notas "
-            "(usuario_id, numero, corretora, folha, data, arquivo, despesas, irrf, categoria_irrf) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                int(usuario_id),
-                nota.numero,
-                nota.corretora,
-                folha,
-                data_iso,
-                nota.arquivo,
-                nota.despesas,
-                nota.irrf,
-                categoria_irrf,
-            ),
-        )
-        if cur.rowcount == 0:
-            continue                       # nota já importada quando este arquivo entrou
-        notas_novas += 1
+        else:
+            categoria_irrf = (
+                "DayTrade"
+                if nota.operacoes and all(op.day_trade for op in nota.operacoes)
+                else "SwingTrade"
+            )
+            cur = conexao.execute(
+                "INSERT OR IGNORE INTO notas "
+                "(usuario_id, numero, corretora, folha, data, arquivo, despesas, irrf, categoria_irrf) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    int(usuario_id),
+                    nota.numero,
+                    nota.corretora,
+                    folha,
+                    data_iso,
+                    nota.arquivo,
+                    nota.despesas,
+                    nota.irrf,
+                    categoria_irrf,
+                ),
+            )
+            if cur.rowcount > 0:
+                notas_novas += 1
 
         ocorrencias: dict[str, int] = {}
         for op in nota.operacoes:
@@ -1059,11 +1057,6 @@ def salvar_notas(conexao: sqlite3.Connection, notas: list[Nota],
             ops_novas += cur.rowcount
 
     conexao.commit()
-    # Deduplicação e normalização de corretoras 100% automática
-    try:
-        sanitizar_duplicatas(conexao, usuario_id)
-    except Exception:
-        pass
     return notas_novas, ops_novas
 
 
@@ -1108,16 +1101,17 @@ def sanitizar_duplicatas(conexao: sqlite3.Connection, usuario_id: int) -> dict[s
             for n in lista_notas:
                 if n["id"] != melhor["id"]:
                     conexao.execute("DELETE FROM notas WHERE id = ?", (n["id"],))
-                    conexao.execute(
-                        "DELETE FROM operacoes "
-                        "WHERE usuario_id = ? AND corretora = ? AND nota = ? AND folha = ?",
-                        (usuario_id, n["corretora"], n["numero"], n["folha"]),
-                    )
+                    if n["corretora"] != melhor["corretora"]:
+                        conexao.execute(
+                            "DELETE FROM operacoes "
+                            "WHERE usuario_id = ? AND corretora = ? AND nota = ? AND folha = ?",
+                            (usuario_id, n["corretora"], n["numero"], n["folha"]),
+                        )
                     removidas_notas += 1
 
     # 2. Corrigir corretora de notas remanescentes se usuário só opera na Genial
     notas_xp = conexao.execute(
-        "SELECT id, numero, folha FROM notas WHERE usuario_id = ? AND corretora = 'XP Investimentos'",
+        "SELECT id, numero, folha FROM notas WHERE usuario_id = ? AND corretora IN ('XP Investimentos', 'Genérico (SINACOR)')",
         (usuario_id,),
     ).fetchall()
     notas_genial = conexao.execute(
@@ -1135,22 +1129,10 @@ def sanitizar_duplicatas(conexao: sqlite3.Connection, usuario_id: int) -> dict[s
             )
             corrigidas += 1
 
-    # 3. Remover operações idênticas duplicadas
-    cur_ops = conexao.execute(
-        "DELETE FROM operacoes "
-        "WHERE usuario_id = ? AND id NOT IN ("
-        "    SELECT MIN(id) FROM operacoes "
-        "    WHERE usuario_id = ? "
-        "    GROUP BY data, tipo, ticker, quantidade, preco, valor_total, nota, folha"
-        ")",
-        (usuario_id, usuario_id),
-    )
-    removidas_ops += cur_ops.rowcount
-
     conexao.commit()
     return {
         "notas_removidas": removidas_notas,
-        "operacoes_removidas": removidas_ops,
+        "operacoes_removidas": 0,
         "corretoras_corrigidas": corrigidas,
     }
 
