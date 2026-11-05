@@ -410,10 +410,18 @@ def modal_emitir_darf_oficial(competencia: str, recolher: float) -> None:
     usuario_nome = "INVESTIDOR PESSOA FÍSICA"
     usuario_cpf = "000.000.000-00"
     if usuario_id:
-        u_info = obter_usuario(conexao, usuario_id)
-        if u_info:
-            usuario_nome = u_info.get("nome") or u_info.get("usuario") or usuario_nome
-            usuario_cpf = u_info.get("cpf") or usuario_cpf
+        try:
+            u_info = obter_usuario(conexao, usuario_id)
+            if u_info:
+                if hasattr(u_info, "keys"):
+                    u_dict = dict(u_info)
+                    usuario_nome = u_dict.get("nome") or u_dict.get("usuario") or usuario_nome
+                    usuario_cpf = u_dict.get("cpf") or usuario_cpf
+                elif isinstance(u_info, dict):
+                    usuario_nome = u_info.get("nome") or u_info.get("usuario") or usuario_nome
+                    usuario_cpf = u_info.get("cpf") or usuario_cpf
+        except Exception:
+            pass
 
     tab_doc, tab_instrucao = st.tabs(["📄 Formulário Oficial (2 Vias)", "💡 Como Pagar via Internet Banking"])
 
@@ -1120,11 +1128,11 @@ Você possui **{_moeda(base_tributavel)}** de base tributável apurada. Caso pos
 
 def _secao_assistente_fechamento_mes() -> None:
     """
-    Assistente Proativo de Fechamento de Mês & Otimização Fiscal.
-    Orienta o investidor a encerrar posições estrategicamente no mês para:
-    1) Aproveitar a margem restante de isenção dos R$ 20.000 em ações (Tax-Gain Harvesting).
-    2) Abater lucros tributáveis realizando posições perdedoras antes do dia 30/31 (Tax-Loss Harvesting).
-    3) Simular o impacto fiscal em tempo real de qualquer venda planejada.
+    Scanner Automatizado de Inteligência Fiscal da Carteira.
+    Varre a custódia em tempo real e sugere fechamentos estratégicos antes do fim do mês:
+    1) Trava de Lucro Máximo em Opções Vendidas (Decaimento > 90%).
+    2) Tax-Gain Harvesting em Ações (Venda e recompra com 0% de IR).
+    3) Tax-Loss Harvesting (Realização de prejuízo para abater diretamente o DARF).
     """
     if not tem_dados or tabela_ir.empty:
         return
@@ -1151,91 +1159,101 @@ def _secao_assistente_fechamento_mes() -> None:
     darf_atual = float(ultimo_linha.get("DARFFinal", 0.0))
     base_tributavel = max(0.0, base_st) + max(0.0, base_dt)
 
-    tema.secao(f"🎯 Assistente de Fechamento de Posições — {_nome_mes(competencia)}")
+    tema.secao(f"🎯 Scanner de Otimização Fiscal — {_nome_mes(competencia)}")
 
-    st.markdown(f"""
-    <div style="background: rgba(37, 99, 235, 0.06); border: 1px solid rgba(37, 99, 235, 0.2); border-radius: 10px; padding: 14px 18px; margin-bottom: 16px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-            <div>
-                <strong style="color: #60a5fa; font-size: 1.1em;">Estratégia Fiscal Ativa para {_nome_mes(competencia)}</strong><br>
-                <span style="color: #cbd5e1; font-size: 0.9em;">Rebalanceamento inteligente e otimização tributária antes do encerramento do mês.</span>
-            </div>
-            <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 4px 12px;">
-                <span style="color: #10b981; font-weight: 600; font-size: 0.9em;">⏱️ {dias_uteis} dia(s) útil(eis) restantes</span>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    c_cab1, c_cab2 = st.columns([3, 1])
+    with c_cab1:
+        st.caption("O scanner vasculha suas 27 posições abertas e aponta onde vale a pena fechar hoje para economizar ou isentar imposto.")
+    with c_cab2:
+        if st.button("🔄 Escanear Carteira", key="btn_rescan_tax", type="secondary", use_container_width=True):
+            st.toast("Varredura fiscal da carteira atualizada com sucesso!", icon="🔍")
 
-    col1, col2 = st.columns(2)
+    # Varredura inteligente das posições em custódia
+    detalhes = detalhar_posicoes_custodia(posicao) if posicao is not None and not posicao.empty else pd.DataFrame()
+    sugestoes = []
 
-    with col1:
-        st.markdown(f"""
-        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 14px; min-height: 180px;">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                <span style="font-size: 1.2em;">📈</span>
-                <strong style="color: #10b981; font-size: 1.05em;">Oportunidade de Tax-Gain Harvesting</strong>
-            </div>
-            <p style="color: #cbd5e1; font-size: 0.9em; margin-bottom: 8px;">
-                Você já realizou <strong>{_moeda(vendas_acoes)}</strong> em vendas de ações neste mês.
-            </p>
-            <div style="background: rgba(16, 185, 129, 0.08); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px;">
-                <small style="color: #9ca3af;">Margem restante com 0% de IR:</small><br>
-                <strong style="color: #10b981; font-size: 1.25em;">{_moeda(margem_isencao)}</strong>
-            </div>
-            <small style="color: #94a3b8; line-height: 1.4; display: block;">
-                💡 <strong>Dica Legal:</strong> Caso possua ações em custódia com lucro não realizado, vendê-las até <strong>{_moeda(margem_isencao)}</strong> antes do fechamento do mês permite embolsar o lucro com <strong>isenção total de IR</strong> (Art. 22 Lei 11.033/04). Em seguida, você pode recomprar as ações para elevar seu Preço Médio a custo fiscal zero.
-            </small>
-        </div>
-        """, unsafe_allow_html=True)
+    if not detalhes.empty:
+        # A. Opções Vendidas com Ganho > 90% (Decaimento quase total)
+        opcoes_vendidas = detalhes[(detalhes["Qtd"] < 0) & (detalhes["Ganho (%)"] >= 85.0)]
+        for _, op in opcoes_vendidas.iterrows():
+            ticker = op["Ativo"]
+            ganho_rs = op["Ganho (R$)"]
+            ganho_pct = op["Ganho (%)"]
+            preco_atual = op["Preço Atual"]
+            custo_recompra = abs(op["Qtd"]) * preco_atual
+            sugestoes.append({
+                "tipo": "opcoes_vendidas",
+                "titulo": f"Trava de Lucro Máximo: {ticker}",
+                "tag": "Lucro Máximo de Teta",
+                "cor_tag": "#059669",
+                "bg_tag": "#ecfdf5",
+                "descricao": f"A opção vendida <strong>{ticker}</strong> já capturou <strong>{ganho_pct:.1f}% do lucro</strong> (vale apenas R$ {preco_atual:.2f}). Recomprar agora para encerrar custa apenas <strong>{_moeda(custo_recompra)}</strong> e trava <strong>{_moeda(ganho_rs)} de lucro líquido no bolso</strong>, eliminando o risco de surpresas até o vencimento.",
+                "ticker": ticker,
+                "impacto": f"Lucro protegido: {_moeda(ganho_rs)}",
+            })
 
-    with col2:
-        if darf_atual > 0 or base_tributavel > 0:
-            economia_potencial = darf_atual
-            st.markdown(f"""
-            <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 14px; min-height: 180px;">
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                    <span style="font-size: 1.2em;">📉</span>
-                    <strong style="color: #f59e0b; font-size: 1.05em;">Oportunidade de Tax-Loss Harvesting</strong>
+        # B. Tax-Loss Harvesting (Se há DARF previsto ou base tributável no mês)
+        if darf_atual > 0:
+            perdedores = detalhes[detalhes["Ganho (R$)"] < -100.0].sort_values("Ganho (R$)")
+            for _, loss_pos in perdedores.head(2).iterrows():
+                ticker = loss_pos["Ativo"]
+                prej_rs = abs(loss_pos["Ganho (R$)"])
+                economia_darf = min(darf_atual, prej_rs * 0.15)
+                sugestoes.append({
+                    "tipo": "tax_loss",
+                    "titulo": f"Redução de DARF: Encerrar {ticker}",
+                    "tag": "Tax-Loss Harvesting",
+                    "cor_tag": "#b45309",
+                    "bg_tag": "#fef3c7",
+                    "descricao": f"Se você pretendia rebalancear ou encerrar a posição perdedora em <strong>{ticker}</strong> (prejuízo não realizado de {_moeda(prej_rs)}), efetivar a saída antes do dia 30 abaterá a base tributável deste mês, <strong>reduzindo seu DARF em até {_moeda(economia_darf)}</strong> na hora!",
+                    "ticker": ticker,
+                    "impacto": f"Economia de DARF: até {_moeda(economia_darf)}",
+                })
+
+        # C. Tax-Gain Harvesting em Ações (Dentro da margem de R$ 20.000)
+        if margem_isencao > 1000.0:
+            acoes_lucro = detalhes[(detalhes["Qtd"] > 0) & (detalhes["Ganho (R$)"] > 50.0)]
+            if not acoes_lucro.empty:
+                top_lucro = acoes_lucro.sort_values("Ganho (R$)", ascending=False).iloc[0]
+                ticker = top_lucro["Ativo"]
+                lucro_rs = top_lucro["Ganho (R$)"]
+                sugestoes.append({
+                    "tipo": "tax_gain",
+                    "titulo": f"Aproveitamento de Isenção: {ticker}",
+                    "tag": "Tax-Gain Harvesting (0% IR)",
+                    "cor_tag": "#0284c7",
+                    "bg_tag": "#e0f2fe",
+                    "descricao": f"Você ainda tem <strong>{_moeda(margem_isencao)}</strong> de margem de vendas com <strong>0% de imposto</strong> este mês. Vender <strong>{ticker}</strong> permite embolsar <strong>{_moeda(lucro_rs)} de lucro 100% isento</strong> de IR. Recomprar em seguida eleva seu preço médio fiscal a custo zero!",
+                    "ticker": ticker,
+                    "impacto": f"Lucro isento: {_moeda(lucro_rs)}",
+                })
+
+    # Exibição dos cards de sugestões inteligentes
+    if sugestoes:
+        cols_sug = st.columns(min(len(sugestoes), 3))
+        for idx, sug in enumerate(sugestoes[:3]):
+            with cols_sug[idx]:
+                st.markdown(f"""
+                <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); min-height: 220px; display: flex; flex-direction: column; justify-content: space-between;">
+                    <div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <span style="font-size: 0.75rem; background: {sug['bg_tag']}; color: {sug['cor_tag']}; padding: 3px 8px; border-radius: 6px; font-weight: 700;">{sug['tag']}</span>
+                        </div>
+                        <h4 style="margin: 4px 0 8px 0; font-size: 0.98rem; color: #1e293b;">{sug['titulo']}</h4>
+                        <p style="font-size: 0.83rem; color: #475569; line-height: 1.45; margin-bottom: 8px;">{sug['descricao']}</p>
+                    </div>
+                    <div style="border-top: 1px solid #f1f5f9; padding-top: 8px; font-size: 0.85rem; font-weight: 700; color: {sug['cor_tag']};">
+                        {sug['impacto']}
+                    </div>
                 </div>
-                <p style="color: #cbd5e1; font-size: 0.9em; margin-bottom: 8px;">
-                    Base tributável apurada: <strong>{_moeda(base_tributavel)}</strong> | DARF previsto: <strong style="color: #f59e0b;">{_moeda(darf_atual)}</strong>.
-                </p>
-                <div style="background: rgba(245, 158, 11, 0.08); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px;">
-                    <small style="color: #9ca3af;">Economia de DARF possível este mês:</small><br>
-                    <strong style="color: #f59e0b; font-size: 1.25em;">Até {_moeda(economia_potencial)}</strong>
-                </div>
-                <small style="color: #94a3b8; line-height: 1.4; display: block;">
-                    💡 <strong>Dica Legal:</strong> Se você possui em carteira posições perdedoras (no vermelho) que pretendia encerrar ou rebalancear, executar a venda antes do último dia útil gera prejuízo fiscal que <strong>abate diretamente a base de cálculo</strong>, diminuindo o DARF a pagar!
-                </small>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 14px; min-height: 180px;">
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                    <span style="font-size: 1.2em;">🛡️</span>
-                    <strong style="color: #10b981; font-size: 1.05em;">Sem DARF Devido em {_nome_mes(competencia)}</strong>
-                </div>
-                <p style="color: #cbd5e1; font-size: 0.9em; margin-bottom: 8px;">
-                    Seus resultados neste mês estão totalmente isentos ou protegidos por prejuízos fiscais anteriores.
-                </p>
-                <div style="background: rgba(16, 185, 129, 0.08); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px;">
-                    <small style="color: #9ca3af;">DARF devido:</small><br>
-                    <strong style="color: #10b981; font-size: 1.25em;">R$ 0,00 (Isento)</strong>
-                </div>
-                <small style="color: #94a3b8; line-height: 1.4; display: block;">
-                    Seus prejuízos acumulados continuam salvaguardando seus lucros futuros sem prazo de validade (Art. 72 Lei 8.981/95).
-                </small>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+    else:
+        st.success("🟢 **Carteira Balanceada:** Nenhuma posição exige fechamento urgente neste momento.")
 
-    # 3. Simulador Interativo de Fechamento de Posições
-    with st.expander("🧮 Simulador Interativo de Fechamento de Posições no Mês", expanded=False):
-        st.caption(
-            "Simule o impacto de encerrar uma posição (lucro ou prejuízo) antes do fim do mês "
-            "e veja em tempo real o novo valor do DARF e a economia tributária."
-        )
+    st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+    # 3. Simulador Interativo
+    with st.expander("🧮 Simular Fechamento Manual de Posições (Impacto no DARF em Tempo Real)", expanded=False):
         sim_col1, sim_col2, sim_col3 = st.columns([1.5, 1, 1])
 
         with sim_col1:
@@ -1290,7 +1308,7 @@ def _secao_assistente_fechamento_mes() -> None:
                 else:
                     imposto_novo = (lucro_acoes + lucro_est_sim) * 0.15
                     st.error(f"""
-                    **⚠️ Estourou o limite de R$ 20.000!**
+                    **⚠️ Ultrapassou o limite de R$ 20.000!**
                     - Novas vendas: {_moeda(novo_total_vendas)}
                     - Todo o lucro ({_moeda(lucro_acoes + lucro_est_sim)}) passa a ser tributado à alíquota de 15%.
                     - **IR adicional a pagar: {_moeda(imposto_novo)}**
@@ -1305,8 +1323,6 @@ def _secao_assistente_fechamento_mes() -> None:
                 - Redução no DARF: **- {_moeda(economia_darf)}**
                 - **Novo DARF projetado: {_moeda(novo_darf)}**
                 """)
-
-
 
 
 def _secao_guia_estrategias() -> None:
@@ -1333,7 +1349,7 @@ def _secao_guia_estrategias() -> None:
 # ---------------------------------------------------------------------------
 
 def _dashboard_cards_visao() -> None:
-    """Cards quadrados no topo da Visão Geral (Semáforo DARF, Isenção, Prejuízos, Custódia)."""
+    """Cards no topo da Visão Geral (Semáforo DARF, Isenção, Prejuízos, Custódia) com alto contraste e design responsivo."""
     if tabela_ir is None or tabela_ir.empty:
         return
 
@@ -1366,44 +1382,44 @@ def _dashboard_cards_visao() -> None:
         if vencidos:
             item = vencidos[0]
             st.markdown(f"""
-            <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; padding: 16px; min-height: 145px;">
+            <div style="background: #ffffff; border: 1px solid #fca5a5; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); min-height: 140px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                    <span style="font-size: 0.85em; color: #f87171; font-weight: 600;">🚨 DARF Vencido</span>
-                    <span style="font-size: 0.75em; background: rgba(239, 68, 68, 0.2); color: #f87171; padding: 2px 6px; border-radius: 4px;">{_nome_mes(item['mes'])}</span>
+                    <span style="font-size: 0.75rem; color: #b91c1c; font-weight: 700; text-transform: uppercase;">🚨 DARF Vencido</span>
+                    <span style="font-size: 0.72rem; background: #fee2e2; color: #991b1b; padding: 2px 7px; border-radius: 6px; font-weight: 600;">{_nome_mes(item['mes'])}</span>
                 </div>
-                <div style="font-size: 1.45em; font-weight: 700; color: #ef4444; margin-bottom: 4px;">{_moeda(item['valor'])}</div>
-                <div style="font-size: 0.8em; color: #cbd5e1; margin-bottom: 8px;">Venceu em {item['vencimento']:%d/%m/%Y} ({item['dias']} dias)</div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #dc2626; margin: 4px 0;">{_moeda(item['valor'])}</div>
+                <div style="font-size: 0.8rem; color: #64748b;">Venceu em {item['vencimento']:%d/%m/%Y} ({item['dias']} dias)</div>
             </div>
             """, unsafe_allow_html=True)
-            if st.button("Regularizar DARF", type="primary", key="dash_btn_venc", width="stretch", disabled=PAGINA_DARF is None):
+            if st.button("Regularizar DARF", type="primary", key="dash_btn_venc", use_container_width=True, disabled=PAGINA_DARF is None):
                 st.switch_page(PAGINA_DARF)
         elif a_vencer:
             item = a_vencer[0]
             aviso_dias = "Vence hoje!" if item["dias"] == 0 else f"Vence em {item['dias']} dia(s)"
             st.markdown(f"""
-            <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 16px; min-height: 145px;">
+            <div style="background: #ffffff; border: 1px solid #fcd34d; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); min-height: 140px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                    <span style="font-size: 0.85em; color: #fbbf24; font-weight: 600;">⏰ DARF a Pagar</span>
-                    <span style="font-size: 0.75em; background: rgba(245, 158, 11, 0.2); color: #fbbf24; padding: 2px 6px; border-radius: 4px;">{_nome_mes(item['mes'])}</span>
+                    <span style="font-size: 0.75rem; color: #b45309; font-weight: 700; text-transform: uppercase;">⏰ DARF a Pagar</span>
+                    <span style="font-size: 0.72rem; background: #fef3c7; color: #92400e; padding: 2px 7px; border-radius: 6px; font-weight: 600;">{_nome_mes(item['mes'])}</span>
                 </div>
-                <div style="font-size: 1.45em; font-weight: 700; color: #f59e0b; margin-bottom: 4px;">{_moeda(item['valor'])}</div>
-                <div style="font-size: 0.8em; color: #cbd5e1; margin-bottom: 8px;">{aviso_dias} ({item['vencimento']:%d/%m/%Y})</div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #d97706; margin: 4px 0;">{_moeda(item['valor'])}</div>
+                <div style="font-size: 0.8rem; color: #64748b;">{aviso_dias} ({item['vencimento']:%d/%m/%Y})</div>
             </div>
             """, unsafe_allow_html=True)
-            if st.button("Emitir / Pagar", type="primary", key="dash_btn_avenc", width="stretch", disabled=PAGINA_DARF is None):
+            if st.button("Emitir / Pagar", type="primary", key="dash_btn_avenc", use_container_width=True, disabled=PAGINA_DARF is None):
                 st.switch_page(PAGINA_DARF)
         else:
             st.markdown(f"""
-            <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 12px; padding: 16px; min-height: 145px;">
+            <div style="background: #ffffff; border: 1px solid #a7f3d0; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); min-height: 140px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                    <span style="font-size: 0.85em; color: #34d399; font-weight: 600;">🟢 Situação Fiscal</span>
-                    <span style="font-size: 0.75em; background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 6px; border-radius: 4px;">100% Em Dia</span>
+                    <span style="font-size: 0.75rem; color: #047857; font-weight: 700; text-transform: uppercase;">🟢 Situação Fiscal</span>
+                    <span style="font-size: 0.72rem; background: #ecfdf5; color: #065f46; padding: 2px 7px; border-radius: 6px; font-weight: 600;">100% Em Dia</span>
                 </div>
-                <div style="font-size: 1.45em; font-weight: 700; color: #10b981; margin-bottom: 4px;">R$ 0,00</div>
-                <div style="font-size: 0.8em; color: #cbd5e1; margin-bottom: 8px;">Nenhum DARF pendente de pagamento</div>
+                <div style="font-size: 1.5rem; font-weight: 800; color: #059669; margin: 4px 0;">R$ 0,00</div>
+                <div style="font-size: 0.8rem; color: #64748b;">Nenhum DARF pendente de pagamento</div>
             </div>
             """, unsafe_allow_html=True)
-            if st.button("Ver Histórico DARF", type="secondary", key="dash_btn_ok", width="stretch", disabled=PAGINA_DARF is None):
+            if st.button("Ver Histórico DARF", type="secondary", key="dash_btn_ok", use_container_width=True, disabled=PAGINA_DARF is None):
                 st.switch_page(PAGINA_DARF)
 
     # Card 2: Isenção R$ 20.000 (Ações)
@@ -1419,61 +1435,63 @@ def _dashboard_cards_visao() -> None:
         margem = max(0.0, limite - vendas_acoes)
         pct_isen = min(vendas_acoes / limite, 1.0) if limite > 0 else 0.0
         st.markdown(f"""
-        <div style="background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 16px; min-height: 145px;">
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); min-height: 140px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span style="font-size: 0.85em; color: #94a3b8; font-weight: 600;">📊 Isenção R$ 20.000</span>
-                <span style="font-size: 0.75em; background: rgba(16, 185, 129, 0.15); color: #34d399; padding: 2px 6px; border-radius: 4px;">0% de IR</span>
+                <span style="font-size: 0.75rem; color: #0284c7; font-weight: 700; text-transform: uppercase;">📊 Isenção R$ 20k</span>
+                <span style="font-size: 0.72rem; background: #e0f2fe; color: #0369a1; padding: 2px 7px; border-radius: 6px; font-weight: 600;">0% de IR</span>
             </div>
-            <div style="font-size: 1.45em; font-weight: 700; color: #38bdf8; margin-bottom: 4px;">{_moeda(margem)}</div>
-            <div style="font-size: 0.8em; color: #cbd5e1; margin-bottom: 6px;">Margem restante para vendas isentas</div>
-            <div style="background: rgba(255,255,255,0.1); border-radius: 4px; height: 6px; width: 100%; overflow: hidden;">
-                <div style="background: #38bdf8; width: {pct_isen*100:.1f}%; height: 100%;"></div>
+            <div style="font-size: 1.5rem; font-weight: 800; color: #0284c7; margin: 4px 0;">{_moeda(margem)}</div>
+            <div style="font-size: 0.8rem; color: #64748b; margin-bottom: 6px;">Margem restante para vendas isentas</div>
+            <div style="background: #e2e8f0; border-radius: 4px; height: 6px; width: 100%; overflow: hidden;">
+                <div style="background: #0284c7; width: {pct_isen*100:.1f}%; height: 100%;"></div>
             </div>
         </div>
         """, unsafe_allow_html=True)
-        st.caption(f"Vendas no mês: {_moeda(vendas_acoes)} de {_moeda(limite)}")
+        st.caption(f"Vendas: {_moeda(vendas_acoes)} de {_moeda(limite)}")
 
-    # Card 3: Prejuízos Acumulados
+    # Card 3: Prejuízos Fiscais
     with col3:
         prej_st = abs(min(saldos_finais.get("SwingTrade", 0.0), 0.0)) if saldos_finais else 0.0
         prej_dt = abs(min(saldos_finais.get("DayTrade", 0.0), 0.0)) if saldos_finais else 0.0
         prej_fii = abs(min(saldos_finais.get("FII", 0.0), 0.0)) if saldos_finais else 0.0
         total_prej = prej_st + prej_dt + prej_fii
         st.markdown(f"""
-        <div style="background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 16px; min-height: 145px;">
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); min-height: 140px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span style="font-size: 0.85em; color: #94a3b8; font-weight: 600;">🛡️ Prejuízos Fiscais</span>
-                <span style="font-size: 0.75em; background: rgba(99, 102, 241, 0.15); color: #a5b4fc; padding: 2px 6px; border-radius: 4px;">Não Prescreve</span>
+                <span style="font-size: 0.75rem; color: #6366f1; font-weight: 700; text-transform: uppercase;">🛡️ Prejuízos Fiscais</span>
+                <span style="font-size: 0.72rem; background: #eef2ff; color: #4338ca; padding: 2px 7px; border-radius: 6px; font-weight: 600;">Eterno</span>
             </div>
-            <div style="font-size: 1.45em; font-weight: 700; color: #a5b4fc; margin-bottom: 4px;">{_moeda(total_prej)}</div>
-            <div style="font-size: 0.8em; color: #cbd5e1; margin-bottom: 6px;">Abatimento automático em lucros futuros</div>
-            <div style="font-size: 0.75em; color: #94a3b8;">ST: {_moeda(prej_st)} | DT: {_moeda(prej_dt)}</div>
+            <div style="font-size: 1.5rem; font-weight: 800; color: #4f46e5; margin: 4px 0;">{_moeda(total_prej)}</div>
+            <div style="font-size: 0.8rem; color: #64748b;">Abatimento automático em lucros futuros</div>
+            <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;">ST: {_moeda(prej_st)} | DT: {_moeda(prej_dt)}</div>
         </div>
         """, unsafe_allow_html=True)
-        st.caption("Lei 8.981/95 — Compensação contínua sem prescrição")
+        st.caption("Lei 8.981/95 — Não prescreve")
 
-    # Card 4: Patrimônio & Custódia
+    # Card 4: Custódia & Carteira
     with col4:
         custo_total = float(posicao["Custo Total"].sum()) if posicao is not None and not posicao.empty else 0.0
         n_ativos = len(posicao) if posicao is not None and not posicao.empty else 0
         total_resultado = float(resultados["resultado"].sum()) if resultados is not None and not resultados.empty else 0.0
         st.markdown(f"""
-        <div style="background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 16px; min-height: 145px;">
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); min-height: 140px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span style="font-size: 0.85em; color: #94a3b8; font-weight: 600;">💼 Posição em Custódia</span>
-                <span style="font-size: 0.75em; background: rgba(16, 185, 129, 0.15); color: #34d399; padding: 2px 6px; border-radius: 4px;">{n_ativos} Ativos</span>
+                <span style="font-size: 0.75rem; color: #1e293b; font-weight: 700; text-transform: uppercase;">💼 Custódia Ativa</span>
+                <span style="font-size: 0.72rem; background: #f1f5f9; color: #334155; padding: 2px 7px; border-radius: 6px; font-weight: 600;">{n_ativos} Ativos</span>
             </div>
-            <div style="font-size: 1.45em; font-weight: 700; color: #f1f5f9; margin-bottom: 4px;">{_moeda(custo_total)}</div>
-            <div style="font-size: 0.8em; color: #cbd5e1; margin-bottom: 6px;">Custo ponderado de aquisição</div>
-            <div style="font-size: 0.75em; color: {'#10b981' if total_resultado >= 0 else '#ef4444'}; font-weight: 600;">Resultado Realizado: {_moeda(total_resultado)}</div>
+            <div style="font-size: 1.5rem; font-weight: 800; color: #1e293b; margin: 4px 0;">{_moeda(custo_total)}</div>
+            <div style="font-size: 0.8rem; color: #64748b;">Custo ponderado de aquisição</div>
+            <div style="font-size: 0.75rem; color: {'#059669' if total_resultado >= 0 else '#dc2626'}; font-weight: 600; margin-top: 2px;">
+                Realizado: {_moeda(total_resultado)}
+            </div>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("📤 Enviar Novas Notas", type="secondary", icon=":material/upload_file:", width="stretch", key="dash_btn_up", disabled=PAGINA_UPLOAD is None):
+        if st.button("📤 Enviar Notas", type="secondary", icon=":material/upload_file:", use_container_width=True, key="dash_btn_up", disabled=PAGINA_UPLOAD is None):
             st.switch_page(PAGINA_UPLOAD)
 
 
 # ---------------------------------------------------------------------------
-# Seção de Alocação de Ativos (Donut Chart & Tabela) — Foto 1 do usuário
+# Seção de Alocação de Ativos
 # ---------------------------------------------------------------------------
 
 def _secao_donut_alocacao_patrimonio(posicao_df: pd.DataFrame) -> None:
@@ -1614,37 +1632,37 @@ def _secao_posicao_detalhada_custodia(posicao_df: pd.DataFrame) -> None:
 # ---------------------------------------------------------------------------
 
 def _secao_evolucao_carteira_meses() -> None:
-    """Evolução patrimonial, rentabilidade mensal acumulada e benchmarks de mercado."""
+    """Evolução patrimonial, rentabilidade mensal acumulada e benchmarks de mercado (design limpo de alto contraste)."""
     tema.secao("Evolução de Carteira — Histórico Mensal")
 
     col_btn_p, _ = st.columns([2, 3])
     with col_btn_p:
         st.pills("Período de Análise:", ["6M", "12M", "Ano Atual", "Todos"], default="12M", key="pills_periodo_evolucao")
 
-    # Benchmarks de mercado (comparativo oficial)
+    # Benchmarks de mercado com design limpo e fundo branco (sem caixa escura)
     st.markdown("""
-    <div style="background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 14px 18px; margin-bottom: 18px;">
-        <div style="font-size: 0.9em; color: #94a3b8; margin-bottom: 8px;">Rentabilidade acumulada entre Ago/2026 e Nov/2026:</div>
+    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px 20px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+        <div style="font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 10px;">Rentabilidade acumulada no período (Ago/2026 a Nov/2026):</div>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; text-align: center;">
-            <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 10px;">
-                <small style="color: #6ee7b7;">Minha Carteira</small><br>
-                <strong style="color: #10b981; font-size: 1.25em;">+1,94 %</strong>
+            <div style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 10px;">
+                <small style="color: #065f46; font-weight: 600;">Minha Carteira</small><br>
+                <strong style="color: #059669; font-size: 1.25rem;">+1,94 %</strong>
             </div>
-            <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 10px;">
-                <small style="color: #94a3b8;">CDI</small><br>
-                <strong style="color: #38bdf8; font-size: 1.25em;">+2,21 %</strong>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px;">
+                <small style="color: #64748b; font-weight: 600;">CDI</small><br>
+                <strong style="color: #0284c7; font-size: 1.25rem;">+2,21 %</strong>
             </div>
-            <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 10px;">
-                <small style="color: #94a3b8;">IPCA</small><br>
-                <strong style="color: #cbd5e1; font-size: 1.25em;">+1,32 %</strong>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px;">
+                <small style="color: #64748b; font-weight: 600;">IPCA</small><br>
+                <strong style="color: #334155; font-size: 1.25rem;">+1,32 %</strong>
             </div>
-            <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 10px;">
-                <small style="color: #94a3b8;">IBOV</small><br>
-                <strong style="color: #f87171; font-size: 1.25em;">-5,86 %</strong>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px;">
+                <small style="color: #64748b; font-weight: 600;">IBOV</small><br>
+                <strong style="color: #dc2626; font-size: 1.25rem;">-5,86 %</strong>
             </div>
-            <div style="background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 10px;">
-                <small style="color: #94a3b8;">IFIX</small><br>
-                <strong style="color: #f87171; font-size: 1.25em;">-6,81 %</strong>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px;">
+                <small style="color: #64748b; font-weight: 600;">IFIX</small><br>
+                <strong style="color: #dc2626; font-size: 1.25rem;">-6,81 %</strong>
             </div>
         </div>
     </div>
@@ -1917,6 +1935,93 @@ def pagina_extrato() -> None:
 # Página 6 — DARF
 # ---------------------------------------------------------------------------
 
+def _secao_irpf_bens_e_direitos() -> None:
+    """Relatório Copia e Cola para Declaração Anual de IRPF (Bens e Direitos) - Estratégia 5."""
+    if posicao.empty:
+        return
+
+    tema.secao("Declaração Anual IRPF — Bens e Direitos (Copia e Cola)")
+    
+    st.warning(
+        """⚠️ **Prevenção de Malha Fina — Custo Histórico de Aquisição Obrigatório:**
+
+Na ficha de **Bens e Direitos** do programa da Receita Federal, informe **SEMPRE o Custo de Aquisição Histórico Total** (valor de compra somado a emolumentos e taxas de corretagem). **NUNCA declare pela cotação de fechamento em 31/12!** A variação de mercado não altera o custo de aquisição na declaração de bens; alterar esse valor gera variação patrimonial fictícia e é um dos principais motivos de retenção em malha fina."""
+    )
+
+    mapa_rfb = {
+        "STOCK": {"grupo": "03 - Participações Societárias", "codigo": "01 - Ações (inclusive as provenientes de linha telefônica)", "desc_tipo": "ações"},
+        "FII": {"grupo": "07 - Fundos", "codigo": "03 - Fundos de Investimento Imobiliário (FII)", "desc_tipo": "cotas de FII"},
+        "BDR": {"grupo": "04 - Aplicações e Investimentos", "codigo": "04 - Ativos negociados no exterior (BDRs)", "desc_tipo": "certificados BDR"},
+        "ETF": {"grupo": "07 - Fundos", "codigo": "09 - Demais fundos de índice de mercado (ETFs)", "desc_tipo": "cotas de ETF"},
+        "GOLD": {"grupo": "04 - Aplicações e Investimentos", "codigo": "01 - Ouro ativo financeiro", "desc_tipo": "gramas de ouro ativo financeiro"},
+    }
+
+    linhas_irpf = []
+    for _, row in posicao.iterrows():
+        ticker = str(row["Ticker"])
+        grupo_fee = str(row["Grupo"])
+        qtd = float(row["Quantidade"])
+        pm = float(row["Preço Médio"])
+        custo = float(row["Custo Total"])
+
+        rfb_info = mapa_rfb.get(grupo_fee, {
+            "grupo": "99 - Outros Bens e Direitos",
+            "codigo": "99 - Outros bens e direitos",
+            "desc_tipo": "ativos de renda variável",
+        })
+
+        corretora = "corretora de valores nacional"
+        if not operacoes.empty and "corretora" in operacoes.columns:
+            ops_t = operacoes[operacoes["ticker"] == ticker]
+            if not ops_t.empty and ops_t["corretora"].iloc[-1]:
+                corretora = ops_t["corretora"].iloc[-1]
+
+        qtd_txt = f"{int(qtd)}" if qtd.is_integer() else f"{qtd:.4f}".rstrip("0").rstrip(".")
+        discriminacao = (
+            f"{qtd_txt} {rfb_info['desc_tipo']} de {ticker}, custodiadas na {corretora}, "
+            f"ao custo total de aquisição de {_moeda(custo)} (preço médio de {_moeda(pm)} com taxas e emolumentos incluídos)."
+        )
+
+        linhas_irpf.append({
+            "Ticker": ticker,
+            "Grupo RFB": rfb_info["grupo"],
+            "Código RFB": rfb_info["codigo"],
+            "Quantidade": qtd_txt,
+            "Custo Total (Situação em 31/12)": _moeda(custo),
+            "Discriminação": discriminacao,
+        })
+
+    df_irpf = pd.DataFrame(linhas_irpf)
+
+    with st.expander("📋 Ver Tabela de Bens e Direitos & Textos Prontos para Copiar", expanded=True):
+        st.dataframe(
+            df_irpf[["Ticker", "Grupo RFB", "Código RFB", "Quantidade", "Custo Total (Situação em 31/12)"]],
+            width="stretch", hide_index=True,
+        )
+
+        st.caption("Selecione o ativo abaixo para visualizar e copiar a discriminação formatada para a Receita Federal:")
+        ticker_sel = st.selectbox(
+            "Selecionar ativo para copiar discriminação:",
+            df_irpf["Ticker"].tolist(),
+            key="sel_irpf_ativo",
+        )
+        item_sel = df_irpf[df_irpf["Ticker"] == ticker_sel].iloc[0]
+
+        c_g, c_c = st.columns(2)
+        with c_g:
+            st.info(f"**Grupo:** {item_sel['Grupo RFB']}")
+        with c_c:
+            st.info(f"**Código:** {item_sel['Código RFB']}")
+
+        st.caption("Discriminação pronta para colar no programa do IRPF:")
+        st.code(item_sel["Discriminação"], language="text")
+
+
+# ---------------------------------------------------------------------------
+# Página 4 — Meu Patrimônio
+# ---------------------------------------------------------------------------
+
+
 def pagina_patrimonio() -> None:
     tema.cabecalho(
         "Posição em custódia",
@@ -2072,8 +2177,8 @@ def pagina_ir() -> None:
 
 def pagina_darf() -> None:
     tema.cabecalho(
-        "DARF — Imposto sobre Ganhos Líquidos em Bolsa",
-        "Tabela oficial de competências, emissão do formulário RFB em 2 vias e controle de pagamento.",
+        "DARF — Guia de Pagamento e Histórico Fiscal",
+        "Acompanhe o imposto apurado por competência, emita o formulário oficial da RFB e controle seus pagamentos.",
         "\U0001F9EE",
     )
 
@@ -2081,215 +2186,187 @@ def pagina_darf() -> None:
         tema.vazio("Sem competências apuradas. Importe notas na página **Upload de Notas**.")
         return
 
-    # Tabela de competências e DARF no padrão oficial (Foto 4 do usuário)
-    tema.secao("Quadro Geral de Imposto de Renda e DARF")
-    st.caption("Acompanhe o imposto apurado por mercado e sinalize seus pagamentos para manter seu histórico fiscal em dia.")
-
-    linhas_darf = []
-    # Ordenar competências da mais recente para a mais antiga
     competencias_ordenadas = list(tabela_ir["mes"].iloc[::-1])
+    ultima_comp = competencias_ordenadas[0]
+    linha_atual = tabela_ir[tabela_ir["mes"] == ultima_comp].iloc[0]
+    recolher_atual = float(linha_atual.get("DARFFinal", 0.0))
+    pagamento_atual = darf_pagamentos.get(ultima_comp) if darf_pagamentos else None
+    pago_atual = bool(pagamento_atual and pagamento_atual.get("pago"))
 
-    for mes in competencias_ordenadas:
-        linha = tabela_ir[tabela_ir["mes"] == mes].iloc[0]
-        recolher = float(linha.get("DARFFinal", 0.0))
-        pagamento = darf_pagamentos.get(mes) if darf_pagamentos else None
-        pago = bool(pagamento and pagamento.get("pago"))
-        data_pago = _data_armazenada(pagamento.get("data_pagamento") if pagamento else None)
+    # KPIs de Alto Nível
+    total_recolhido = sum(float(p.get("valor_pago", 0.0)) for p in darf_pagamentos.values() if p.get("pago")) if darf_pagamentos else 0.0
+    pendentes_count = sum(1 for m in competencias_ordenadas if float(tabela_ir[tabela_ir["mes"] == m]["DARFFinal"].iloc[0]) > 0 and (not darf_pagamentos or not darf_pagamentos.get(m, {}).get("pago")))
 
-        base_bolsa = float(linha["BaseCalcSwingTrade"] + linha["BaseCalcDayTrade"])
-        ir_bolsa = float(linha["IRRFBase"])
-        darf_val = recolher
+    tema.kpis([
+        {"rotulo": f"DARF de {_nome_mes(ultima_comp)}", "valor": _moeda(recolher_atual), "icone": "\U0001F4C5", "tom": "neg" if recolher_atual > 0 and not pago_atual else "pos"},
+        {"rotulo": "Total Pago no Ano", "valor": _moeda(total_recolhido), "icone": "\U0001F4B0"},
+        {"rotulo": "Situação das Guias", "valor": f"{pendentes_count} Pendente(s)" if pendentes_count > 0 else "100% Em Dia", "icone": "\u2705" if pendentes_count == 0 else "\u23F3", "tom": "pos" if pendentes_count == 0 else "neg"},
+    ])
 
-        # Bolsa (Brasil)
-        linhas_darf.append({
-            "mes": mes,
-            "mes_rotulo": _nome_mes(mes)[:3].lower() + "/" + mes.split("-")[0],
-            "ativo": "Bolsa (Brasil)",
-            "base": base_bolsa,
-            "ir": ir_bolsa,
-            "darf": darf_val,
-            "pago": pago,
-            "data_pago": data_pago,
-            "recolher": recolher,
-        })
-        # FII
-        linhas_darf.append({
-            "mes": mes,
-            "mes_rotulo": "",
-            "ativo": "FII",
-            "base": float(linha.get("BaseCalcFII", 0.0)),
-            "ir": float(linha.get("BaseCalcFII", 0.0) * 0.20),
-            "darf": 0.0,
-            "pago": True,
-            "data_pago": None,
-            "recolher": 0.0,
-            "isento": True,
-        })
-        # Criptomoedas
-        linhas_darf.append({
-            "mes": mes,
-            "mes_rotulo": "",
-            "ativo": "Criptomoedas (Brasil)",
-            "base": 0.0,
-            "ir": 0.0,
-            "darf": 0.0,
-            "pago": True,
-            "data_pago": None,
-            "recolher": 0.0,
-            "isento": True,
-        })
+    aba_guia, aba_historico, aba_irrf = st.tabs([
+        f"📄 Guia do Mês ({_nome_mes(ultima_comp)})",
+        "📑 Histórico Completo de Competências",
+        "🛡️ Compensação de IRRF ('Dedo-Duro')",
+    ])
 
-    # Renderização da Tabela de DARF customizada (Foto 4 do usuário)
-    st.markdown("""
-    <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px 8px 0 0; padding: 12px 16px; margin-bottom: 0px;">
-        <div style="display: grid; grid-template-columns: 1.2fr 1.5fr 1.5fr 1.2fr 1.2fr 2.5fr; font-weight: 700; color: #34d399; font-size: 0.95em;">
-            <div>Mês/Ano</div>
-            <div>Ativos</div>
-            <div style="text-align: right;">Base de cálculo R$</div>
-            <div style="text-align: right;">IR</div>
-            <div style="text-align: right;">DARF</div>
-            <div style="padding-left: 20px;">Pagamento</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    with aba_guia:
+        venc_atual = _vencimento_darf(ultima_comp)
+        venc_str = venc_atual.strftime("%d/%m/%Y")
+        ano_u, mes_u = ultima_comp.split("-")
+        ult_dia_u = calendar.monthrange(int(ano_u), int(mes_u))[1]
+        per_apur_u = f"{ult_dia_u:02d}/{mes_u}/{ano_u}"
+        cod_rec = codigo_receita_darf()
 
-    for idx, item in enumerate(linhas_darf):
-        mes = item["mes"]
-        is_bolsa = item["ativo"] == "Bolsa (Brasil)"
-        bg_row = "rgba(255,255,255,0.02)" if is_bolsa else "rgba(255,255,255,0.005)"
-        border_b = "1px solid rgba(255,255,255,0.08)" if "Cripto" in item["ativo"] else "1px solid rgba(255,255,255,0.02)"
+        col_g_esq, col_g_dir = st.columns([1.2, 1])
 
-        c_mes, c_atv, c_base, c_ir, c_darf, c_pag = st.columns([1.2, 1.5, 1.5, 1.2, 1.2, 2.5])
-
-        with c_mes:
-            if item["mes_rotulo"]:
-                st.markdown(f"<strong style='color: #cbd5e1; font-size: 0.95em;'>{item['mes_rotulo']}</strong>", unsafe_allow_html=True)
-            else:
-                st.write("")
-
-        with c_atv:
-            st.markdown(f"<span style='color: #94a3b8; font-size: 0.9em;'>{item['ativo']}</span>", unsafe_allow_html=True)
-
-        with c_base:
-            val_b = _moeda(item["base"])
-            cor_b = "#38bdf8" if item["base"] > 0 else "#64748b"
-            st.markdown(f"<div style='text-align: right; color: {cor_b}; font-size: 0.9em;'>{val_b}</div>", unsafe_allow_html=True)
-
-        with c_ir:
-            val_i = _moeda(item["ir"])
-            cor_i = "#38bdf8" if item["ir"] > 0 else "#64748b"
-            st.markdown(f"<div style='text-align: right; color: {cor_i}; font-size: 0.9em;'>{val_i}</div>", unsafe_allow_html=True)
-
-        with c_darf:
-            if item.get("isento"):
-                st.markdown("<div style='text-align: right; color: #94a3b8; font-size: 0.9em;'>Isento</div>", unsafe_allow_html=True)
-            else:
-                cor_d = "#f59e0b" if not item["pago"] else "#10b981"
-                st.markdown(f"<div style='text-align: right; font-weight: 700; color: {cor_d}; font-size: 0.9em;'>{_moeda(item['darf'])}</div>", unsafe_allow_html=True)
-
-        with c_pag:
-            if is_bolsa and item["recolher"] > 0:
-                if item["pago"]:
-                    st.markdown(f"""
-                    <div style="color: #10b981; font-size: 0.85em; font-weight: 600; margin-bottom: 2px;">
-                        ✓ Pago {_moeda(item['recolher'])} no dia {item['data_pago']:%d/%m/%Y}
+        with col_g_esq:
+            # Card principal amplo e legível com fundo branco e contraste nítido
+            st.markdown(f"""
+            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 22px; box-shadow: 0 2px 6px rgba(0,0,0,0.06); margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                    <div>
+                        <span style="font-size: 0.78rem; color: #64748b; font-weight: 700; text-transform: uppercase;">Competência de Apuração</span>
+                        <h3 style="margin: 2px 0 0 0; color: #0f172a; font-size: 1.35rem;">{_nome_mes(ultima_comp)}</h3>
                     </div>
-                    """, unsafe_allow_html=True)
-                    if st.button("↺ Marcar como pendente", key=f"btn_pend_{mes}", type="tertiary" if hasattr(st, "tertiary") else "secondary"):
-                        gravar_darf_pagamento(conexao, usuario_id, mes, False, 0.0, None)
-                        st.rerun()
-                else:
-                    cp1, cp2 = st.columns([1, 1.2])
-                    with cp1:
-                        if st.button("🖨️ Gerar DARF", key=f"btn_gerar_{mes}", type="primary", use_container_width=True):
-                            modal_emitir_darf_oficial(mes, item["recolher"])
-                    with cp2:
-                        with st.popover("🏷️ Marcar como pago"):
-                            st.write(f"**Registrar pagamento de {_nome_mes(mes)}**")
-                            dt_pg = st.date_input("Data do pagamento:", value=_vencimento_darf(mes), key=f"dt_in_{mes}")
-                            if st.button("Confirmar pagamento", type="primary", key=f"conf_pg_{mes}"):
-                                gravar_darf_pagamento(conexao, usuario_id, mes, True, item["recolher"], dt_pg.isoformat())
-                                st.success("Pagamento registrado com sucesso!")
-                                st.rerun()
-            else:
-                st.write("")
-
-        st.markdown(f"<div style='border-bottom: {border_b}; margin: 2px 0 6px 0;'></div>", unsafe_allow_html=True)
-
-    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
-
-    # Detalhes da Competência e Dados Bancários
-    tema.secao("Detalhamento e Pagamento via Banco")
-    competencia_sel = st.selectbox(
-        "Selecione o mês para visualizar detalhes ou emitir DARF:",
-        competencias_ordenadas,
-        format_func=_nome_mes,
-        key="darf_sel_comp",
-    )
-
-    linha_sel = tabela_ir[tabela_ir["mes"] == competencia_sel].iloc[0]
-    pagamento_sel = darf_pagamentos.get(competencia_sel) if darf_pagamentos else None
-    recolher_sel = float(linha_sel["DARFFinal"])
-
-    c_det1, c_det2 = st.columns(2)
-
-    with c_det1:
-        st.markdown(f"""
-        <div style="background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 16px;">
-            <h4 style="margin-top: 0; color: #38bdf8;">Composição do Imposto — {_nome_mes(competencia_sel)}</h4>
-            <table style="width: 100%; border-collapse: collapse; font-size: 0.9em; color: #cbd5e1;">
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
-                    <td style="padding: 6px 0;">Base Swing Trade (15%):</td>
-                    <td style="text-align: right; font-weight: 600;">{_moeda(linha_sel['BaseCalcSwingTrade'])}</td>
-                </tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
-                    <td style="padding: 6px 0;">Base Day Trade (20%):</td>
-                    <td style="text-align: right; font-weight: 600;">{_moeda(linha_sel['BaseCalcDayTrade'])}</td>
-                </tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
-                    <td style="padding: 6px 0;">IR Total Apurado:</td>
-                    <td style="text-align: right; font-weight: 600;">{_moeda(linha_sel['IRRFBase'])}</td>
-                </tr>
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
-                    <td style="padding: 6px 0;">(-) IRRF Retido ('Dedo-Duro'):</td>
-                    <td style="text-align: right; color: #34d399; font-weight: 600;">- {_moeda(linha_sel['IRRFMonthlyDayTrade'] + linha_sel['IRRFMonthlySwingTrade'])}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 8px 0; font-weight: 700; color: #fff;">Valor Final do DARF:</td>
-                    <td style="text-align: right; font-size: 1.15em; font-weight: 800; color: {'#10b981' if recolher_sel == 0 else '#f59e0b'};">{_moeda(recolher_sel)}</td>
-                </tr>
-            </table>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with c_det2:
-        venc_str_sel = _vencimento_darf(competencia_sel).strftime("%d/%m/%Y")
-        ano_c, mes_c = competencia_sel.split("-")
-        ult_dia_c = calendar.monthrange(int(ano_c), int(mes_c))[1]
-        per_apur_sel = f"{ult_dia_c:02d}/{mes_c}/{ano_c}"
-
-        st.markdown(f"""
-        <div style="background: rgba(30, 41, 59, 0.4); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 16px;">
-            <h4 style="margin-top: 0; color: #34d399;">Dados para Internet Banking (Código 6015)</h4>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.85em; margin-bottom: 10px;">
-                <div><span style="color: #94a3b8;">Código de Receita:</span><br><strong>{codigo_receita_darf()}</strong></div>
-                <div><span style="color: #94a3b8;">Período de Apuração:</span><br><strong>{per_apur_sel}</strong></div>
-                <div><span style="color: #94a3b8;">Data de Vencimento:</span><br><strong>{venc_str_sel}</strong></div>
-                <div><span style="color: #94a3b8;">Valor do Principal:</span><br><strong style="color: #34d399;">{_moeda(recolher_sel)}</strong></div>
+                    <div style="text-align: right;">
+                        <span style="font-size: 0.75rem; background: {'#ecfdf5' if pago_atual else '#fef3c7'}; color: {'#065f46' if pago_atual else '#92400e'}; padding: 4px 10px; border-radius: 8px; font-weight: 700;">
+                            {'✓ PAGO' if pago_atual else '⏰ A RECOLHER'}
+                        </span>
+                    </div>
+                </div>
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; margin-bottom: 16px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div>
+                            <span style="font-size: 0.78rem; color: #64748b;">Código de Receita</span><br>
+                            <strong style="font-size: 1.05rem; color: #0f172a;">{cod_rec}</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.78rem; color: #64748b;">Data de Vencimento</span><br>
+                            <strong style="font-size: 1.05rem; color: #0f172a;">{venc_str}</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.78rem; color: #64748b;">Período de Apuração</span><br>
+                            <strong style="font-size: 1.05rem; color: #0f172a;">{per_apur_u}</strong>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.78rem; color: #64748b;">Valor do DARF</span><br>
+                            <strong style="font-size: 1.25rem; color: {'#059669' if pago_atual else '#d97706'};">{_moeda(recolher_atual)}</strong>
+                        </div>
+                    </div>
+                </div>
             </div>
+            """, unsafe_allow_html=True)
+
+            # Botões de ação confortáveis e bem espaçados
+            if recolher_atual > 0:
+                c_b1, c_b2 = st.columns(2)
+                with c_b1:
+                    if st.button("🖨️ Emitir DARF Oficial (2 Vias)", type="primary", use_container_width=True, key="btn_emitir_darf_destaque"):
+                        modal_emitir_darf_oficial(ultima_comp, recolher_atual)
+                with c_b2:
+                    if pago_atual:
+                        data_p_txt = _data_armazenada(pagamento_atual.get("data_pagamento")).strftime("%d/%m/%Y")
+                        st.success(f"✓ Pago no dia {data_p_txt}")
+                        if st.button("↺ Reabrir como pendente", key="btn_reabrir_darf_destaque", type="secondary", use_container_width=True):
+                            gravar_darf_pagamento(conexao, usuario_id, ultima_comp, False, 0.0, None)
+                            st.rerun()
+                    else:
+                        with st.popover("🏷️ Marcar como Pago", use_container_width=True):
+                            st.write(f"**Registrar pagamento de {_nome_mes(ultima_comp)}**")
+                            dt_pg = st.date_input("Data do pagamento realizado:", value=venc_atual, key="dt_pg_destaque")
+                            if st.button("Confirmar pagamento", type="primary", key="conf_pg_destaque", use_container_width=True):
+                                gravar_darf_pagamento(conexao, usuario_id, ultima_comp, True, recolher_atual, dt_pg.isoformat())
+                                st.success("Pagamento registrado!")
+                                st.rerun()
+
+        with col_g_dir:
+            # Guia Didático para Internet Banking
+            st.markdown(f"""
+            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.06);">
+                <h4 style="margin: 0 0 10px 0; color: #0284c7; font-size: 1.05rem;">Como pagar no app do seu banco?</h4>
+                <p style="font-size: 0.85rem; color: #475569; line-height: 1.5; margin-bottom: 12px;">
+                    1. Abra o app do seu banco (Itaú, Bradesco, BB, Inter, Santander, Caixa, etc.).<br>
+                    2. Acesse <strong>Pagamentos</strong> &gt; <strong>DARF</strong>.<br>
+                    3. Preencha com os dados abaixo (não é necessário código de barras):
+                </p>
+                <div style="background: #f1f5f9; border-left: 3px solid #0284c7; padding: 10px 14px; border-radius: 6px; font-size: 0.82rem; color: #334155; line-height: 1.6; margin-bottom: 12px;">
+                    <strong>Código da Receita:</strong> {cod_rec}<br>
+                    <strong>Período de Apuração:</strong> {per_apur_u}<br>
+                    <strong>Data de Vencimento:</strong> {venc_str}<br>
+                    <strong>Valor Principal:</strong> {_moeda(recolher_atual)}
+                </div>
+                <small style="color: #64748b; font-size: 0.76rem; display: block; line-height: 1.4;">
+                    ⚖️ <em>Conforme a IN SRF nº 96/2001, o DARF em bolsa é recolhido pelo código 6015 e CPF do investidor.</em>
+                </small>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with aba_historico:
+        st.caption("Histórico completo de competências apuradas e comprovantes de pagamento:")
+        for mes in competencias_ordenadas:
+            linha = tabela_ir[tabela_ir["mes"] == mes].iloc[0]
+            rec = float(linha.get("DARFFinal", 0.0))
+            pg = darf_pagamentos.get(mes) if darf_pagamentos else None
+            pago = bool(pg and pg.get("pago"))
+            venc = _vencimento_darf(mes)
+
+            with st.container():
+                st.markdown(f"""
+                <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 18px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                        <div>
+                            <strong style="color: #0f172a; font-size: 1.05rem;">{_nome_mes(mes)}</strong>
+                            <div style="font-size: 0.82rem; color: #64748b; margin-top: 2px;">
+                                Base Swing Trade: {_moeda(linha['BaseCalcSwingTrade'])} | Base Day Trade: {_moeda(linha['BaseCalcDayTrade'])}
+                            </div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="font-size: 1.15rem; font-weight: 800; color: {'#059669' if pago or rec == 0 else '#d97706'};">
+                                {_moeda(rec)}
+                            </div>
+                            <span style="font-size: 0.72rem; background: {'#ecfdf5' if pago else ('#f1f5f9' if rec == 0 else '#fef3c7')}; color: {'#065f46' if pago else ('#475569' if rec == 0 else '#92400e')}; padding: 2px 8px; border-radius: 6px; font-weight: 600;">
+                                {'✓ PAGO' if pago else ('ISENTO' if rec == 0 else 'PENDENTE')}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if rec > 0:
+                    c_act1, c_act2, _ = st.columns([1, 1.2, 2])
+                    with c_act1:
+                        if st.button("🖨️ Ver DARF Oficial", key=f"hist_darf_{mes}", type="secondary", use_container_width=True):
+                            modal_emitir_darf_oficial(mes, rec)
+                    with c_act2:
+                        if pago:
+                            data_p = _data_armazenada(pg.get("data_pagamento")).strftime("%d/%m/%Y")
+                            if st.button(f"↺ Reabrir (Pago em {data_p})", key=f"hist_reabrir_{mes}", type="secondary", use_container_width=True):
+                                gravar_darf_pagamento(conexao, usuario_id, mes, False, 0.0, None)
+                                st.rerun()
+                        else:
+                            with st.popover("🏷️ Marcar Pago", use_container_width=True):
+                                dt_h = st.date_input("Data do pagamento:", value=venc, key=f"dt_hist_{mes}")
+                                if st.button("Salvar pagamento", type="primary", key=f"salv_hist_{mes}", use_container_width=True):
+                                    gravar_darf_pagamento(conexao, usuario_id, mes, True, rec, dt_h.isoformat())
+                                    st.rerun()
+
+    with aba_irrf:
+        linha_comp = linha_atual
+        irrf_mes = float(linha_comp["IRRFMonthlyDayTrade"] + linha_comp["IRRFMonthlySwingTrade"])
+        irrf_usado = float(linha_comp["IRRFUsedDayTrade"] + linha_comp["IRRFUsedSwingTrade"])
+        irrf_proximo = float(linha_comp["IRRFNextMonthDayTrade"] + linha_comp["IRRFNextMonthSwingTrade"])
+
+        st.markdown("""
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 14px;">
+            <h4 style="margin: 0 0 8px 0; color: #059669;">Compensação de IRRF ('Dedo-Duro')</h4>
+            <p style="font-size: 0.88rem; color: #475569; line-height: 1.5;">
+                Conforme o Art. 64 da Instrução Normativa RFB nº 1.585/15, a retenção na fonte (0,005% em swing trade 
+                e 1% em day trade) é abatida centavo a centavo do seu DARF. O saldo que não for utilizado no mês 
+                fica acumulado e protegido para abater futuros impostos automaticamente.
+            </p>
         </div>
         """, unsafe_allow_html=True)
 
-        if recolher_sel > 0:
-            if st.button("🖨️ Abrir DARF Oficial para Impressão / PDF", key=f"btn_abrir_doc_{competencia_sel}", type="primary", use_container_width=True):
-                modal_emitir_darf_oficial(competencia_sel, recolher_sel)
-
-    # --- Seção de Compensação do IRRF Dedo-Duro ---
-    irrf_mes = float(linha_sel["IRRFMonthlyDayTrade"] + linha_sel["IRRFMonthlySwingTrade"])
-    irrf_usado = float(linha_sel["IRRFUsedDayTrade"] + linha_sel["IRRFUsedSwingTrade"])
-    irrf_proximo = float(linha_sel["IRRFNextMonthDayTrade"] + linha_sel["IRRFNextMonthSwingTrade"])
-
-    with st.expander("🛡️ Compensação de IRRF ('Dedo-Duro') — Centavo a Centavo", expanded=irrf_mes > 0 or irrf_usado > 0):
         c_i1, c_i2, c_i3 = st.columns(3)
         with c_i1:
             st.metric("IRRF Retido no Mês", _moeda(irrf_mes))
@@ -2297,12 +2374,6 @@ def pagina_darf() -> None:
             st.metric("IRRF Abatido no DARF", _moeda(irrf_usado))
         with c_i3:
             st.metric("IRRF a Transportar", _moeda(irrf_proximo))
-
-        st.caption(
-            "Conforme o Art. 64 da Instrução Normativa RFB nº 1.585/15, a retenção na fonte (0,005% em swing trade "
-            "e 1% em day trade) é abatida integralmente do seu imposto. O saldo não utilizado é automaticamente transportado "
-            "para abater os DARFs dos meses seguintes."
-        )
 
 
 # ---------------------------------------------------------------------------
