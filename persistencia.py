@@ -1059,6 +1059,11 @@ def salvar_notas(conexao: sqlite3.Connection, notas: list[Nota],
             ops_novas += cur.rowcount
 
     conexao.commit()
+    # Deduplicação e normalização de corretoras 100% automática
+    try:
+        sanitizar_duplicatas(conexao, usuario_id)
+    except Exception:
+        pass
     return notas_novas, ops_novas
 
 

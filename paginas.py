@@ -428,44 +428,7 @@ def modal_emitir_darf_oficial(competencia: str, recolher: float) -> None:
         except Exception:
             pass
 
-    st.markdown("""
-    <style>
-    @media print {
-        body * { visibility: hidden; }
-        .darf-print-container, .darf-print-container * { visibility: visible; }
-        .darf-print-container { position: absolute; left: 0; top: 0; width: 100%; }
-        .no-print { display: none !important; }
-    }
-    .darf-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-family: Arial, sans-serif;
-        font-size: 11px;
-        color: #000;
-        background: #fff;
-        margin-bottom: 16px;
-    }
-    .darf-table td, .darf-table th {
-        border: 1px solid #000;
-        padding: 4px 6px;
-        vertical-align: top;
-    }
-    .darf-label {
-        font-size: 9px;
-        font-weight: bold;
-        color: #333;
-        text-transform: uppercase;
-    }
-    .darf-value {
-        font-size: 12px;
-        font-weight: bold;
-        color: #000;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # Barra superior de atalhos oficiais
-    col_nav1, col_nav2, col_nav3 = st.columns([1, 1.2, 1.3])
+    col_nav1, col_nav2 = st.columns([1, 1.2])
     with col_nav1:
         st.link_button(
             "🏛️ Bancos conveniados",
@@ -482,117 +445,170 @@ def modal_emitir_darf_oficial(competencia: str, recolher: float) -> None:
                 "procure uma agência bancária de um banco credenciado.\n\n"
                 "De acordo com a **IN SRF 96/2001 da Receita Federal**, aplicativos de terceiros não podem emitir DARF com códigos de barras."
             )
-    with col_nav3:
-        st.button(
-            "🖨️ Imprimir / Salvar em PDF (Ctrl+P)",
-            type="primary",
-            icon=":material/print:",
-            help="Abre o assistente de impressão do seu navegador.",
-            key=f"btn_print_{competencia}",
-        )
 
     def _via_html(numero_via: str) -> str:
-        return f"""
-        <div style="background: #ffffff; color: #000000; padding: 14px; border-radius: 4px; margin-bottom: 12px; border: 1px solid #000000;">
-            <div style="display: flex; justify-content: space-between; font-size: 9px; color: #333; margin-bottom: 4px;">
-                <span>Aprovado pela IN/RFB nº 736/2007</span>
-                <span><strong>{numero_via} Via</strong></span>
-            </div>
-            <table class="darf-table">
-                <tr>
-                    <td rowspan="3" style="width: 55%; text-align: center; vertical-align: middle; padding: 8px;">
-                        <div style="font-weight: 800; font-size: 13px;">MINISTÉRIO DA FAZENDA</div>
-                        <div style="font-size: 10px; font-weight: bold;">SECRETARIA DA RECEITA FEDERAL DO BRASIL</div>
-                        <div style="font-size: 9px; margin-top: 4px;">Documento de Arrecadação de Receitas Federais</div>
-                        <div style="font-size: 20px; font-weight: 900; margin-top: 4px; letter-spacing: 2px;">DARF</div>
-                    </td>
-                    <td style="width: 45%;">
-                        <div class="darf-label">02 PERÍODO DE APURAÇÃO</div>
-                        <div class="darf-value" style="text-align: right;">{periodo_apuracao}</div>
-                    </td>
-                </tr>
-                <tr>
-                    <td>
-                        <div class="darf-label">03 NÚMERO DO CPF OU CNPJ</div>
-                        <div class="darf-value" style="text-align: right;">{usuario_cpf}</div>
-                    </td>
-                </tr>
-                <tr>
-                    <td>
-                        <div class="darf-label">04 CÓDIGO DA RECEITA</div>
-                        <div class="darf-value" style="text-align: right;">{cod_rec}</div>
-                    </td>
-                </tr>
-                <tr>
-                    <td rowspan="3">
-                        <div class="darf-label">01 NOME / TELEFONE</div>
-                        <div class="darf-value" style="margin-top: 4px;">{usuario_nome} / {usuario_telefone}</div>
-                        <div style="margin-top: 8px; font-size: 9px; color: #000;">
-                            REF. OPERAÇÕES EM BOLSA DE VALORES<br>
-                            {_nome_mes(competencia)}<br><br>
-                            <strong>DARF válido para pagamento até {venc_str}</strong><br>
-                            Domicílio tributário do contribuinte:<br>
-                            <strong>{domicilio_tributario}</strong><br><br>
-                            <strong>NÃO RECEBER COM RASURAS</strong>
-                        </div>
-                    </td>
-                    <td>
-                        <div class="darf-label">05 NÚMERO DE REFERÊNCIA</div>
-                        <div class="darf-value" style="text-align: right;">—</div>
-                    </td>
-                </tr>
-                <tr>
-                    <td>
-                        <div class="darf-label">06 DATA DE VENCIMENTO</div>
-                        <div class="darf-value" style="text-align: right;">{venc_str}</div>
-                    </td>
-                </tr>
-                <tr>
-                    <td>
-                        <div class="darf-label">07 VALOR DO PRINCIPAL</div>
-                        <div class="darf-value" style="text-align: right;">{val_str}</div>
-                    </td>
-                </tr>
-                <tr>
-                    <td rowspan="2" style="font-size: 9px; color: #333; vertical-align: middle;">
-                        11 AUTENTICAÇÃO BANCÁRIA (Somente nas 1ª e 2ª vias)
-                    </td>
-                    <td>
-                        <div class="darf-label">08 VALOR DA MULTA</div>
-                        <div class="darf-value" style="text-align: right;">R$ 0,00</div>
-                    </td>
-                </tr>
-                <tr>
-                    <td>
-                        <div class="darf-label">09 VALOR DOS JUROS E / OU ENCARGOS DL - 1.025/69</div>
-                        <div class="darf-value" style="text-align: right;">R$ 0,00</div>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="font-size: 9px; font-weight: bold; text-align: center; vertical-align: middle;">
-                        DARF emitido em duas vias. Recorte nas linhas pontilhadas e efetue o pagamento na rede bancária autorizada.
-                    </td>
-                    <td style="background: #ffffff;">
-                        <div class="darf-label">10 VALOR TOTAL</div>
-                        <div class="darf-value" style="text-align: right; font-size: 14px; color: #000000;">{val_str}</div>
-                    </td>
-                </tr>
-            </table>
-        </div>
-        """
+        return f"""<div style="background: #ffffff; color: #000000; padding: 10px; border-radius: 2px; margin-bottom: 8px;">
+<div style="display: flex; justify-content: space-between; font-size: 9px; color: #333333; margin-bottom: 3px; font-family: Arial, sans-serif;">
+<span>Aprovado pela IN/RFB nº 736/2007</span>
+<span><strong>{numero_via} Via</strong></span>
+</div>
+<table class="darf-table">
+<tr>
+<td rowspan="3" style="width: 55%; text-align: center; vertical-align: middle; padding: 8px;">
+<div style="font-weight: 800; font-size: 13px; letter-spacing: 0.5px;">MINISTÉRIO DA FAZENDA</div>
+<div style="font-size: 10px; font-weight: bold; margin-top: 2px;">SECRETARIA DA RECEITA FEDERAL DO BRASIL</div>
+<div style="font-size: 9px; margin-top: 4px;">Documento de Arrecadação de Receitas Federais</div>
+<div style="font-size: 22px; font-weight: 900; margin-top: 4px; letter-spacing: 2px;">DARF</div>
+</td>
+<td style="width: 45%;">
+<div class="darf-label">02 PERÍODO DE APURAÇÃO</div>
+<div class="darf-value">{periodo_apuracao}</div>
+</td>
+</tr>
+<tr>
+<td>
+<div class="darf-label">03 NÚMERO DO CPF OU CNPJ</div>
+<div class="darf-value">{usuario_cpf}</div>
+</td>
+</tr>
+<tr>
+<td>
+<div class="darf-label">04 CÓDIGO DA RECEITA</div>
+<div class="darf-value">{cod_rec}</div>
+</td>
+</tr>
+<tr>
+<td rowspan="3">
+<div class="darf-label">01 NOME / TELEFONE</div>
+<div class="darf-value" style="margin-top: 2px; text-align: left; font-size: 11px;">{usuario_nome} / {usuario_telefone}</div>
+<div style="margin-top: 8px; font-size: 9px; color: #000000; line-height: 1.3;">
+<strong>REF. OPERAÇÕES EM BOLSA DE VALORES</strong><br>
+{_nome_mes(competencia)}<br><br>
+<strong>DARF válido para pagamento até {venc_str}</strong><br>
+Domicílio tributário do contribuinte:<br>
+<strong>{domicilio_tributario}</strong><br><br>
+<strong>NÃO RECEBER COM RASURAS</strong>
+</div>
+</td>
+<td>
+<div class="darf-label">05 NÚMERO DE REFERÊNCIA</div>
+<div class="darf-value">—</div>
+</td>
+</tr>
+<tr>
+<td>
+<div class="darf-label">06 DATA DE VENCIMENTO</div>
+<div class="darf-value">{venc_str}</div>
+</td>
+</tr>
+<tr>
+<td>
+<div class="darf-label">07 VALOR DO PRINCIPAL</div>
+<div class="darf-value">{val_str}</div>
+</td>
+</tr>
+<tr>
+<td rowspan="2" style="font-size: 9px; color: #333333; vertical-align: middle;">
+11 AUTENTICAÇÃO BANCÁRIA (Somente nas 1ª e 2ª vias)
+</td>
+<td>
+<div class="darf-label">08 VALOR DA MULTA</div>
+<div class="darf-value">R$ 0,00</div>
+</td>
+</tr>
+<tr>
+<td>
+<div class="darf-label">09 VALOR DOS JUROS E / OU ENCARGOS DL - 1.025/69</div>
+<div class="darf-value">R$ 0,00</div>
+</td>
+</tr>
+<tr>
+<td style="font-size: 9px; font-weight: bold; text-align: center; vertical-align: middle; padding: 6px;">
+DARF emitido em duas vias. Recorte nas linhas pontilhadas e efetue o pagamento na rede bancária autorizada.
+</td>
+<td>
+<div class="darf-label">10 VALOR TOTAL</div>
+<div class="darf-value" style="font-size: 13px; color: #000000;">{val_str}</div>
+</td>
+</tr>
+</table>
+</div>"""
 
-    st.markdown(f"""
-    <div class="darf-print-container">
-        {_via_html("1ª")}
-        <div style="text-align: center; border-bottom: 2px dashed #000000; margin: 18px 0; color: #333333; font-size: 10px; font-family: monospace;">
-            ✂️ cortar nesta linha
-        </div>
-        {_via_html("2ª")}
-        <div style="font-size: 9px; color: #475569; text-align: center; margin-top: 8px;">
-            DARF impresso sem código de barras por conter número de referência ou acréscimo de multa e/ou juros ou ano do período de apuração e/ou do vencimento anterior a 2007 ou posterior a 2016.
-        </div>
+    conteudo_html = f"""
+<style>
+@media print {{
+    body * {{ visibility: hidden !important; }}
+    .darf-print-modal, .darf-print-modal * {{ visibility: visible !important; }}
+    .darf-print-modal {{ position: fixed; left: 0; top: 0; width: 100%; margin: 0; padding: 10mm; background: #fff !important; }}
+    .no-print {{ display: none !important; }}
+}}
+.darf-print-modal {{
+    background: #ffffff;
+    color: #000000;
+    font-family: Arial, sans-serif;
+    padding: 4px;
+}}
+.darf-table {{
+    width: 100%;
+    border-collapse: collapse;
+    font-family: Arial, sans-serif;
+    color: #000000;
+    background: #ffffff;
+    border: 1.5px solid #000000;
+}}
+.darf-table td {{
+    border: 1px solid #000000;
+    padding: 3px 6px;
+    vertical-align: top;
+}}
+.darf-label {{
+    font-size: 8.5px;
+    font-weight: bold;
+    color: #222222;
+    text-transform: uppercase;
+}}
+.darf-value {{
+    font-size: 11.5px;
+    font-weight: bold;
+    color: #000000;
+    text-align: right;
+}}
+.darf-btn-print {{
+    background-color: #10b981;
+    color: #ffffff;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 16px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-decoration: none;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}}
+.darf-btn-print:hover {{
+    background-color: #059669;
+}}
+</style>
+<div class="no-print" style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
+    <button onclick="window.print()" class="darf-btn-print">
+        🖨️ Imprimir / Salvar em PDF (Ctrl+P)
+    </button>
+</div>
+<div class="darf-print-modal">
+    {_via_html("1ª")}
+    <div style="text-align: center; border-bottom: 2px dashed #000000; margin: 14px 0 10px 0; color: #444444; font-size: 10px; font-family: monospace;">
+        ✂️ cortar nesta linha
     </div>
-    """, unsafe_allow_html=True)
+    {_via_html("2ª")}
+    <div style="font-size: 8.5px; color: #475569; text-align: center; margin-top: 8px; font-family: Arial, sans-serif;">
+        DARF impresso sem código de barras por conter número de referência ou acréscimo de multa e/ou juros ou ano do período de apuração e/ou do vencimento anterior a 2007 ou posterior a 2016.
+    </div>
+</div>
+"""
+    st.html(conteudo_html)
 
     with st.expander("📋 Dados para preenchimento rápido via Internet Banking"):
         texto_ib = "\n".join([
@@ -888,40 +904,14 @@ def pagina_upload() -> None:
 
     _secao_darf()
 
-    col_limp1, col_limp2 = st.columns(2)
-    with col_limp1:
-        with st.expander(":material/auto_fix_high: Corrigir / Deduplicar Notas"):
-            st.caption(
-                "Detecta automaticamente corretoras verdadeiras (ex: unificar notas da Genial "
-                "que foram salvas como XP por engano) e remove operações duplicadas."
-            )
-            if st.button("Unificar duplicatas e corrigir corretoras", type="secondary", icon=":material/auto_fix_high:"):
-                res_clean = sanitizar_duplicatas(conexao, usuario_id)
-                st.session_state["aviso_notas"] = (
-                    f"Limpeza concluída: {res_clean['notas_removidas']} nota(s) duplicada(s) e "
-                    f"{res_clean['operacoes_removidas']} operação(ões) duplicadas removidas; "
-                    f"{res_clean['corretoras_corrigidas']} corretora(s) corrigida(s)."
-                )
-                st.rerun()
-    with col_limp2:
-        with st.expander(":material/delete: Limpar dados importados"):
-            st.caption(
-                "Remove as notas, operações e proventos deste usuário. Os saldos de "
-                "prejuízo a compensar informados na apuração são mantidos."
-            )
-            if st.button("Limpar operações importadas", type="secondary", icon=":material/delete:"):
-                limpar_dados(conexao, usuario_id)
-                st.rerun()
-
-    # Alerta se houver notas XP e Genial simultaneamente
-    if not notas.empty:
-        has_xp = (notas["corretora"] == "XP Investimentos").any()
-        has_genial = (notas["corretora"] == "Genial").any()
-        if has_xp and has_genial:
-            st.warning(
-                "⚠️ **Atenção:** Foram encontradas notas registradas como **XP Investimentos** e outras como **Genial**. "
-                "Se você só utiliza a Genial, clique em **Corrigir / Deduplicar Notas** acima para consolidar os cálculos e remover duplicidades."
-            )
+    with st.expander(":material/delete: Limpar dados importados"):
+        st.caption(
+            "Remove as notas, operações e proventos deste usuário. Os saldos de "
+            "prejuízo a compensar informados na apuração são mantidos."
+        )
+        if st.button("Limpar operações importadas", type="secondary", icon=":material/delete:"):
+            limpar_dados(conexao, usuario_id)
+            st.rerun()
 
     if notas.empty:
         tema.vazio("Nenhuma nota importada ainda. Envie um PDF para começar.")
@@ -1730,27 +1720,26 @@ def pagina_visao() -> None:
 
     if not tem_dados:
         st.markdown("""
-        <div style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(30, 41, 59, 0.4) 100%); 
-                    border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 12px; padding: 26px; margin-bottom: 24px;">
-            <h3 style="margin-top: 0; color: #10b981; display: flex; align-items: center; gap: 10px;">
+        <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 26px; margin-bottom: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+            <h3 style="margin-top: 0; color: #065f46; display: flex; align-items: center; gap: 10px; font-weight: 700;">
                 <span>👋</span> Boas-vindas ao FiscoTrade!
             </h3>
-            <p style="font-size: 1.05em; color: #d1d5db; line-height: 1.6;">
+            <p style="font-size: 1.05rem; color: #1e293b; line-height: 1.6; margin-bottom: 20px;">
                 O FiscoTrade calcula automaticamente o seu <strong>Imposto de Renda em Renda Variável</strong>, 
                 controla o <strong>DARF mensal</strong>, compensa prejuízos acumulados e monitora a <strong>isenção dos R$ 20.000</strong>.
             </p>
             <div style="margin: 20px 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;">
-                <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; padding: 16px;">
-                    <strong style="color: #10b981;">1. Baixe suas notas</strong><br>
-                    <small style="color: #9ca3af;">Acesse a sua corretora (Genial, XP, Clear, Rico, BTG, etc.) e baixe os PDFs das notas de corretagem (padrão SINACOR).</small>
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+                    <strong style="color: #059669; font-size: 0.95rem;">1. Baixe suas notas</strong><br>
+                    <p style="color: #334155; font-size: 0.85rem; margin-top: 6px; margin-bottom: 0; line-height: 1.5;">Acesse a sua corretora (Genial, XP, Clear, Rico, BTG, etc.) e baixe os PDFs das notas de corretagem (padrão SINACOR).</p>
                 </div>
-                <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; padding: 16px;">
-                    <strong style="color: #10b981;">2. Envie os arquivos</strong><br>
-                    <small style="color: #9ca3af;">Faça o upload das notas. O leitor extrai todas as operações, taxas e corretoras com deduplicação 100% automática.</small>
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+                    <strong style="color: #059669; font-size: 0.95rem;">2. Envie os arquivos</strong><br>
+                    <p style="color: #334155; font-size: 0.85rem; margin-top: 6px; margin-bottom: 0; line-height: 1.5;">Faça o upload das notas. O leitor extrai todas as operações, taxas e corretoras com deduplicação 100% automática.</p>
                 </div>
-                <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; padding: 16px;">
-                    <strong style="color: #10b981;">3. Veja seus resultados</strong><br>
-                    <small style="color: #9ca3af;">Seu patrimônio, preço médio ponderado, evolução mensal e o DARF pronto para pagamento aparecem instantaneamente.</small>
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+                    <strong style="color: #059669; font-size: 0.95rem;">3. Veja seus resultados</strong><br>
+                    <p style="color: #334155; font-size: 0.85rem; margin-top: 6px; margin-bottom: 0; line-height: 1.5;">Seu patrimônio, preço médio ponderado, evolução mensal e o DARF pronto para pagamento aparecem instantaneamente.</p>
                 </div>
             </div>
         </div>
@@ -2312,8 +2301,10 @@ def pagina_darf() -> None:
     for i, mes in enumerate(competencias_ordenadas):
         linha = tabela_ir[tabela_ir["mes"] == mes].iloc[0]
         rec = float(linha.get("DARFFinal", 0.0))
-        base_bolsa = float(linha.get("BaseCalcSwingTrade", 0.0) + linha.get("BaseCalcDayTrade", 0.0))
-        ir_bolsa = float(linha.get("IRRFBase", 0.0)) if rec > 0 else rec
+        base_swing = max(0.0, float(linha.get("BaseCalcSwingTrade", 0.0)))
+        base_day = max(0.0, float(linha.get("BaseCalcDayTrade", 0.0)))
+        base_bolsa = base_swing + base_day
+        ir_bolsa = rec if rec > 0 else 0.0
         pg = darf_pagamentos.get(mes) if darf_pagamentos else None
         pago = bool(pg and pg.get("pago"))
         venc = _vencimento_darf(mes)
