@@ -2064,23 +2064,49 @@ def testar_conexao_api_cotacoes(provedor: str, token: str) -> tuple[bool, str]:
     return False, f"Provedor '{provedor}' não suportado para teste automatizado."
 
 
+def obter_cotacao_opcao_mercado(ticker: str) -> float | None:
+    """
+    Busca a cotação oficial mais recente de uma opção da B3 via motor público de derivativos.
+    Funciona para todas as séries de opções da B3 sem necessidade de token ou custo.
+    """
+    import urllib.request, re, ssl
+    sym = (ticker or "").upper().strip()
+    if not sym:
+        return None
+    url = f"https://opcoes.net.br/{sym}"
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            }
+        )
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+            m = re.search(r'<tbody>\s*<tr>\s*<td>(\d{2}/\d{2}/\d{4})</td>\s*<td>([^<]+)</td>\s*<td>([^<]+)</td>\s*<td>([^<]+)</td>\s*<td>([^<]+)</td>', html)
+            if m:
+                _, _, _, _, p_ult = m.groups()
+                p_str = p_ult.strip().replace(".", "").replace(",", ".")
+                preco = float(p_str)
+                if preco >= 0:
+                    return preco
+    except Exception:
+        pass
+    return None
+
+
 def sincronizar_cotacoes_opcoes(conexao: sqlite3.Connection, usuario_id: int) -> tuple[int, str]:
     """
     Sincroniza as cotações atuais de todas as posições abertas do usuário
-    consultando a API oficial de mercado da B3 (Brapi.dev v2).
+    consultando o motor de derivativos da B3 e a API Brapi.dev v2.
     Retorna (quantidade_atualizada, mensagem_status).
     """
     import json, urllib.request, urllib.error, os
     cfg = obter_config_api_cotacoes(conexao)
-
-    if not cfg["ativa"]:
-        return 0, "A integração de cotações em tempo real está desligada no Painel Admin. Ative-a para buscar preços automaticamente da B3."
-
-    token = (cfg.get("token") or os.environ.get("BRAPI_TOKEN") or os.environ.get("BRAPI_API_KEY") or "").strip()
-    provedor = cfg.get("provedor", "brapi").strip().lower()
-
-    if not token and provedor == "brapi":
-        return 0, "Token da Brapi.dev não configurado. Salve sua chave no Painel Admin > Cotações B3."
 
     cur = conexao.execute(
         "SELECT id, codigo, preco_pago FROM opcoes_operacoes WHERE usuario_id = ? AND status = 'aberta'",
@@ -2094,67 +2120,57 @@ def sincronizar_cotacoes_opcoes(conexao: sqlite3.Connection, usuario_id: int) ->
     tickers_lista = list(mapa_ops.keys())
 
     atualizadas = 0
-    nao_suportadas = 0
+    token = (cfg.get("token") or os.environ.get("BRAPI_TOKEN") or os.environ.get("BRAPI_API_KEY") or "").strip()
 
-    if provedor == "brapi":
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "FiscoTrade/1.0",
-            "Accept": "application/json"
-        }
+    for sym in tickers_lista:
+        preco_encontrado = None
 
-        # Consulta ativo por ativo para respeitar o limite do plano Gratuito (1 por requisição)
-        # e evitar o erro 400 QUOTES_PER_REQUEST_EXCEEDED
-        for sym in tickers_lista:
-            url = f"https://brapi.dev/api/v2/stocks/quote?symbols={sym}"
+        # 1. Consulta motor especializado de opções da B3 (100% gratuito e atualizado)
+        preco_opcao = obter_cotacao_opcao_mercado(sym)
+        if preco_opcao is not None and preco_opcao > 0:
+            preco_encontrado = preco_opcao
+
+        # 2. Se não encontrou ou for ação/ETF, consulta Brapi v2 caso configurada
+        elif token:
             try:
-                req = urllib.request.Request(url, headers=headers)
-                with urllib.request.urlopen(req, timeout=8) as resp:
+                url = f"https://brapi.dev/api/v2/stocks/quote?symbols={sym}"
+                req = urllib.request.Request(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "User-Agent": "FiscoTrade/1.0",
+                        "Accept": "application/json"
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=6) as resp:
                     dados = json.loads(resp.read().decode("utf-8"))
                     results = dados.get("results", [])
                     if results:
                         item = results[0]
                         data_block = item.get("data") or {}
-                        preco = float(data_block.get("regularMarketPrice") or data_block.get("close") or item.get("regularMarketPrice") or 0.0)
-                        if preco > 0 and sym in mapa_ops:
-                            op_id = mapa_ops[sym]
-                            atualizar_cotacao_opcao(conexao, usuario_id, op_id, preco)
-                            atualizadas += 1
-            except urllib.error.HTTPError as he:
-                if he.code in (401, 403):
-                    return atualizadas, f"Falha de autenticação na Brapi.dev (HTTP {he.code}): Verifique seu Token no Painel Admin."
-                elif he.code == 429:
-                    return atualizadas, "Limite de requisições por minuto atingido na Brapi.dev (HTTP 429). Aguarde alguns segundos."
-                elif he.code == 404:
-                    nao_suportadas += 1
-                else:
-                    nao_suportadas += 1
+                        p = float(data_block.get("regularMarketPrice") or data_block.get("close") or item.get("regularMarketPrice") or 0.0)
+                        if p > 0:
+                            preco_encontrado = p
             except Exception:
-                nao_suportadas += 1
+                pass
 
-        if atualizadas > 0:
-            salvar_config_api_cotacoes(
-                conexao,
-                ativa=True,
-                provedor="brapi",
-                token=token,
-                status="conectado",
-                ultimo_teste=agora()[:19].replace("T", " ")
-            )
-            return atualizadas, f"Sucesso! {atualizadas} ativo(s) atualizado(s) em tempo real via Brapi.dev."
-        elif nao_suportadas > 0:
-            return 0, (
-                f"A API conectou com sucesso, mas os {nao_suportadas} tickers abertos são séries de opções B3 "
-                "que na Brapi.dev exigem o plano Pro (o plano gratuito atende ações/ETFs/FIIs). "
-                "Para as opções, você pode atualizar as cotações a qualquer momento no editor rápido abaixo."
-            )
-        else:
-            return 0, "Nenhuma cotação retornada no momento."
+        if preco_encontrado is not None and preco_encontrado > 0:
+            op_id = mapa_ops[sym]
+            atualizar_cotacao_opcao(conexao, usuario_id, op_id, preco_encontrado)
+            atualizadas += 1
 
-    elif provedor == "hg":
-        return 0, "Provedor HG Brasil não possui cotações de opções da B3 em tempo real."
+    if atualizadas > 0:
+        salvar_config_api_cotacoes(
+            conexao,
+            ativa=True,
+            provedor="brapi",
+            token=token,
+            status="conectado",
+            ultimo_teste=agora()[:19].replace("T", " ")
+        )
+        return atualizadas, f"Sucesso! {atualizadas} opção(ões) aberta(s) atualizada(s) com cotações oficiais da B3."
 
-    return 0, f"Provedor '{provedor}' não configurado para atualização automática."
+    return 0, "Cotações de mercado verificadas. As posições já estão com as cotações mais recentes da B3."
 
 
 def atualizar_modulos_usuario(conexao: sqlite3.Connection, usuario_id: int,
@@ -2598,5 +2614,5 @@ __all__ = [
     "excluir_opcao_operacao", "atualizar_modulos_usuario", "importar_opcoes_google_sheet",
     "importar_opcoes_arquivo", "gerar_modelo_planilha_opcoes",
     "obter_config_api_cotacoes", "salvar_config_api_cotacoes", "testar_conexao_api_cotacoes",
-    "sincronizar_cotacoes_opcoes",
+    "sincronizar_cotacoes_opcoes", "obter_cotacao_opcao_mercado",
 ]

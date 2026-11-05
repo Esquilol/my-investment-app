@@ -533,28 +533,17 @@ def pagina_diario_opcoes() -> None:
         if not abertas:
             st.info("Nenhuma posição aberta no momento.")
         else:
-            # Status e Sincronização de Cotações com a B3
-            cfg_api = bd.obter_config_api_cotacoes(conexao)
-            col_sync1, col_sync2 = st.columns([2.2, 1.8])
+            # Sincronização de Cotações com a B3
+            col_sync1, _ = st.columns([2.2, 2.8])
             with col_sync1:
-                if cfg_api.get("ativa"):
-                    if st.button("⚡ Sincronizar Cotações em Tempo Real (API B3)", type="primary", use_container_width=True, icon=":material/sync:"):
-                        with st.spinner("Buscando cotações atualizadas na B3 via Brapi.dev..."):
-                            atualizadas, msg_api = bd.sincronizar_cotacoes_opcoes(conexao, usuario_id)
-                            if atualizadas > 0:
-                                st.success(msg_api)
-                                st.rerun()
-                            else:
-                                st.warning(msg_api)
-                else:
-                    st.info("💡 **Cotações Automáticas B3:** A integração está desligada no Painel Admin. Ative-a no **Painel Admin > Cotações B3** com seu token gratuito da Brapi.dev para atualizar as cotações em 1 clique.")
-            with col_sync2:
-                if cfg_api.get("ativa"):
-                    prov_nome = str(cfg_api.get("provedor", "brapi")).upper()
-                    ult_teste = cfg_api.get("ultimo_teste") or "Hoje"
-                    st.caption(f"🟢 **Integração B3 Ativa ({prov_nome})** — Cotações em tempo real disponíveis. Última verificação: `{ult_teste}`.")
-                else:
-                    st.caption("⚪ Cotações manuais ativas. Ative o provedor gratuito Brapi.dev no painel administrativo.")
+                if st.button("⚡ Atualizar Cotações em Tempo Real", type="primary", use_container_width=True, icon=":material/sync:"):
+                    with st.spinner("Atualizando cotações das opções com a B3..."):
+                        atualizadas, msg_api = bd.sincronizar_cotacoes_opcoes(conexao, usuario_id)
+                        if atualizadas > 0:
+                            st.success(msg_api)
+                            st.rerun()
+                        else:
+                            st.info(msg_api)
 
             # Barra de Configuração e Filtros
             col_cfg1, col_cfg2, col_cfg3 = st.columns([1.5, 1.5, 1.5])
