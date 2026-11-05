@@ -591,6 +591,11 @@ def pagina_diario_opcoes() -> None:
                     "Gatilho": f"🎯 ROLAR (+{rend_pct:.0f}%)" if atingiu else "Normal"
                 })
 
+            opcoes_dict = {
+                o["id"]: f"{o['codigo']} ({o.get('estrutura')}) — Pago {_moeda(o['preco_pago'])}"
+                for o in abertas_filtradas
+            }
+
             if not linhas_abertas:
                 st.info("Nenhuma posição aberta encontrada com os filtros selecionados.")
             else:
@@ -708,6 +713,11 @@ def pagina_diario_opcoes() -> None:
                     "Obs": o.get("observacoes") or ""
                 })
 
+            enc_dict = {
+                o["id"]: f"{o['codigo']} ({_p_data(o['data_inicio'])} a {_p_data(o.get('data_fim'))}) — Lucro: {_moeda(o.get('resultado_financeiro', 0))}"
+                for o in encerradas_filtradas
+            }
+
             if not linhas_enc:
                 st.info("Nenhuma operação encerrada encontrada com os filtros selecionados.")
             else:
@@ -812,6 +822,11 @@ def pagina_diario_opcoes() -> None:
                 "Lucro": lucro_col,
                 "Obs": o.get("observacoes") or ""
             })
+
+        comp_dict = {
+            o["id"]: f"#{o['id']} {o['codigo']} ({str(o.get('status', '')).upper()}) — Entrada: {_p_data(o['data_inicio'])} Pago {_moeda(o['preco_pago'])}"
+            for o in ops_vis
+        }
 
         if not linhas_comp:
             st.info("Nenhuma operação encontrada com os filtros selecionados.")
