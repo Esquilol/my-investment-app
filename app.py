@@ -234,6 +234,10 @@ if usuario_atual is None or not usuario_atual["ativo"]:
     st.stop()
 
 st.session_state["is_admin"] = bool(usuario_atual["is_admin"])
+tem_modulo_fiscal = bool(usuario_atual["modulo_fiscal"]) if "modulo_fiscal" in usuario_atual.keys() else True
+tem_modulo_opcoes = bool(usuario_atual["modulo_opcoes"]) if "modulo_opcoes" in usuario_atual.keys() else True
+st.session_state["modulo_fiscal"] = tem_modulo_fiscal
+st.session_state["modulo_opcoes"] = tem_modulo_opcoes
 
 with st.sidebar:
     st.markdown(
@@ -260,12 +264,14 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
+import modulo_opcoes
+
 paginas.carregar(usuario_id)
 
 # A página de upload oferece um atalho para a emissão do DARF; para isso ela
 # precisa da referência da página registrada na navegação.
 pagina_visao = st.Page(paginas.pagina_visao, title="Visão Geral",
-                       icon=":material/dashboard:", default=True)
+                       icon=":material/dashboard:", default=tem_modulo_fiscal)
 pagina_upload = st.Page(paginas.pagina_upload, title="Upload de Notas",
                         icon=":material/upload_file:")
 pagina_darf = st.Page(paginas.pagina_darf, title="DARF",
@@ -284,7 +290,7 @@ paginas.PAGINA_UPLOAD = pagina_upload
 paginas.PAGINA_DARF = pagina_darf
 paginas.PAGINA_OTIMIZACAO = pagina_otimizacao
 
-paginas_investidor = [
+paginas_fiscal = [
     pagina_visao,
     pagina_upload,
     st.Page(paginas.pagina_patrimonio, title="Meu Patrimônio",
@@ -295,6 +301,13 @@ paginas_investidor = [
     st.Page(paginas.pagina_extrato, title="Extrato", icon=":material/receipt_long:"),
     st.Page(paginas.pagina_proventos, title="Proventos", icon=":material/payments:"),
     st.Page(paginas.pagina_relatorios, title="Relatórios", icon=":material/download:"),
+]
+
+pagina_diario_opcoes = st.Page(modulo_opcoes.pagina_diario_opcoes, title="Diário de Opções",
+                               icon=":material/query_stats:", default=(not tem_modulo_fiscal))
+paginas_opcoes = [pagina_diario_opcoes]
+
+paginas_conta = [
     st.Page(paginas.pagina_planos, title="Planos e Assinatura",
             icon=":material/workspace_premium:"),
     st.Page(paginas.pagina_conta, title="Minha Conta", icon=":material/person:"),
@@ -311,12 +324,16 @@ paginas_admin = [
             icon=":material/balance:"),
 ]
 
+menus_navegacao: dict[str, list[st.Page]] = {}
+if tem_modulo_fiscal:
+    menus_navegacao["Módulo Fiscal"] = paginas_fiscal
+if tem_modulo_opcoes:
+    menus_navegacao["Módulo Opções"] = paginas_opcoes
+menus_navegacao["Minha Conta"] = paginas_conta
+
 if st.session_state["is_admin"]:
-    navegacao = st.navigation({
-        "Painel do investidor": paginas_investidor,
-        "Administração": paginas_admin,
-    })
-else:
-    navegacao = st.navigation(paginas_investidor)
+    menus_navegacao["Administração"] = paginas_admin
+
+navegacao = st.navigation(menus_navegacao)
 
 navegacao.run()

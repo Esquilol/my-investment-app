@@ -243,6 +243,34 @@ CREATE TABLE IF NOT EXISTS monitor_legislacao (
     verificado_em TEXT,
     mudou_em      TEXT
 );
+
+CREATE TABLE IF NOT EXISTS opcoes_operacoes (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id           INTEGER NOT NULL,
+    codigo               TEXT    NOT NULL,
+    ativo_subjacente     TEXT,
+    tipo_opcao           TEXT,
+    estrutura            TEXT    NOT NULL,
+    data_inicio          TEXT    NOT NULL,
+    data_fim             TEXT,
+    dias                 INTEGER,
+    quantidade           REAL    NOT NULL DEFAULT 100,
+    preco_pago           REAL    NOT NULL DEFAULT 0,
+    preco_recebido       REAL    NOT NULL DEFAULT 0,
+    preco_atual          REAL    NOT NULL DEFAULT 0,
+    valor_alocado        REAL    NOT NULL DEFAULT 0,
+    valor_final          REAL    NOT NULL DEFAULT 0,
+    resultado_financeiro REAL    NOT NULL DEFAULT 0,
+    resultado_pct        REAL    NOT NULL DEFAULT 0,
+    sucesso              TEXT    NOT NULL DEFAULT 'n',
+    status               TEXT    NOT NULL DEFAULT 'aberta',
+    operacao_origem_id   INTEGER,
+    meta_rolagem_pct     REAL    NOT NULL DEFAULT 100.0,
+    observacoes          TEXT,
+    criado_em            TEXT,
+    FOREIGN KEY (usuario_id) REFERENCES usuarios (id),
+    FOREIGN KEY (operacao_origem_id) REFERENCES opcoes_operacoes (id)
+);
 """
 
 #: Planos semeados na primeira execução. ``limite_notas = -1`` significa ilimitado.
@@ -286,6 +314,8 @@ def _acrescentar_colunas(conexao: sqlite3.Connection) -> None:
             "endereco": "TEXT",
             "cep": "TEXT",
             "origem": "TEXT",
+            "modulo_fiscal": "INTEGER NOT NULL DEFAULT 1",
+            "modulo_opcoes": "INTEGER NOT NULL DEFAULT 1",
         },
         "cupons": {
             "tipo": "TEXT NOT NULL DEFAULT 'percentual'",
@@ -301,6 +331,36 @@ def _acrescentar_colunas(conexao: sqlite3.Connection) -> None:
         for nome, definicao in colunas.items():
             if existentes and nome not in existentes:
                 conexao.execute(f"ALTER TABLE {tabela} ADD COLUMN {nome} {definicao}")
+
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS opcoes_operacoes (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id           INTEGER NOT NULL,
+            codigo               TEXT    NOT NULL,
+            ativo_subjacente     TEXT,
+            tipo_opcao           TEXT,
+            estrutura            TEXT    NOT NULL,
+            data_inicio          TEXT    NOT NULL,
+            data_fim             TEXT,
+            dias                 INTEGER,
+            quantidade           REAL    NOT NULL DEFAULT 100,
+            preco_pago           REAL    NOT NULL DEFAULT 0,
+            preco_recebido       REAL    NOT NULL DEFAULT 0,
+            preco_atual          REAL    NOT NULL DEFAULT 0,
+            valor_alocado        REAL    NOT NULL DEFAULT 0,
+            valor_final          REAL    NOT NULL DEFAULT 0,
+            resultado_financeiro REAL    NOT NULL DEFAULT 0,
+            resultado_pct        REAL    NOT NULL DEFAULT 0,
+            sucesso              TEXT    NOT NULL DEFAULT 'n',
+            status               TEXT    NOT NULL DEFAULT 'aberta',
+            operacao_origem_id   INTEGER,
+            meta_rolagem_pct     REAL    NOT NULL DEFAULT 100.0,
+            observacoes          TEXT,
+            criado_em            TEXT,
+            FOREIGN KEY (usuario_id) REFERENCES usuarios (id),
+            FOREIGN KEY (operacao_origem_id) REFERENCES opcoes_operacoes (id)
+        );
+    """)
 
     # O CPF identifica uma pessoa: não pode repetir entre contas. Índice parcial
     # porque o administrador e as contas antigas não têm CPF preenchido.
@@ -501,7 +561,8 @@ def garantir_esquema(conexao: sqlite3.Connection) -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 
 _CAMPOS_PUBLICOS = ("id, usuario, nome, email, cpf, telefone, cidade, estado, "
-                    "endereco, cep, origem, is_admin, ativo, plano_codigo, criado_em")
+                    "endereco, cep, origem, is_admin, ativo, plano_codigo, "
+                    "modulo_fiscal, modulo_opcoes, criado_em")
 
 
 def criar_usuario(conexao: sqlite3.Connection, usuario: str, email: str,
@@ -542,7 +603,7 @@ def obter_por_login(conexao: sqlite3.Connection, login: str):
     digitos = "".join(c for c in limpo if c.isdigit())
     return conexao.execute(
         "SELECT id, usuario, nome, email, cpf, hash, is_admin, ativo, plano_codigo, "
-        "       criado_em "
+        "       modulo_fiscal, modulo_opcoes, criado_em "
         "FROM usuarios WHERE usuario = ? OR email = ? OR (cpf IS NOT NULL AND cpf = ?)",
         (limpo, limpo.lower(), digitos),
     ).fetchone()
@@ -551,7 +612,7 @@ def obter_por_login(conexao: sqlite3.Connection, login: str):
 def obter_por_email(conexao: sqlite3.Connection, email: str):
     return conexao.execute(
         "SELECT id, usuario, nome, email, cpf, hash, is_admin, ativo, plano_codigo, "
-        "       criado_em "
+        "       modulo_fiscal, modulo_opcoes, criado_em "
         "FROM usuarios WHERE email = ?", (email.strip().lower(),)
     ).fetchone()
 
@@ -561,7 +622,7 @@ def listar_usuarios(conexao: sqlite3.Connection) -> pd.DataFrame:
     return pd.read_sql_query(
         "SELECT u.id, u.usuario, u.nome, u.email, u.cpf, u.origem, "
         "       u.plano_codigo AS plano, p.nome AS plano_nome, "
-        "       u.is_admin, u.ativo, u.criado_em "
+        "       u.is_admin, u.ativo, u.modulo_fiscal, u.modulo_opcoes, u.criado_em "
         "FROM usuarios u LEFT JOIN planos p ON p.codigo = u.plano_codigo "
         "ORDER BY u.id",
         conexao,
@@ -572,7 +633,7 @@ def atualizar_usuario(conexao: sqlite3.Connection, usuario_id: int, **campos) ->
     """Atualiza os campos informados de um usuário (usuario, email, hash, ativo...)."""
     permitidos = {"usuario", "email", "hash", "is_admin", "ativo", "plano_codigo",
                   "nome", "cpf", "telefone", "cidade", "estado", "endereco", "cep",
-                  "origem", "reset_token", "reset_expira"}
+                  "origem", "reset_token", "reset_expira", "modulo_fiscal", "modulo_opcoes"}
     itens = {k: v for k, v in campos.items() if k in permitidos}
     if not itens:
         return
@@ -1445,6 +1506,375 @@ def gravar_monitor_legislacao(conexao: sqlite3.Connection, url: str, titulo: str
     conexao.commit()
 
 
+# ---------------------------------------------------------------------------
+# Módulo Opções & Diário de Trades
+# ---------------------------------------------------------------------------
+
+def identificar_opcao(codigo: str) -> dict:
+    """
+    Identifica ativo base, tipo (CALL/PUT) e mês de vencimento a partir do ticker B3.
+    Ex: BOVAI42 -> BOVA11, CALL, Setembro
+        PETRU427 -> PETR4, PUT, Setembro
+        BEEFX287 -> BEEF3, PUT, Dezembro
+    """
+    import re
+    cod = (codigo or "").strip().upper()
+    meses_call = {
+        'A': 'Janeiro', 'B': 'Fevereiro', 'C': 'Março', 'D': 'Abril',
+        'E': 'Maio', 'F': 'Junho', 'G': 'Julho', 'H': 'Agosto',
+        'I': 'Setembro', 'J': 'Outubro', 'K': 'Novembro', 'L': 'Dezembro'
+    }
+    meses_put = {
+        'M': 'Janeiro', 'N': 'Fevereiro', 'O': 'Março', 'P': 'Abril',
+        'Q': 'Maio', 'R': 'Junho', 'S': 'Julho', 'T': 'Agosto',
+        'U': 'Setembro', 'V': 'Outubro', 'W': 'Novembro', 'X': 'Dezembro'
+    }
+    acoes_conhecidas = {
+        "PETR": "PETR4", "VALE": "VALE3", "BOVA": "BOVA11", "BEEF": "BEEF3",
+        "CSNA": "CSNA3", "USIM": "USIM5", "GGBR": "GGBR4", "RENT": "RENT3",
+        "BRKM": "BRKM5", "BRAP": "BRAP4", "BPRAP": "BRAP4", "MBRF": "MBRF3",
+        "MRBF": "MBRF3", "COGN": "COGN3", "PRIO": "PRIO3", "WEGE": "WEGE3",
+        "MGLU": "MGLU3", "CMIN": "CMIN3", "BBAS": "BBAS3", "BBDC": "BBDC4",
+        "ITUB": "ITUB4", "ITSA": "ITSA4", "SUZB": "SUZB3", "JBSS": "JBSS3",
+        "RAIZ": "RAIZ4", "ELET": "ELET3", "EQTL": "EQTL3", "HAPV": "HAPV3",
+    }
+    m = re.match(r"^([A-Z]{3,5})([A-X])(.*)$", cod)
+    if m:
+        pref, letra, resto = m.groups()
+        ativo = acoes_conhecidas.get(pref, f"{pref}3")
+        if letra in meses_call:
+            tipo = "CALL"
+            mes = meses_call[letra]
+        else:
+            tipo = "PUT"
+            mes = meses_put[letra]
+        return {
+            "codigo": cod,
+            "ativo_subjacente": ativo,
+            "tipo_opcao": tipo,
+            "mes_vencimento": mes,
+            "letra": letra,
+        }
+    return {
+        "codigo": cod,
+        "ativo_subjacente": cod,
+        "tipo_opcao": "CALL",
+        "mes_vencimento": "",
+        "letra": "",
+    }
+
+
+def listar_opcoes_operacoes(conexao: sqlite3.Connection, usuario_id: int, status: str | None = None) -> list[dict]:
+    """Lista as operações de opções do usuário, ordenadas por data de início descendente."""
+    sql = "SELECT * FROM opcoes_operacoes WHERE usuario_id = ?"
+    params: list = [int(usuario_id)]
+    if status:
+        sql += " AND status = ?"
+        params.append(status.lower().strip())
+    sql += " ORDER BY data_inicio DESC, id DESC"
+    cur = conexao.execute(sql, params)
+    colunas = [desc[0] for desc in cur.description]
+    return [dict(zip(colunas, linha)) for linha in cur.fetchall()]
+
+
+def salvar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, dados: dict) -> int:
+    """Insere uma nova operação de opção no diário."""
+    info = identificar_opcao(dados.get("codigo", ""))
+    codigo = info["codigo"]
+    ativo = dados.get("ativo_subjacente") or info["ativo_subjacente"]
+    tipo = dados.get("tipo_opcao") or info["tipo_opcao"]
+    estrutura = dados.get("estrutura", "COMPRA DE CALL").strip().upper()
+    data_inicio = dados.get("data_inicio") or agora()[:10]
+    data_fim = dados.get("data_fim") or None
+    dias = dados.get("dias")
+    quantidade = float(dados.get("quantidade", 100))
+    preco_pago = float(dados.get("preco_pago", 0.0))
+    preco_recebido = float(dados.get("preco_recebido", 0.0))
+    preco_atual = float(dados.get("preco_atual", preco_pago))
+    valor_alocado = float(dados.get("valor_alocado") or (quantidade * preco_pago if preco_pago > 0 else 0.0))
+    valor_final = float(dados.get("valor_final") or (quantidade * preco_recebido if preco_recebido > 0 else 0.0))
+    status = dados.get("status", "aberta").lower().strip()
+
+    resultado_financeiro = float(dados.get("resultado_financeiro") or 0.0)
+    resultado_pct = float(dados.get("resultado_pct") or 0.0)
+    if status in ("encerrada", "rolada") and valor_final > 0:
+        if "VENDA" in estrutura:
+            resultado_financeiro = valor_alocado - valor_final
+            resultado_pct = ((preco_recebido - preco_pago) / preco_recebido * 100) if preco_recebido > 0 else 0.0
+        else:
+            resultado_financeiro = valor_final - valor_alocado
+            resultado_pct = ((preco_recebido - preco_pago) / preco_pago * 100) if preco_pago > 0 else 0.0
+
+    sucesso = dados.get("sucesso") or ("s" if resultado_financeiro > 0 else "n")
+    operacao_origem_id = dados.get("operacao_origem_id")
+    meta_rolagem_pct = float(dados.get("meta_rolagem_pct", 100.0))
+    observacoes = dados.get("observacoes", "")
+
+    cur = conexao.execute("""
+        INSERT INTO opcoes_operacoes (
+            usuario_id, codigo, ativo_subjacente, tipo_opcao, estrutura,
+            data_inicio, data_fim, dias, quantidade, preco_pago, preco_recebido,
+            preco_atual, valor_alocado, valor_final, resultado_financeiro,
+            resultado_pct, sucesso, status, operacao_origem_id, meta_rolagem_pct,
+            observacoes, criado_em
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        int(usuario_id), codigo, ativo, tipo, estrutura,
+        data_inicio, data_fim, dias, quantidade, preco_pago, preco_recebido,
+        preco_atual, valor_alocado, valor_final, resultado_financeiro,
+        resultado_pct, sucesso, status, operacao_origem_id, meta_rolagem_pct,
+        observacoes, agora()
+    ))
+    conexao.commit()
+    return cur.lastrowid
+
+
+def encerrar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_id: int,
+                           data_fim: str, preco_recebido: float, observacoes: str = "") -> None:
+    """Encerra uma operação de opção calculando os resultados."""
+    cur = conexao.execute("SELECT * FROM opcoes_operacoes WHERE id = ? AND usuario_id = ?",
+                          (int(operacao_id), int(usuario_id)))
+    op = cur.fetchone()
+    if not op:
+        raise ValueError("Operação não encontrada.")
+    colunas = [desc[0] for desc in cur.description]
+    item = dict(zip(colunas, op))
+
+    quantidade = float(item["quantidade"])
+    preco_pago = float(item["preco_pago"])
+    valor_alocado = float(item["valor_alocado"])
+    estrutura = item["estrutura"]
+    valor_final = quantidade * preco_recebido
+
+    if "VENDA" in estrutura:
+        res_fin = valor_alocado - valor_final
+        res_pct = ((item["preco_recebido"] - preco_recebido) / item["preco_recebido"] * 100) if item["preco_recebido"] > 0 else 0.0
+    else:
+        res_fin = valor_final - valor_alocado
+        res_pct = ((preco_recebido - preco_pago) / preco_pago * 100) if preco_pago > 0 else 0.0
+
+    sucesso = "s" if res_fin > 0 else "n"
+    obs = (item["observacoes"] or "").strip()
+    if observacoes:
+        obs = f"{obs} | {observacoes}".strip(" |")
+
+    conexao.execute("""
+        UPDATE opcoes_operacoes SET
+            data_fim = ?,
+            preco_recebido = ?,
+            valor_final = ?,
+            resultado_financeiro = ?,
+            resultado_pct = ?,
+            sucesso = ?,
+            status = 'encerrada',
+            observacoes = ?
+        WHERE id = ? AND usuario_id = ?
+    """, (data_fim, preco_recebido, valor_final, res_fin, res_pct, sucesso, obs, int(operacao_id), int(usuario_id)))
+    conexao.commit()
+
+
+def rolar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_id: int,
+                        data_rolagem: str, preco_fechamento: float, novo_codigo: str,
+                        novo_preco_pago: float, nova_quantidade: float, nova_estrutura: str | None = None,
+                        observacoes: str = "") -> int:
+    """
+    Rola uma operação vencedora (ou de ajuste) para uma nova opção:
+    1. Encerra a operação atual com status 'rolada' e registra o lucro/prejuízo.
+    2. Abre a nova operação vinculada como filha (operacao_origem_id).
+    """
+    cur = conexao.execute("SELECT * FROM opcoes_operacoes WHERE id = ? AND usuario_id = ?",
+                          (int(operacao_id), int(usuario_id)))
+    op = cur.fetchone()
+    if not op:
+        raise ValueError("Operação original não encontrada.")
+    colunas = [desc[0] for desc in cur.description]
+    item = dict(zip(colunas, op))
+
+    quantidade = float(item["quantidade"])
+    preco_pago = float(item["preco_pago"])
+    valor_alocado = float(item["valor_alocado"])
+    estrutura = item["estrutura"]
+    valor_final = quantidade * preco_fechamento
+
+    if "VENDA" in estrutura:
+        res_fin = valor_alocado - valor_final
+        res_pct = ((item["preco_recebido"] - preco_fechamento) / item["preco_recebido"] * 100) if item["preco_recebido"] > 0 else 0.0
+    else:
+        res_fin = valor_final - valor_alocado
+        res_pct = ((preco_fechamento - preco_pago) / preco_pago * 100) if preco_pago > 0 else 0.0
+
+    sucesso = "s" if res_fin > 0 else "n"
+    obs_antiga = (item["observacoes"] or "").strip()
+    obs_antiga = f"{obs_antiga} | Rolada para {novo_codigo} em {data_rolagem}".strip(" |")
+
+    conexao.execute("""
+        UPDATE opcoes_operacoes SET
+            data_fim = ?,
+            preco_recebido = ?,
+            valor_final = ?,
+            resultado_financeiro = ?,
+            resultado_pct = ?,
+            sucesso = ?,
+            status = 'rolada',
+            observacoes = ?
+        WHERE id = ? AND usuario_id = ?
+    """, (data_rolagem, preco_fechamento, valor_final, res_fin, res_pct, sucesso, obs_antiga, int(operacao_id), int(usuario_id)))
+
+    # Inserir nova perna (rolagem)
+    novo_alocado = nova_quantidade * novo_preco_pago
+    info_novo = identificar_opcao(novo_codigo)
+    obs_nova = f"Rolagem da {item['codigo']} (Lucro perna anterior: R$ {res_fin:,.2f} / +{res_pct:.1f}%)."
+    if observacoes:
+        obs_nova += f" {observacoes}"
+
+    nova_id = salvar_opcao_operacao(conexao, usuario_id, {
+        "codigo": novo_codigo,
+        "ativo_subjacente": info_novo["ativo_subjacente"],
+        "tipo_opcao": info_novo["tipo_opcao"],
+        "estrutura": nova_estrutura or item["estrutura"],
+        "data_inicio": data_rolagem,
+        "quantidade": nova_quantidade,
+        "preco_pago": novo_preco_pago,
+        "valor_alocado": novo_alocado,
+        "status": "aberta",
+        "operacao_origem_id": int(operacao_id),
+        "meta_rolagem_pct": float(item.get("meta_rolagem_pct") or 100.0),
+        "observacoes": obs_nova,
+    })
+    return nova_id
+
+
+def atualizar_cotacao_opcao(conexao: sqlite3.Connection, usuario_id: int,
+                            operacao_id: int, preco_atual: float) -> None:
+    """Atualiza a cotação corrente de uma opção aberta para recalcular o rendimento."""
+    conexao.execute(
+        "UPDATE opcoes_operacoes SET preco_atual = ? WHERE id = ? AND usuario_id = ?",
+        (float(preco_atual), int(operacao_id), int(usuario_id))
+    )
+    conexao.commit()
+
+
+def excluir_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_id: int) -> None:
+    """Exclui uma operação de opção."""
+    conexao.execute("DELETE FROM opcoes_operacoes WHERE id = ? AND usuario_id = ?",
+                    (int(operacao_id), int(usuario_id)))
+    conexao.commit()
+
+
+def atualizar_modulos_usuario(conexao: sqlite3.Connection, usuario_id: int,
+                             modulo_fiscal: bool, modulo_opcoes: bool) -> None:
+    """Ativa ou desativa os módulos de um usuário."""
+    conexao.execute(
+        "UPDATE usuarios SET modulo_fiscal = ?, modulo_opcoes = ? WHERE id = ?",
+        (int(bool(modulo_fiscal)), int(bool(modulo_opcoes)), int(usuario_id))
+    )
+    conexao.commit()
+
+
+def importar_opcoes_google_sheet(conexao: sqlite3.Connection, usuario_id: int,
+                                 sheet_id: str = "1N2Sv8LwM_VTT5SVKorBAGS2vUKoKdvn3jdvhlwaUl5k") -> dict:
+    """
+    Importa diretamente as operações da planilha Google 'Minhas Operacoes' (somente leitura).
+    """
+    import json, os, urllib.request, urllib.parse
+
+    token_path = os.path.expanduser(r"~\.gemini\antigravity\plugin_data\gsheets\token.json")
+    if not os.path.exists(token_path):
+        raise RuntimeError("Token de autenticação do Google Sheets não encontrado. Execute a autorização primeiro.")
+
+    with open(token_path, "r", encoding="utf-8") as f:
+        token_data = json.load(f)
+    access_token = token_data.get("token", {}).get("access_token")
+    if not access_token:
+        raise RuntimeError("Token de acesso inválido no arquivo de credenciais.")
+
+    range_name = "'Minhas Operacoes'!A4:N200"
+    url = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{urllib.parse.quote(range_name)}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {access_token}"})
+
+    with urllib.request.urlopen(req) as resp:
+        res = json.loads(resp.read().decode("utf-8"))
+        rows = res.get("values", [])
+
+    def _pnum(v):
+        if not v:
+            return 0.0
+        s = str(v).replace("R$", "").replace("%", "").strip()
+        s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except Exception:
+            return 0.0
+
+    importadas = 0
+    atualizadas = 0
+
+    for r in rows[1:]:
+        if not r or len(r) < 2 or not str(r[0]).strip() or "Total" in str(r):
+            continue
+        codigo = str(r[0]).strip().upper()
+        estrutura = str(r[1]).strip().upper() if len(r) > 1 and r[1] else "COMPRA DE CALL"
+        dt_inicio = str(r[2]).strip() if len(r) > 2 and r[2] else agora()[:10]
+        dt_fim = str(r[3]).strip() if len(r) > 3 and r[3] and r[3] != "TRAVA" else ""
+        dias = int(_pnum(r[4])) if len(r) > 4 and r[4] and str(r[4]).strip().isdigit() else None
+        recebido = _pnum(r[5]) if len(r) > 5 else 0.0
+        pago = _pnum(r[6]) if len(r) > 6 else 0.0
+        res_pct = _pnum(r[7]) if len(r) > 7 else 0.0
+        sucesso = str(r[8]).strip().lower() if len(r) > 8 and r[8] else ("s" if res_pct > 0 else "n")
+        status_raw = str(r[9]).strip().lower() if len(r) > 9 and r[9] else ("encerrada" if dt_fim else "aberta")
+        status = "encerrada" if "encerr" in status_raw or "fechad" in status_raw else "aberta"
+        alocado = _pnum(r[10]) if len(r) > 10 else 0.0
+        final = _pnum(r[11]) if len(r) > 11 else 0.0
+        res_fin = _pnum(r[12]) if len(r) > 12 else 0.0
+        obs = str(r[13]).strip() if len(r) > 13 else ""
+
+        qtd = 100.0
+        if alocado > 0 and pago > 0:
+            qtd = round(alocado / pago)
+
+        existente = conexao.execute(
+            "SELECT id FROM opcoes_operacoes WHERE usuario_id = ? AND codigo = ? AND data_inicio = ?",
+            (int(usuario_id), codigo, dt_inicio)
+        ).fetchone()
+
+        if existente:
+            conexao.execute("""
+                UPDATE opcoes_operacoes SET
+                    estrutura = ?, data_fim = ?, dias = ?, quantidade = ?,
+                    preco_pago = ?, preco_recebido = ?, valor_alocado = ?,
+                    valor_final = ?, resultado_financeiro = ?, resultado_pct = ?,
+                    sucesso = ?, status = ?, observacoes = ?
+                WHERE id = ?
+            """, (
+                estrutura, dt_fim, dias, qtd, pago, recebido, alocado,
+                final, res_fin, res_pct, sucesso, status, obs, int(existente[0])
+            ))
+            atualizadas += 1
+        else:
+            salvar_opcao_operacao(conexao, usuario_id, {
+                "codigo": codigo,
+                "estrutura": estrutura,
+                "data_inicio": dt_inicio,
+                "data_fim": dt_fim,
+                "dias": dias,
+                "quantidade": qtd,
+                "preco_pago": pago,
+                "preco_recebido": recebido,
+                "preco_atual": pago if status == "aberta" else 0.0,
+                "valor_alocado": alocado,
+                "valor_final": final,
+                "resultado_financeiro": res_fin,
+                "resultado_pct": res_pct,
+                "sucesso": sucesso,
+                "status": status,
+                "observacoes": obs,
+            })
+            importadas += 1
+
+    conexao.commit()
+    return {"importadas": importadas, "atualizadas": atualizadas, "total": importadas + atualizadas}
+
+
 __all__ = [
     "CAMINHO_PADRAO", "VERSAO_ESQUEMA", "PLANOS_PADRAO", "agora", "conectar",
     "garantir_esquema",
@@ -1468,4 +1898,7 @@ __all__ = [
     "carregar_darf_pagamentos", "gravar_darf_pagamento",
     "carregar_parametros_fiscais", "gravar_parametros_fiscais",
     "carregar_monitor_legislacao", "gravar_monitor_legislacao",
+    "identificar_opcao", "listar_opcoes_operacoes", "salvar_opcao_operacao",
+    "encerrar_opcao_operacao", "rolar_opcao_operacao", "atualizar_cotacao_opcao",
+    "excluir_opcao_operacao", "atualizar_modulos_usuario", "importar_opcoes_google_sheet",
 ]

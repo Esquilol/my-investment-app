@@ -150,15 +150,42 @@ def pagina_contas() -> None:
                              format_func=lambda c: nomes.get(c, c),
                              key=f"plano_{escolhido}")
 
+    st.markdown("**Módulos Habilitados para a Conta**")
+    mcol1, mcol2 = st.columns(2)
+    with mcol1:
+        mod_fiscal = st.toggle(
+            "🟢 Módulo Fiscal Trade",
+            value=bool(linha["modulo_fiscal"]) if "modulo_fiscal" in linha else True,
+            key=f"mod_fisc_{escolhido}",
+            help="Apuração de IR, DARF, Isenção de R$ 20.000, Otimização Fiscal e Upload de Notas.",
+        )
+    with mcol2:
+        mod_opcoes = st.toggle(
+            "🟣 Módulo Gestão de Opções",
+            value=bool(linha["modulo_opcoes"]) if "modulo_opcoes" in linha else True,
+            key=f"mod_opc_{escolhido}",
+            help="Diário de Operações de Opções, Alertas de Rolagem, Preservação de Capital e Importação.",
+        )
+
     eu_mesmo = escolhido == st.session_state.get("usuario_id")
     if st.button("Salvar alterações", type="primary", icon=":material/save:"):
         if eu_mesmo and (not ativo or not admin):
             st.error("Você não pode desativar nem remover o seu próprio perfil de administrador.")
+        elif not mod_fiscal and not mod_opcoes:
+            st.warning("Pelo menos um módulo deve permanecer ativo para a conta.")
         else:
             saas.definir_status_usuario(conexao, escolhido, ativo)
             saas.definir_admin(conexao, escolhido, admin)
-            bd.atualizar_usuario(conexao, escolhido, plano_codigo=plano)
-            st.success("Conta atualizada.")
+            bd.atualizar_usuario(
+                conexao, escolhido,
+                plano_codigo=plano,
+                modulo_fiscal=int(mod_fiscal),
+                modulo_opcoes=int(mod_opcoes),
+            )
+            if eu_mesmo:
+                st.session_state["modulo_fiscal"] = mod_fiscal
+                st.session_state["modulo_opcoes"] = mod_opcoes
+            st.success("Conta atualizada com sucesso.")
             st.rerun()
 
 
