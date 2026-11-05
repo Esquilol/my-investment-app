@@ -274,8 +274,8 @@ def _data_armazenada(texto: str | None) -> date:
     return date.today()
 
 
-def _exibir_alertas_darf() -> None:
-    """Exibe alertas de DARFs vencidos ou próximos do vencimento (Lei 9.430/96)."""
+def _exibir_alertas_darf(com_status_positivo: bool = True) -> None:
+    """Exibe alertas de DARFs vencidos, pendentes ou situação regular (Lei 9.430/96)."""
     if tabela_ir.empty:
         return
 
@@ -303,26 +303,39 @@ def _exibir_alertas_darf() -> None:
                 })
             else:
                 dias = (vencimento - hoje).days
-                if dias <= 10:
-                    a_vencer.append({
-                        "mes": mes, "valor": recolher, "vencimento": vencimento, "dias": dias,
-                    })
+                a_vencer.append({
+                    "mes": mes, "valor": recolher, "vencimento": vencimento, "dias": dias,
+                })
 
     for item in vencidos:
-        st.error(
-            f"🚨 **DARF VENCIDO ({_nome_mes(item['mes'])}):** Valor de **{_moeda(item['valor'])}** "
-            f"venceu em **{item['vencimento']:%d/%m/%Y}** ({item['dias']} dia(s) em atraso). "
-            f"Multa de mora estimada (0,33%/dia até 20% - Lei 9.430/96): **{item['multa_pct']:.2f}%** (+{_moeda(item['multa_valor'])}), "
-            f"mais juros Selic acumulados. [Acesse o Sicalcweb](https://sicalc.receita.fazenda.gov.br/) para emitir com código 6015."
-        )
+        c_msg, c_btn = st.columns([3, 1])
+        with c_msg:
+            st.error(
+                f"🚨 **DARF VENCIDO ({_nome_mes(item['mes'])}):** Valor de **{_moeda(item['valor'])}** "
+                f"venceu em **{item['vencimento']:%d/%m/%Y}** ({item['dias']} dia(s) em atraso). "
+                f"Multa de mora estimada: **{item['multa_pct']:.2f}%** (+{_moeda(item['multa_valor'])}), "
+                f"mais juros Selic acumulados."
+            )
+        with c_btn:
+            if st.button("Pagar / Regularizar", type="primary", icon=":material/payment:",
+                         key=f"btn_venc_{item['mes']}", width="stretch",
+                         disabled=PAGINA_DARF is None):
+                st.switch_page(PAGINA_DARF)
 
     for item in a_vencer:
         aviso = "vence **hoje!**" if item["dias"] == 0 else f"vence em **{item['dias']} dia(s)** ({item['vencimento']:%d/%m/%Y})"
-        st.warning(
-            f"🔔 **Lembrete de Vencimento:** O DARF de **{_nome_mes(item['mes'])}** no valor de "
-            f"**{_moeda(item['valor'])}** {aviso}. "
-            f"Código de receita: **{codigo_receita_darf()}**."
-        )
+        c_msg, c_btn = st.columns([3, 1])
+        with c_msg:
+            st.warning(
+                f"⏰ **DARF Pendente a Pagar ({_nome_mes(item['mes'])}):** Valor de "
+                f"**{_moeda(item['valor'])}** {aviso}. "
+                f"Código de receita: **{codigo_receita_darf()}**."
+            )
+        with c_btn:
+            if st.button("Ver Dados Bancários", type="secondary", icon=":material/receipt_long:",
+                         key=f"btn_avenc_{item['mes']}", width="stretch",
+                         disabled=PAGINA_DARF is None):
+                st.switch_page(PAGINA_DARF)
 
     for item in acumulados:
         st.info(
@@ -330,6 +343,9 @@ def _exibir_alertas_darf() -> None:
             f"Conforme o Art. 67 da Lei 9.430/96, DARFs inferiores a R$ 10,00 não devem ser recolhidos isoladamente; "
             "o valor fica acumulado para a próxima competência."
         )
+
+    if not vencidos and not a_vencer and not acumulados and com_status_positivo:
+        st.success("🟢 **Situação Fiscal 100% Regular:** Nenhum DARF pendente de pagamento para as competências apuradas.")
 
 
 
@@ -351,9 +367,10 @@ posicao = None
 darf_pagamentos = None
 tem_dados = False
 
-#: Página de DARF registrada em ``app.py``; preenchida após a navegação existir
-#: e usada pelo atalho de emissão da página de upload.
+#: Páginas registradas em ``app.py`` para atalhos de navegação direta
 PAGINA_DARF = None
+PAGINA_UPLOAD = None
+PAGINA_VISAO = None
 
 
 def carregar(identificador: int) -> None:
@@ -670,6 +687,41 @@ def pagina_upload() -> None:
 
 
 
+def _dias_uteis_restantes_mes() -> int:
+    """Calcula os dias úteis restantes até o encerramento do mês civil atual."""
+    hoje = date.today()
+    _, ultimo_dia = calendar.monthrange(hoje.year, hoje.month)
+    dias = 0
+    cur = hoje + timedelta(days=1)
+    while cur.day <= ultimo_dia and cur.month == hoje.month:
+        if cur.weekday() < 5:
+            dias += 1
+        cur += timedelta(days=1)
+    return max(0, dias)
+
+
+def _secao_acoes_rapidas() -> None:
+    """Barra de atalhos rápidos e status de fechamento fiscal."""
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        if st.button("📤 Importar Novas Notas", type="primary", icon=":material/upload_file:",
+                     width="stretch", key="visao_btn_upload", disabled=PAGINA_UPLOAD is None):
+            st.switch_page(PAGINA_UPLOAD)
+    with col2:
+        if st.button("🧾 Acessar Painel DARF", type="secondary", icon=":material/request_quote:",
+                     width="stretch", key="visao_btn_darf", disabled=PAGINA_DARF is None):
+            st.switch_page(PAGINA_DARF)
+    with col3:
+        dias_uteis = _dias_uteis_restantes_mes()
+        st.markdown(f"""
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); 
+                    border-radius: 8px; padding: 7px 12px; text-align: center;">
+            <small style="color: #9ca3af;">Fechamento Fiscal do Mês</small><br>
+            <strong style="color: #10b981; font-size: 1.05em;">⏱️ {dias_uteis} dia(s) útil(eis) restantes</strong>
+        </div>
+        """, unsafe_allow_html=True)
+
+
 def _secao_termometro_isencao() -> None:
     """Termômetro de Isenção dos R$ 20.000 em Ações e Tax-Gain Harvesting (Estratégia 1)."""
     if resultados is None or resultados.empty:
@@ -800,14 +852,58 @@ def _secao_guia_estrategias() -> None:
 def pagina_visao() -> None:
     tema.cabecalho(
         "Visão geral",
-        "Um panorama da sua carteira, dos resultados e dos impostos do período.",
+        "Seu painel fiscal inteligente: alertas de DARF, isenções, estoque de prejuízos e patrimônio.",
         "\U0001F4CA",
     )
 
     if not tem_dados:
-        tema.vazio("Sem dados ainda. Importe notas na página **Upload de Notas**.")
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(30, 41, 59, 0.4) 100%); 
+                    border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 12px; padding: 26px; margin-bottom: 24px;">
+            <h3 style="margin-top: 0; color: #10b981; display: flex; align-items: center; gap: 10px;">
+                <span>👋</span> Boas-vindas ao FiscoTrade!
+            </h3>
+            <p style="font-size: 1.05em; color: #d1d5db; line-height: 1.6;">
+                O FiscoTrade calcula automaticamente o seu <strong>Imposto de Renda em Renda Variável</strong>, 
+                controla o <strong>DARF mensal</strong>, compensa prejuízos acumulados e monitora a <strong>isenção dos R$ 20.000</strong>.
+            </p>
+            <div style="margin: 20px 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;">
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; padding: 16px;">
+                    <strong style="color: #10b981;">1. Baixe suas notas</strong><br>
+                    <small style="color: #9ca3af;">Acesse a sua corretora (XP, Clear, Rico, Genial, BTG, etc.) e baixe os PDFs das notas de corretagem (padrão SINACOR).</small>
+                </div>
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; padding: 16px;">
+                    <strong style="color: #10b981;">2. Envie os arquivos</strong><br>
+                    <small style="color: #9ca3af;">Faça o upload de uma ou várias notas de uma vez. O leitor extrai todas as taxas e operações automaticamente.</small>
+                </div>
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; padding: 16px;">
+                    <strong style="color: #10b981;">3. Veja seus resultados</strong><br>
+                    <small style="color: #9ca3af;">Seu patrimônio, preço médio, termômetro fiscal e o valor do DARF pronto para pagar aparecem aqui instantaneamente.</small>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_btn, _ = st.columns([1, 1])
+        with col_btn:
+            if st.button("📤 Enviar minhas primeiras notas agora", type="primary",
+                         icon=":material/upload_file:", width="stretch",
+                         key="empty_btn_upload", disabled=PAGINA_UPLOAD is None):
+                st.switch_page(PAGINA_UPLOAD)
     else:
-        _exibir_alertas_darf()
+        # 1. Alertas visuais e semáforo do DARF
+        _exibir_alertas_darf(com_status_positivo=True)
+
+        # 2. Ações rápidas e cronômetro fiscal
+        _secao_acoes_rapidas()
+
+        # 3. Termômetro de Isenção dos R$ 20.000 & Tax-Gain Harvesting
+        _secao_termometro_isencao()
+
+        # 4. Estoque de Prejuízos Fiscais & Tax-Loss Harvesting
+        _secao_estoque_prejuizos_estrategias()
+
+        # 5. KPIs de Patrimônio e IR
         custo_total = float(posicao["Custo Total"].sum()) if not posicao.empty else 0.0
         ir_total = float(tabela_ir["IRRFFinal"].sum()) if not tabela_ir.empty else 0.0
         total_proventos = float(proventos["valor"].sum()) if not proventos.empty else 0.0
@@ -821,9 +917,6 @@ def pagina_visao() -> None:
             {"rotulo": "Proventos recebidos", "valor": _moeda(total_proventos),
              "icone": "\U0001F4B5"},
         ])
-
-        _secao_termometro_isencao()
-        _secao_estoque_prejuizos_estrategias()
 
         tema.secao("Resultado realizado por mês")
         if resultados.empty:
@@ -1156,7 +1249,7 @@ def pagina_darf() -> None:
         "O valor a recolher por competência, com o código de receita e o vencimento.",
         "\U0001F9EE",
     )
-    _exibir_alertas_darf()
+    _exibir_alertas_darf(com_status_positivo=False)
 
     if tabela_ir.empty:
         tema.vazio("Sem competências apuradas. Importe notas na página **Upload de Notas**.")

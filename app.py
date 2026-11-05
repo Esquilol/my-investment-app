@@ -257,19 +257,25 @@ paginas.carregar(usuario_id)
 
 # A página de upload oferece um atalho para a emissão do DARF; para isso ela
 # precisa da referência da página registrada na navegação.
+pagina_visao = st.Page(paginas.pagina_visao, title="Visão Geral",
+                       icon=":material/dashboard:", default=True)
+pagina_upload = st.Page(paginas.pagina_upload, title="Upload de Notas",
+                        icon=":material/upload_file:")
 pagina_darf = st.Page(paginas.pagina_darf, title="DARF",
                       icon=":material/request_quote:")
+
+paginas.PAGINA_VISAO = pagina_visao
+paginas.PAGINA_UPLOAD = pagina_upload
 paginas.PAGINA_DARF = pagina_darf
 
 paginas_investidor = [
-    st.Page(paginas.pagina_upload, title="Upload de Notas",
-            icon=":material/upload_file:", default=True),
-    st.Page(paginas.pagina_visao, title="Visão Geral", icon=":material/dashboard:"),
-    st.Page(paginas.pagina_extrato, title="Extrato", icon=":material/receipt_long:"),
+    pagina_visao,
+    pagina_upload,
     st.Page(paginas.pagina_patrimonio, title="Meu Patrimônio",
             icon=":material/account_balance_wallet:"),
     st.Page(paginas.pagina_ir, title="Apuração de IR", icon=":material/calculate:"),
     pagina_darf,
+    st.Page(paginas.pagina_extrato, title="Extrato", icon=":material/receipt_long:"),
     st.Page(paginas.pagina_proventos, title="Proventos", icon=":material/payments:"),
     st.Page(paginas.pagina_relatorios, title="Relatórios", icon=":material/download:"),
     st.Page(paginas.pagina_planos, title="Planos e Assinatura",
