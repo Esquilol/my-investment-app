@@ -941,6 +941,7 @@ def pagina_upload() -> None:
         )
         if st.button("Limpar operações importadas", type="secondary", icon=":material/delete:"):
             limpar_dados(conexao, usuario_id)
+            st.session_state["limpar_sel_notas"] = True
             st.rerun()
 
     if notas.empty:
@@ -961,17 +962,20 @@ def pagina_upload() -> None:
         "irrf": "IRRF", "categoria_irrf": "Categoria IRRF",
     })
 
+    if st.session_state.pop("limpar_sel_notas", False):
+        st.session_state.pop("sel_notas", None)
+
     esquerda, direita = st.columns(2)
     with esquerda:
         if st.button("Selecionar todas", icon=":material/select_all:", width="stretch"):
             st.session_state["sel_notas"] = {
                 "selection": {"rows": list(range(len(visao_notas))), "columns": []},
             }
+            st.rerun()
     with direita:
         if st.button("Limpar seleção", icon=":material/deselect:", width="stretch"):
-            st.session_state["sel_notas"] = {
-                "selection": {"rows": [], "columns": []},
-            }
+            st.session_state.pop("sel_notas", None)
+            st.rerun()
 
     evento = st.dataframe(
         visao_notas,
@@ -981,7 +985,7 @@ def pagina_upload() -> None:
         on_select="rerun",
         selection_mode="multi-row",
     )
-    selecionadas = list(evento.selection.rows)
+    selecionadas = list(evento.selection.rows) if evento and hasattr(evento, "selection") and evento.selection else []
     st.caption(f"{len(selecionadas)} de {len(visao_notas)} nota(s) selecionada(s).")
 
     if st.button("Apagar selecionadas", icon=":material/delete:", type="primary",
@@ -992,7 +996,7 @@ def pagina_upload() -> None:
             for i in selecionadas
         ]
         removidas = remover_notas(conexao, usuario_id, chaves)
-        st.session_state["sel_notas"] = {"selection": {"rows": [], "columns": []}}
+        st.session_state["limpar_sel_notas"] = True
         st.session_state["aviso_notas"] = (
             f"{removidas} nota(s) apagada(s) — as operações delas saíram do cálculo."
         )
