@@ -925,7 +925,7 @@ def pagina_ir() -> None:
             f"Swing Trade: {float(PARAMETROS['aliquota_swing_trade']):.0%} "
             f"(FII/FIAGRO: {float(PARAMETROS['aliquota_fii']):.0%}), com isenção "
             f"quando as vendas do grupo no mês ficam dentro de "
-            f"{_moeda(PARAMETROS['isencao_acoes'])} (ações/BDR/ouro) ou "
+            f"{_moeda(PARAMETROS['isencao_acoes'])} (ações e ouro) ou "
             f"{_moeda(PARAMETROS['isencao_eua'])} (ativos dos EUA). "
             "Prejuízos e IRRF retido são compensados por categoria, mês a mês — "
             "o que não for usado fica acumulado para as competências seguintes."
