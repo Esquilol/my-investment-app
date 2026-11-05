@@ -322,6 +322,8 @@ paginas_admin = [
     st.Page(admin.pagina_parceiros, title="Parceiros", icon=":material/handshake:"),
     st.Page(admin.pagina_parametros, title="Parâmetros fiscais",
             icon=":material/balance:"),
+    st.Page(admin.pagina_cotacoes, title="Cotações de Mercado",
+            icon=":material/api:"),
 ]
 
 menus_navegacao: dict[str, list[st.Page]] = {}

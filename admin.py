@@ -603,3 +603,121 @@ def pagina_parametros() -> None:
             regras.aplicar_parametros(dados)
             st.success("Parâmetros atualizados — a apuração já usa os novos valores.")
             st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Integração de Cotações em Tempo Real (API de Mercado B3)
+# ---------------------------------------------------------------------------
+
+def pagina_cotacoes() -> None:
+    tema.cabecalho(
+        "Integração de Cotações (API)",
+        "Configure a fonte de cotações em tempo real para opções e ações da B3. Gestão exclusiva do Administrador.",
+        "📡",
+    )
+    conexao = paginas.obter_conexao()
+    cfg = bd.obter_config_api_cotacoes(conexao)
+
+    # 1. Indicador visual de status
+    c_status1, c_status2, c_status3 = st.columns([1.5, 2, 2.5])
+    with c_status1:
+        if cfg["ativa"] and cfg.get("status") == "conectado":
+            st.success("🟢 **Integração Ativa**")
+        elif cfg["ativa"]:
+            st.warning("🟡 **Ativa (Aguardando Teste)**")
+        else:
+            st.info("⚪ **Integração Desligada**")
+    with c_status2:
+        st.caption(f"Provedor: **{cfg['provedor'].upper()}**")
+    with c_status3:
+        st.caption(f"Última verificação: **{cfg.get('ultimo_teste') or 'Nunca testado'}**")
+
+    # 2. Recomendações e análise da melhor API gratuita
+    with st.expander("ℹ️ Qual é a melhor API para opções da B3 e como funciona?", expanded=(not cfg["ativa"])):
+        st.markdown("""
+        ### 🏆 Provedor Recomendado: **Brapi.dev**
+        Para a realidade de mercado do investidor brasileiro e derivativos da B3, a **Brapi.dev** é a melhor alternativa atualmente:
+        
+        * **100% Gratuita para começar:** Cadastro em 30 segundos sem necessidade de cartão de crédito.
+        * **Fiel ao mercado B3:** Cotações atualizadas diretamente da bolsa brasileira.
+        * **Suporte a Ações e Derivativos:** Reconhece tickers de ações e opções da B3.
+        * **Simplicidade de Integração:** Opera via API REST JSON rápida e sem lentidão.
+        
+        **Comparativo com outras opções de mercado:**
+        * **Yahoo Finance:** Não atende derivativos brasileiros — reconhece apenas ações terminadas em `.SA` e não suporta as séries de opções da B3 (como BEEFX400, PETRM300).
+        * **OpLab:** Excelente para opções, porém é um serviço corporativo pago com custo mensal elevado.
+        * **HG Brasil:** Confiável para câmbio e índices, porém possui restrições em tickers de derivativos.
+        
+        **Como obter o token gratuito na Brapi.dev:**
+        1. Acesse [brapi.dev](https://brapi.dev) e crie uma conta gratuita.
+        2. Copie seu token no painel do desenvolvedor da Brapi.
+        3. Cole o token no campo abaixo, selecione **Brapi.dev** e clique em **Testar Conexão**.
+        """)
+
+    # 3. Formulário de Configuração
+    tema.secao("Configurações da Conexão")
+    
+    col_t1, col_t2 = st.columns([1.5, 2.5])
+    with col_t1:
+        ativa_toggle = st.toggle("Sincronização de Cotações Ativa", value=bool(cfg["ativa"]), key="api_cot_ativa_toggle")
+    with col_t2:
+        prov_opcoes = ["Brapi.dev (Recomendado / Grátis)", "OpLab API", "HG Brasil Finance"]
+        prov_atual_idx = 0
+        if "oplab" in cfg["provedor"]:
+            prov_atual_idx = 1
+        elif "hg" in cfg["provedor"]:
+            prov_atual_idx = 2
+        prov_sel = st.selectbox("Provedor de Cotações", prov_opcoes, index=prov_atual_idx, key="api_cot_prov_sel")
+
+    cod_provedor = "brapi"
+    if "OpLab" in prov_sel:
+        cod_provedor = "oplab"
+    elif "HG" in prov_sel:
+        cod_provedor = "hg"
+
+    token_in = st.text_input(
+        "Token de Autenticação / Chave de API",
+        value=cfg.get("token", ""),
+        type="password",
+        help="Insira a chave gerada no painel do seu provedor (ex: token da brapi.dev)",
+        key="api_cot_token_in"
+    )
+
+    c_btn1, c_btn2 = st.columns(2)
+    with c_btn1:
+        if st.button("⚡ Testar Conexão em Tempo Real", type="secondary", use_container_width=True, icon=":material/network_check:"):
+            with st.spinner(f"Consultando cotações de teste na {prov_sel}..."):
+                sucesso, msg = bd.testar_conexao_api_cotacoes(cod_provedor, token_in)
+                if sucesso:
+                    st.success(msg)
+                    bd.salvar_config_api_cotacoes(
+                        conexao,
+                        ativa=ativa_toggle,
+                        provedor=cod_provedor,
+                        token=token_in,
+                        status="conectado",
+                        ultimo_teste=bd.agora()[:19].replace("T", " ")
+                    )
+                else:
+                    st.error(msg)
+                    bd.salvar_config_api_cotacoes(
+                        conexao,
+                        ativa=ativa_toggle,
+                        provedor=cod_provedor,
+                        token=token_in,
+                        status="erro",
+                        ultimo_teste=bd.agora()[:19].replace("T", " ")
+                    )
+    with c_btn2:
+        if st.button("Salvar Configurações da API", type="primary", use_container_width=True, icon=":material/save:"):
+            bd.salvar_config_api_cotacoes(
+                conexao,
+                ativa=ativa_toggle,
+                provedor=cod_provedor,
+                token=token_in,
+                status="conectado" if ativa_toggle and token_in else "desconectado",
+                ultimo_teste=cfg.get("ultimo_teste", "")
+            )
+            st.success("Configurações salvas com sucesso!")
+            st.rerun()
+

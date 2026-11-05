@@ -1,9 +1,10 @@
 """
 Módulo de Gestão e Diário de Operações de Opções — FiscoTrade.
 
-Permite ao investidor de derivativos acompanhar suas posições abertas em formato slim,
-monitorar o rendimento %, acionar a rolagem com preservação de capital (50% no bolso e 50% reinvestido
-em opções líquidas próximas do dinheiro), registrar operações de forma ultra-rápida e importar planilhas Excel/CSV.
+Permite ao investidor de derivativos acompanhar suas posições abertas, monitorar o
+rendimento percentual, acionar a rolagem com preservação de capital (50% no bolso e 50%
+reinvestido em opções líquidas próximas do dinheiro), virada de tendência (CALL <-> PUT),
+visão integralizada completa das operações, edição/exclusão individual e importação de planilhas.
 """
 
 from __future__ import annotations
@@ -26,12 +27,19 @@ def _p_data(val: str | None) -> str:
     if not val:
         return "—"
     try:
-        if "/" in str(val):
-            return str(val)
-        return date.fromisoformat(str(val)[:10]).strftime("%d/%m/%Y")
+        s = str(val).strip()
+        if "/" in s:
+            return s
+        if "-" in s and len(s) >= 10:
+            return date.fromisoformat(s[:10]).strftime("%d/%m/%Y")
+        return s
     except Exception:
         return str(val)
 
+
+# ---------------------------------------------------------------------------
+# Modais de Ações do Diário
+# ---------------------------------------------------------------------------
 
 @st.dialog("🔄 Rolar Opção com Preservação de Capital")
 def modal_rolar_opcao(op: dict) -> None:
@@ -53,7 +61,7 @@ def modal_rolar_opcao(op: dict) -> None:
 
     c1, c2 = st.columns(2)
     with c1:
-        dt_rolagem = st.date_input("Data da Rolagem", value=date.today())
+        dt_rolagem = st.date_input("Data da Rolagem", value=date.today(), key="modal_rol_dt")
         data_str = dt_rolagem.strftime("%d/%m/%Y")
     with c2:
         preco_saida = st.number_input(
@@ -62,7 +70,8 @@ def modal_rolar_opcao(op: dict) -> None:
             value=float(preco_atual if preco_atual > 0 else preco_pago * 2.0),
             step=0.01,
             format="%.2f",
-            help="Preço unitário de saída para encerrar a perna atual."
+            help="Preço unitário de saída para encerrar a perna atual.",
+            key="modal_rol_preco_saida"
         )
 
     valor_final = quantidade * preco_saida
@@ -76,16 +85,27 @@ def modal_rolar_opcao(op: dict) -> None:
     metade_bolso = valor_final * 0.50
     metade_reinvestir = valor_final * 0.50
 
-    st.markdown("---")
-    m1, m2, m3 = st.columns(3)
-    with m1:
-        st.metric("Total Obtido", _moeda(valor_final), f"+{lucro_pct:.1f}%")
-    with m2:
-        st.metric("💰 50% Lucro no Bolso", _moeda(metade_bolso))
-    with m3:
-        st.metric("🚀 50% Reinvestir", _moeda(metade_reinvestir))
+    # Cartões de resumo responsivos (sem truncamento por ellipsis)
+    st.markdown(f"""
+    <div style="display: flex; gap: 10px; margin: 15px 0;">
+        <div style="flex: 1; background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 12px; text-align: center;">
+            <div style="font-size: 0.72rem; color: #64748b; font-weight: 700; text-transform: uppercase;">Total Obtido</div>
+            <div style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin: 4px 0;">{_moeda(valor_final)}</div>
+            <div style="font-size: 0.75rem; color: #16a34a; font-weight: 700;">{lucro_pct:+.1f}%</div>
+        </div>
+        <div style="flex: 1; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; padding: 12px; text-align: center;">
+            <div style="font-size: 0.72rem; color: #15803d; font-weight: 700; text-transform: uppercase;">💰 50% no Bolso</div>
+            <div style="font-size: 1.15rem; font-weight: 700; color: #166534; margin: 4px 0;">{_moeda(metade_bolso)}</div>
+            <div style="font-size: 0.75rem; color: #15803d; font-weight: 600;">Lucro Garantido</div>
+        </div>
+        <div style="flex: 1; background: #eff6ff; border: 1.5px solid #93c5fd; border-radius: 8px; padding: 12px; text-align: center;">
+            <div style="font-size: 0.72rem; color: #1d4ed8; font-weight: 700; text-transform: uppercase;">🚀 50% Reinvestir</div>
+            <div style="font-size: 1.15rem; font-weight: 700; color: #1e40af; margin: 4px 0;">{_moeda(metade_reinvestir)}</div>
+            <div style="font-size: 0.75rem; color: #1d4ed8; font-weight: 600;">Nova Perna</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    st.markdown("---")
     st.markdown("#### Nova Opção (Perna Futura)")
 
     nc1, nc2, nc3 = st.columns(3)
@@ -94,7 +114,8 @@ def modal_rolar_opcao(op: dict) -> None:
             "Novo Código da Opção",
             value="",
             placeholder="Ex: BEEFX400",
-            help="Escolha uma opção com boa liquidez mais próxima do dinheiro (ATM)."
+            help="Escolha uma opção com boa liquidez mais próxima do dinheiro (ATM).",
+            key="modal_rol_novo_cod"
         ).strip().upper()
     with nc2:
         novo_preco = st.number_input(
@@ -102,7 +123,8 @@ def modal_rolar_opcao(op: dict) -> None:
             min_value=0.01,
             value=float(preco_pago),
             step=0.01,
-            format="%.2f"
+            format="%.2f",
+            key="modal_rol_novo_preco"
         )
     with nc3:
         sugestao_qtd = max(100.0, round((metade_reinvestir / novo_preco) / 100) * 100) if novo_preco > 0 else 100.0
@@ -111,13 +133,14 @@ def modal_rolar_opcao(op: dict) -> None:
             min_value=1.0,
             value=float(sugestao_qtd),
             step=100.0,
-            help=f"Calculado para aproximar do alvo de {_moeda(metade_reinvestir)}"
+            help=f"Calculado para aproximar do alvo de {_moeda(metade_reinvestir)}",
+            key="modal_rol_nova_qtd"
         )
 
     novo_alocado_calc = nova_qtd * novo_preco
     st.caption(f"Valor a alocar na nova opção: **{_moeda(novo_alocado_calc)}**")
 
-    obs = st.text_input("Observações", value="Rolagem com preservação de 50% de lucro.")
+    obs = st.text_input("Observações", value="Rolagem com preservação de 50% de lucro.", key="modal_rol_obs")
 
     if st.button("Confirmar Rolagem", type="primary", use_container_width=True, icon=":material/sync:"):
         if not novo_codigo:
@@ -132,7 +155,100 @@ def modal_rolar_opcao(op: dict) -> None:
                 nova_quantidade=nova_qtd,
                 observacoes=obs,
             )
-            st.success(f"Rolagem executada! {codigo} encerrada e {novo_codigo} aberta.")
+            st.success(f"Rolagem executada com sucesso! {codigo} encerrada e {novo_codigo} aberta.")
+            st.rerun()
+
+
+@st.dialog("🔄 Virada de Tendência (CALL ⇄ PUT)")
+def modal_virar_tendencia(op: dict) -> None:
+    """Encerra a posição atual e abre uma nova perna no sentido oposto da tendência."""
+    conexao = paginas.obter_conexao()
+    usuario_id = int(st.session_state["usuario_id"])
+
+    codigo = op["codigo"]
+    estrutura_atual = op.get("estrutura", "COMPRA DE PUT")
+    preco_pago = float(op["preco_pago"])
+    preco_atual = float(op.get("preco_atual") or preco_pago)
+    quantidade = float(op["quantidade"])
+    alocado = float(op["valor_alocado"])
+
+    # Sugestão de inversão
+    if "PUT" in estrutura_atual:
+        estrutura_sugerida = estrutura_atual.replace("PUT", "CALL")
+    elif "CALL" in estrutura_atual:
+        estrutura_sugerida = estrutura_atual.replace("CALL", "PUT")
+    else:
+        estrutura_sugerida = "COMPRA DE CALL"
+
+    st.markdown(f"### Virada de Tendência da Opção **{codigo}**")
+    st.caption(f"Posição atual: **{estrutura_atual}** | Alocado: **{_moeda(alocado)}**")
+    st.info(
+        "🔄 **Virada de Tendência**: O ativo reverteu a tendência. Encerre a perna atual "
+        "e abra imediatamente a nova perna na direção oposta para acompanhar o novo movimento do mercado."
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        dt_virada = st.date_input("Data da Virada", value=date.today(), key="modal_vir_dt")
+        dt_str = dt_virada.strftime("%d/%m/%Y")
+    with c2:
+        preco_fechamento = st.number_input(
+            "Preço de Saída da Atual (R$)",
+            min_value=0.00,
+            value=float(preco_atual),
+            step=0.01,
+            format="%.2f",
+            help="Preço unitário pelo qual você encerra a perna atual.",
+            key="modal_vir_fech"
+        )
+
+    valor_final = quantidade * preco_fechamento
+    if "VENDA" in estrutura_atual:
+        res_fin = alocado - valor_final
+        res_pct = ((op.get("preco_recebido", 0) - preco_fechamento) / op.get("preco_recebido", 1) * 100) if op.get("preco_recebido", 0) > 0 else 0.0
+    else:
+        res_fin = valor_final - alocado
+        res_pct = ((preco_fechamento - preco_pago) / preco_pago * 100) if preco_pago > 0 else 0.0
+
+    st.markdown(f"""
+    <div style="background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; margin: 10px 0; display: flex; justify-content: space-between;">
+        <span>Resultado Perna Atual: <strong style="color: {'#16a34a' if res_fin >= 0 else '#dc2626'};">{_moeda(res_fin)} ({res_pct:+.1f}%)</strong></span>
+        <span>Valor Final Resgatado: <strong>{_moeda(valor_final)}</strong></span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("#### Nova Perna (Sentido Invertido)")
+    nc1, nc2, nc3, nc4 = st.columns([1.5, 1.8, 1.2, 1.2])
+    with nc1:
+        novo_cod = st.text_input("Novo Código", placeholder="Ex: PETRC350", key="modal_vir_novo_cod").strip().upper()
+    with nc2:
+        estruturas = ["COMPRA DE CALL", "COMPRA DE PUT", "VENDA DE CALL", "VENDA DE PUT"]
+        idx_est = estruturas.index(estrutura_sugerida) if estrutura_sugerida in estruturas else 0
+        nova_est = st.selectbox("Nova Estrutura", estruturas, index=idx_est, key="modal_vir_nova_est")
+    with nc3:
+        novo_pago = st.number_input("Preço Pago (R$)", min_value=0.01, value=0.50, step=0.01, format="%.2f", key="modal_vir_novo_pago")
+    with nc4:
+        nova_qtd = st.number_input("Quantidade", min_value=1.0, value=float(quantidade), step=100.0, key="modal_vir_nova_qtd")
+
+    novo_alocado = nova_qtd * novo_pago
+    st.caption(f"Capital alocado na nova perna invertida: **{_moeda(novo_alocado)}**")
+    obs_vir = st.text_input("Observações", value=f"Virada de tendência de {codigo} ({estrutura_atual}) para {novo_cod or 'nova opção'}.", key="modal_vir_obs")
+
+    if st.button("Confirmar Virada de Tendência", type="primary", use_container_width=True, icon=":material/swap_horiz:"):
+        if not novo_cod:
+            st.error("Informe o código da nova opção.")
+        else:
+            bd.virar_tendencia_opcao_operacao(
+                conexao, usuario_id, op["id"],
+                data_virada=dt_str,
+                preco_fechamento=preco_fechamento,
+                novo_codigo=novo_cod,
+                novo_preco_pago=novo_pago,
+                nova_quantidade=nova_qtd,
+                nova_estrutura=nova_est,
+                observacoes=obs_vir,
+            )
+            st.success(f"Virada executada! {codigo} encerrada e {novo_cod} ({nova_est}) aberta.")
             st.rerun()
 
 
@@ -143,14 +259,14 @@ def modal_encerrar_opcao(op: dict) -> None:
 
     codigo = op["codigo"]
     preco_pago = float(op["preco_pago"])
-    preco_atual = float(op["preco_atual"]) if float(op.get("preco_atual") or 0.0) > 0 else preco_pago
+    preco_atual = float(op.get("preco_atual") or preco_pago)
     quantidade = float(op["quantidade"])
     alocado = float(op["valor_alocado"])
 
     st.markdown(f"### Encerrar Operação **{codigo}**")
     c1, c2 = st.columns(2)
     with c1:
-        dt_fim = st.date_input("Data de Encerramento", value=date.today())
+        dt_fim = st.date_input("Data de Encerramento", value=date.today(), key="modal_enc_dt")
         data_str = dt_fim.strftime("%d/%m/%Y")
     with c2:
         preco_saida = st.number_input(
@@ -159,6 +275,7 @@ def modal_encerrar_opcao(op: dict) -> None:
             value=float(preco_atual),
             step=0.01,
             format="%.2f",
+            key="modal_enc_preco_saida"
         )
 
     valor_final = quantidade * preco_saida
@@ -173,7 +290,7 @@ def modal_encerrar_opcao(op: dict) -> None:
         f"**Resultado:** `{_moeda(res_fin)}` (`{res_pct:+.1f}%`) | "
         f"**Valor Final:** `{_moeda(valor_final)}`"
     )
-    obs = st.text_input("Observações de Fechamento", value="")
+    obs = st.text_input("Observações de Fechamento", value="", key="modal_enc_obs")
 
     if st.button("Confirmar Encerramento", type="primary", use_container_width=True, icon=":material/check:"):
         bd.encerrar_opcao_operacao(
@@ -184,6 +301,110 @@ def modal_encerrar_opcao(op: dict) -> None:
         )
         st.success(f"Operação {codigo} encerrada!")
         st.rerun()
+
+
+@st.dialog("✏️ Editar / Corrigir Operação")
+def modal_editar_operacao(op: dict) -> None:
+    """Permite alterar qualquer campo da operação e recalcula as métricas automaticamente."""
+    conexao = paginas.obter_conexao()
+    usuario_id = int(st.session_state["usuario_id"])
+
+    st.markdown(f"### Editar Operação **{op['codigo']}** (ID #{op['id']})")
+    st.caption("Ajuste qualquer dado da operação. Dias, valor alocado e resultados são recalculados na hora.")
+
+    c1, c2, c3 = st.columns([1.5, 2, 1.5])
+    with c1:
+        novo_cod = st.text_input("Código", value=str(op["codigo"]), key="edt_cod").strip().upper()
+    with c2:
+        estruturas = ["COMPRA DE CALL", "COMPRA DE PUT", "VENDA DE CALL", "VENDA DE PUT", "TRAVA", "OUTRA"]
+        est_atual = str(op.get("estrutura") or "COMPRA DE CALL").upper()
+        idx_est = estruturas.index(est_atual) if est_atual in estruturas else 0
+        nova_est = st.selectbox("Estrutura", estruturas, index=idx_est, key="edt_est")
+    with c3:
+        status_opts = ["aberta", "encerrada", "rolada", "virada"]
+        st_atual = str(op.get("status") or "aberta").lower()
+        idx_st = status_opts.index(st_atual) if st_atual in status_opts else 0
+        novo_status = st.selectbox("Status", status_opts, index=idx_st, key="edt_status")
+
+    c4, c5, c6 = st.columns(3)
+    with c4:
+        dt_ini_str = _p_data(op["data_inicio"])
+        dt_ini = st.text_input("Data Início (DD/MM/AAAA)", value=dt_ini_str, key="edt_dt_ini")
+    with c5:
+        dt_fim_str = _p_data(op.get("data_fim")) if op.get("data_fim") else ""
+        dt_fim = st.text_input("Data Fim (DD/MM/AAAA ou vazio)", value=dt_fim_str, key="edt_dt_fim")
+    with c6:
+        dias_val = op.get("dias")
+        dias_in = st.number_input("Dias (0 = auto)", min_value=0, value=int(dias_val or 0), step=1, key="edt_dias")
+
+    c7, c8, c9 = st.columns(3)
+    with c7:
+        qtd_in = st.number_input("Quantidade", min_value=1.0, value=float(op.get("quantidade") or 100.0), step=100.0, key="edt_qtd")
+    with c8:
+        pago_in = st.number_input("Preço Pago (R$)", min_value=0.00, value=float(op.get("preco_pago") or 0.0), step=0.01, format="%.2f", key="edt_pago")
+    with c9:
+        if novo_status == "aberta":
+            preco_aux = st.number_input("Cotação Atual (R$)", min_value=0.00, value=float(op.get("preco_atual") or pago_in), step=0.01, format="%.2f", key="edt_paux")
+            recebido_in = 0.0
+        else:
+            recebido_in = st.number_input("Preço Saída / Recebido (R$)", min_value=0.00, value=float(op.get("preco_recebido") or pago_in), step=0.01, format="%.2f", key="edt_prec")
+            preco_aux = recebido_in
+
+    obs_in = st.text_input("Observações", value=str(op.get("observacoes") or ""), key="edt_obs")
+
+    # Preview dos cálculos
+    aloc_calc = qtd_in * pago_in
+    if novo_status != "aberta":
+        final_calc = qtd_in * recebido_in
+        if "VENDA" in nova_est:
+            res_calc = aloc_calc - final_calc
+            pct_calc = ((op.get("preco_recebido", 0) - recebido_in) / op.get("preco_recebido", 1) * 100) if op.get("preco_recebido", 0) > 0 else 0.0
+        else:
+            res_calc = final_calc - aloc_calc
+            pct_calc = ((recebido_in - pago_in) / pago_in * 100) if pago_in > 0 else 0.0
+        st.caption(f"Valor Alocado: **{_moeda(aloc_calc)}** | Valor Final: **{_moeda(final_calc)}** | Lucro: **{_moeda(res_calc)} ({pct_calc:+.1f}%)**")
+    else:
+        st.caption(f"Valor Alocado: **{_moeda(aloc_calc)}** | Cotação: **{_moeda(preco_aux)}**")
+
+    if st.button("Salvar Alterações", type="primary", use_container_width=True, icon=":material/save:"):
+        dados_atualizacao = {
+            "codigo": novo_cod,
+            "estrutura": nova_est,
+            "status": novo_status,
+            "data_inicio": dt_ini,
+            "data_fim": dt_fim.strip() if dt_fim else None,
+            "dias": int(dias_in) if dias_in > 0 else None,
+            "quantidade": qtd_in,
+            "preco_pago": pago_in,
+            "preco_recebido": recebido_in,
+            "preco_atual": preco_aux,
+            "valor_alocado": aloc_calc,
+            "observacoes": obs_in,
+        }
+        bd.atualizar_opcao_operacao_completa(conexao, usuario_id, op["id"], dados_atualizacao)
+        st.success("Operação atualizada com sucesso!")
+        st.rerun()
+
+
+@st.dialog("🗑️ Excluir Operação")
+def modal_excluir_operacao(op: dict) -> None:
+    conexao = paginas.obter_conexao()
+    usuario_id = int(st.session_state["usuario_id"])
+
+    st.markdown(f"### Excluir Operação **{op['codigo']}**?")
+    st.warning(
+        f"Atenção: A operação **{op['codigo']}** ({op.get('estrutura')}) cadastrada em "
+        f"**{_p_data(op['data_inicio'])}** será permanentemente removida do seu diário."
+    )
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Sim, Excluir", type="primary", use_container_width=True, icon=":material/delete:"):
+            bd.excluir_opcao_operacao(conexao, usuario_id, op["id"])
+            st.success("Operação removida com sucesso!")
+            st.rerun()
+    with c2:
+        if st.button("Cancelar", use_container_width=True):
+            st.rerun()
 
 
 @st.dialog("✏️ Atualizar Cotação")
@@ -203,7 +424,8 @@ def modal_atualizar_cotacao(op: dict) -> None:
         min_value=0.01,
         value=float(preco_atual),
         step=0.01,
-        format="%.2f"
+        format="%.2f",
+        key="modal_cot_novo_preco"
     )
 
     if preco_pago > 0:
@@ -218,10 +440,14 @@ def modal_atualizar_cotacao(op: dict) -> None:
         st.rerun()
 
 
+# ---------------------------------------------------------------------------
+# Página Principal do Diário de Opções
+# ---------------------------------------------------------------------------
+
 def pagina_diario_opcoes() -> None:
     tema.cabecalho(
         "Gestão e Diário de Opções",
-        "Acompanhe suas operações, controle posições abertas e receba alertas inteligentes de rolagem com preservação de capital.",
+        "Acompanhe suas operações, controle posições abertas, realize rolagens com preservação de capital e virada de tendência.",
         "📈"
     )
     conexao = paginas.obter_conexao()
@@ -234,41 +460,56 @@ def pagina_diario_opcoes() -> None:
         st.info("👋 **Bem-vindo ao Diário de Opções!** Você ainda não possui operações cadastradas. Anexe sua planilha Excel/CSV na aba 'Importar Planilha' ou cadastre sua primeira operação abaixo.")
 
     # 2. Métricas Consolidadas
-    encerradas = [o for o in ops if o["status"] in ("encerrada", "rolada")]
+    encerradas = [o for o in ops if o["status"] in ("encerrada", "rolada", "virada")]
     abertas = [o for o in ops if o["status"] == "aberta"]
 
     vitoriosas = len([o for o in encerradas if o["sucesso"] == "s"])
     win_rate = (vitoriosas / len(encerradas) * 100) if encerradas else 0.0
     lucro_total = sum(float(o["resultado_financeiro"]) for o in encerradas)
     capital_aberto = sum(float(o["valor_alocado"]) for o in abertas)
+    capital_encerrado = sum(float(o["valor_alocado"]) for o in encerradas)
 
-    # Verificar gatilhos de rolagem prontos (rendimento >= meta)
+    # Nova métrica: % acumulada (soma das % de ganho das operações encerradas)
+    pct_acumulada = sum(float(o.get("resultado_pct") or 0.0) for o in encerradas)
+    # Nova métrica: % retorno sobre capital alocado nas encerradas
+    retorno_sobre_capital = (lucro_total / capital_encerrado * 100) if capital_encerrado > 0 else 0.0
+
+    # Configuração dinâmica do alerta de rolagem (80%, 100%, 120%, 150%)
+    if "meta_alerta_rolagem" not in st.session_state:
+        st.session_state["meta_alerta_rolagem"] = 100.0
+
+    gatilho_global = float(st.session_state["meta_alerta_rolagem"])
+
+    # Verificar gatilhos de rolagem prontos
     rolagens_prontas = []
     for o in abertas:
         p_pago = float(o["preco_pago"])
         p_atual = float(o.get("preco_atual") or p_pago)
-        meta = float(o.get("meta_rolagem_pct") or 100.0)
         if p_pago > 0 and p_atual > 0:
             if "VENDA" in o.get("estrutura", ""):
                 rend = ((float(o.get("preco_recebido") or p_pago) - p_atual) / float(o.get("preco_recebido") or p_pago)) * 100
             else:
                 rend = ((p_atual - p_pago) / p_pago) * 100
-            if rend >= meta:
+            if rend >= gatilho_global:
                 rolagens_prontas.append((o, rend))
 
     tema.kpis([
         {"rotulo": "Taxa de Acerto (Win Rate)", "valor": f"{win_rate:.1f}%", "icone": "🎯"},
         {"rotulo": "Lucro Realizado Total", "valor": _moeda(lucro_total), "icone": "💰"},
+        {"rotulo": "Rentabilidade Acumulada (%)", "valor": f"{pct_acumulada:+.1f}%", "icone": "📈"},
+        {"rotulo": "Retorno s/ Capital Alocado", "valor": f"{retorno_sobre_capital:+.1f}%", "icone": "🚀"},
+    ])
+    tema.kpis([
         {"rotulo": "Capital Alocado em Aberto", "valor": _moeda(capital_aberto), "icone": "🛡️"},
-        {"rotulo": "Posições Prontas p/ Rolar", "valor": f"{len(rolagens_prontas)} alerta(s)", "icone": "🚨"},
+        {"rotulo": f"Posições Prontas p/ Rolar (≥{gatilho_global:.0f}%)", "valor": f"{len(rolagens_prontas)} alerta(s)", "icone": "🚨"},
     ])
 
     # 3. Alerta de Destaque para Rolagem
     if rolagens_prontas:
         with st.container():
             st.warning(
-                f"🎯 **Gatilho de Rolagem Atingido!** {len(rolagens_prontas)} opção(ões) atingiram a meta de lucro (≥100%). "
-                "Critério sugerido: **embolsar 50% do valor final** e **rolar os outros 50%** para a opção ATM mais líquida da próxima série."
+                f"🎯 **Gatilho de Rolagem Atingido!** {len(rolagens_prontas)} opção(ões) atingiram o alvo configurado (≥{gatilho_global:.0f}%). "
+                "Critério de execução: **embolsar 50% do valor final** e **reinvestir os outros 50%** na opção ATM mais líquida da próxima série."
             )
             for op_pronta, rend_pct in rolagens_prontas:
                 c_al1, c_al2 = st.columns([3, 1])
@@ -278,51 +519,76 @@ def pagina_diario_opcoes() -> None:
                     if st.button(f"🔄 Rolar {op_pronta['codigo']}", key=f"btn_alerta_rol_{op_pronta['id']}", type="primary", use_container_width=True):
                         modal_rolar_opcao(op_pronta)
 
-    # 4. Abas do Diário (Slim & Rápido)
-    aba_abertas, aba_encerradas, aba_nova, aba_importar = st.tabs([
+    # 4. Abas do Diário (Com Aba Integralizada / Visão Completa)
+    aba_abertas, aba_encerradas, aba_completa, aba_nova, aba_importar = st.tabs([
         f"🟢 Posições Abertas ({len(abertas)})",
         f"📜 Histórico Encerradas ({len(encerradas)})",
+        f"📑 Visão Completa ({len(ops)})",
         "➕ Nova Operação",
         "📥 Importar Planilha"
     ])
 
-    # --- ABA 1: POSIÇÕES ABERTAS (FORMATO SLIM TABLE) ---
+    # --- ABA 1: POSIÇÕES ABERTAS (FORMATO SLIM, SEM MENUS CONFUSOS) ---
     with aba_abertas:
         if not abertas:
             st.info("Nenhuma posição aberta no momento.")
         else:
-            st.caption(f"{len(abertas)} opções abertas em carteira. Visualize o rendimento e acione as ações rapidamente.")
+            # Barra de Configuração e Filtros
+            col_cfg1, col_cfg2, col_cfg3 = st.columns([1.5, 1.5, 1.5])
+            with col_cfg1:
+                alerta_opcoes = [80.0, 100.0, 120.0, 150.0]
+                idx_sel = alerta_opcoes.index(gatilho_global) if gatilho_global in alerta_opcoes else 1
+                novo_gatilho = st.selectbox(
+                    "🎯 Alerta de Rolagem em %",
+                    alerta_opcoes,
+                    index=idx_sel,
+                    format_func=lambda x: f"Gatilho ≥ {x:.0f}%",
+                    key="sel_gatilho_alerta_box"
+                )
+                if novo_gatilho != gatilho_global:
+                    st.session_state["meta_alerta_rolagem"] = novo_gatilho
+                    st.rerun()
 
-            # Montagem do DataFrame slim
+            with col_cfg2:
+                ativos_ab = ["Todos"] + sorted(list({str(x.get("ativo_subjacente") or x["codigo"][:4]) for x in abertas}))
+                filtro_ab_ativo = st.selectbox("Filtrar por Ativo", ativos_ab, key="fil_ab_ativo")
+
+            with col_cfg3:
+                est_ab = ["Todas"] + sorted(list({str(x.get("estrutura")) for x in abertas if x.get("estrutura")}))
+                filtro_ab_est = st.selectbox("Filtrar por Estrutura", est_ab, key="fil_ab_est")
+
+            abertas_filtradas = abertas
+            if filtro_ab_ativo != "Todos":
+                abertas_filtradas = [o for o in abertas_filtradas if (o.get("ativo_subjacente") or o["codigo"][:4]) == filtro_ab_ativo]
+            if filtro_ab_est != "Todas":
+                abertas_filtradas = [o for o in abertas_filtradas if o.get("estrutura") == filtro_ab_est]
+
+            st.caption(f"Exibindo {len(abertas_filtradas)} de {len(abertas)} opções abertas.")
+
+            # Montagem da tabela limpa
             linhas_abertas = []
-            for op in abertas:
+            for op in abertas_filtradas:
                 p_pago = float(op["preco_pago"])
                 p_atual = float(op.get("preco_atual") or p_pago)
-                meta = float(op.get("meta_rolagem_pct") or 100.0)
                 alocado_op = float(op["valor_alocado"])
                 qtd_op = float(op["quantidade"])
-
-                if p_pago > 0:
-                    rend_pct = ((p_atual - p_pago) / p_pago) * 100
-                else:
-                    rend_pct = 0.0
-
-                atingiu = rend_pct >= meta
-                status_aviso = f"🎯 ROLAR (+{rend_pct:.1f}%)" if atingiu else (f"+{rend_pct:.1f}%" if rend_pct > 0 else f"{rend_pct:.1f}%")
+                rend_pct = ((p_atual - p_pago) / p_pago * 100) if p_pago > 0 else 0.0
+                atingiu = rend_pct >= gatilho_global
+                dias_op = op.get("dias") or bd._calcular_dias_operacao(op["data_inicio"])
 
                 linhas_abertas.append({
                     "ID": op["id"],
                     "Código": op["codigo"],
-                    "Ativo": op.get("ativo_subjacente", "—"),
+                    "Ativo": op.get("ativo_subjacente") or op["codigo"][:4],
                     "Estrutura": op.get("estrutura", "—"),
                     "Início": _p_data(op["data_inicio"]),
+                    "Dias": int(dias_op),
                     "Qtd": int(qtd_op),
-                    "Pago (R$)": p_pago,
-                    "Atual (R$)": p_atual,
+                    "Pago": _moeda(p_pago),
+                    "Atual": _moeda(p_atual),
                     "Rendimento %": f"{rend_pct:+.1f}%",
-                    "Alocado (R$)": alocado_op,
-                    "Meta": f"{meta:.0f}%",
-                    "Gatilho": "🎯 ROLAR" if atingiu else "Em andamento"
+                    "Alocado": _moeda(alocado_op),
+                    "Gatilho": f"🎯 ROLAR (+{rend_pct:.0f}%)" if atingiu else "Normal"
                 })
 
             df_ab_view = pd.DataFrame(linhas_abertas)
@@ -333,10 +599,10 @@ def pagina_diario_opcoes() -> None:
             )
 
             # Barra de Ações Rápidas por Opção
-            st.markdown("##### ⚡ Ações Rápidas para Posições Abertas")
-            col_sel, col_act1, col_act2, col_act3, col_act4 = st.columns([2.5, 1.2, 1.2, 1.2, 1])
+            st.markdown("##### ⚡ Ações Rápidas por Ativo")
+            col_sel, col_act1, col_act2, col_act3, col_act4, col_act5 = st.columns([2.5, 1.2, 1.3, 1.2, 1.2, 1.1])
 
-            opcoes_dict = {o["id"]: f"{o['codigo']} ({o.get('estrutura')}) - Pago {_moeda(o['preco_pago'])}" for o in abertas}
+            opcoes_dict = {o["id"]: f"{o['codigo']} ({o.get('estrutura')}) — Pago {_moeda(o['preco_pago'])}" for o in abertas_filtradas}
             with col_sel:
                 op_escolhida_id = st.selectbox(
                     "Selecione uma opção:",
@@ -345,35 +611,41 @@ def pagina_diario_opcoes() -> None:
                     key="sel_op_aberta_acao"
                 )
 
-            op_alvo = next((o for o in abertas if o["id"] == op_escolhida_id), None)
+            op_alvo = next((o for o in abertas_filtradas if o["id"] == op_escolhida_id), None)
             if op_alvo:
                 with col_act1:
-                    if st.button("🔄 Rolar", type="primary", use_container_width=True, help="Rolar com 50% no bolso"):
+                    if st.button("🔄 Rolar", type="primary", use_container_width=True, help="Rolar com 50% de lucro no bolso"):
                         modal_rolar_opcao(op_alvo)
                 with col_act2:
-                    if st.button("✏️ Cotação", use_container_width=True, help="Atualizar preço corrente"):
-                        modal_atualizar_cotacao(op_alvo)
+                    if st.button("🔄 Virar", type="secondary", use_container_width=True, help="Virada de tendência (CALL ⇄ PUT)"):
+                        modal_virar_tendencia(op_alvo)
                 with col_act3:
+                    if st.button("✏️ Editar", use_container_width=True, help="Editar e corrigir qualquer dado"):
+                        modal_editar_operacao(op_alvo)
+                with col_act4:
                     if st.button("🏁 Encerrar", use_container_width=True, help="Encerrar posição"):
                         modal_encerrar_opcao(op_alvo)
-                with col_act4:
-                    if st.button("💨 Pó", use_container_width=True, help="Encerrar a R$ 0,00"):
-                        bd.encerrar_opcao_operacao(
-                            conexao, usuario_id, op_alvo["id"],
-                            data_fim=date.today().strftime("%d/%m/%Y"),
-                            preco_recebido=0.00,
-                            observacoes="Expirou no pó"
-                        )
-                        st.success(f"{op_alvo['codigo']} encerrada no pó.")
-                        st.rerun()
+                with col_act5:
+                    if st.button("🗑️ Excluir", use_container_width=True, help="Remover do diário"):
+                        modal_excluir_operacao(op_alvo)
 
             # Editor rápido de cotações em massa
-            with st.expander("⚡ Atualizar Cotações de Todas as Opções Abertas (Tabela Rápida)"):
-                st.caption("Edite a coluna 'Atual (R$)' das opções e clique no botão abaixo para recalcular todos os rendimentos:")
-                df_editor = df_ab_view[["ID", "Código", "Pago (R$)", "Atual (R$)"]].copy()
+            with st.expander("⚡ Atualizar Cotações de Todas as Opções Abertas"):
+                st.caption("Altere a cotação de mercado corrente de cada opção e salve para recalcular os alertas:")
+                editor_data = []
+                for op in abertas_filtradas:
+                    p_pago = float(op["preco_pago"])
+                    p_atual = float(op.get("preco_atual") or p_pago)
+                    editor_data.append({
+                        "ID": op["id"],
+                        "Código": op["codigo"],
+                        "Preço Pago": p_pago,
+                        "Cotação Atual": p_atual
+                    })
+                df_editor = pd.DataFrame(editor_data)
                 editado = st.data_editor(
                     df_editor,
-                    disabled=["ID", "Código", "Pago (R$)"],
+                    disabled=["ID", "Código", "Preço Pago"],
                     use_container_width=True,
                     hide_index=True,
                     key="editor_cotacoes_em_massa"
@@ -381,65 +653,197 @@ def pagina_diario_opcoes() -> None:
                 if st.button("Salvar Todas as Cotações", type="primary", icon=":material/save:"):
                     for _, row in editado.iterrows():
                         oid = int(row["ID"])
-                        nova_cot = float(row["Atual (R$)"])
+                        nova_cot = float(row["Cotação Atual"])
                         bd.atualizar_cotacao_opcao(conexao, usuario_id, oid, nova_cot)
-                    st.success("Todas as cotações foram atualizadas com sucesso!")
+                    st.success("Cotações atualizadas com sucesso!")
                     st.rerun()
 
-    # --- ABA 2: HISTÓRICO DE ENCERRADAS (SLIM TABLE) ---
+    # --- ABA 2: HISTÓRICO DE ENCERRADAS ---
     with aba_encerradas:
         if not encerradas:
             st.info("Nenhuma operação encerrada ainda.")
         else:
-            df_enc = pd.DataFrame(encerradas)
             col_fil1, col_fil2 = st.columns(2)
             with col_fil1:
-                ativos_unicos = ["Todos"] + sorted(list({str(x) for x in df_enc["ativo_subjacente"] if pd.notna(x)}))
+                ativos_unicos = ["Todos"] + sorted(list({str(x.get("ativo_subjacente") or x["codigo"][:4]) for x in encerradas}))
                 filtro_ativo = st.selectbox("Filtrar por Ativo Subjacente", ativos_unicos, key="fil_enc_ativo")
             with col_fil2:
-                estruturas = ["Todas"] + sorted(list({str(x) for x in df_enc["estrutura"] if pd.notna(x)}))
+                estruturas = ["Todas"] + sorted(list({str(x.get("estrutura")) for x in encerradas if x.get("estrutura")}))
                 filtro_est = st.selectbox("Filtrar por Estrutura", estruturas, key="fil_enc_est")
 
-            df_view = df_enc.copy()
+            encerradas_filtradas = encerradas
             if filtro_ativo != "Todos":
-                df_view = df_view[df_view["ativo_subjacente"] == filtro_ativo]
+                encerradas_filtradas = [o for o in encerradas_filtradas if (o.get("ativo_subjacente") or o["codigo"][:4]) == filtro_ativo]
             if filtro_est != "Todas":
-                df_view = df_view[df_view["estrutura"] == filtro_est]
+                encerradas_filtradas = [o for o in encerradas_filtradas if o.get("estrutura") == filtro_est]
 
-            st.caption(f"Exibindo {len(df_view)} de {len(df_enc)} operações encerradas.")
+            st.caption(f"Exibindo {len(encerradas_filtradas)} de {len(encerradas)} operações encerradas.")
 
-            colunas_exibir = [
-                "codigo", "estrutura", "data_inicio", "data_fim", "dias",
-                "preco_pago", "preco_recebido", "resultado_pct", "valor_alocado",
-                "valor_final", "resultado_financeiro", "sucesso", "status", "observacoes"
-            ]
-            df_show = df_view[[c for c in colunas_exibir if c in df_view.columns]].copy()
-            df_show.columns = [
-                "Código", "Estrutura", "Início", "Fim", "Dias",
-                "Pago (R$)", "Recebido (R$)", "Resultado %", "Alocado (R$)",
-                "Final (R$)", "Lucro (R$)", "Sucesso", "Status", "Obs"
-            ]
-            st.dataframe(df_show, use_container_width=True, hide_index=True)
+            linhas_enc = []
+            for o in encerradas_filtradas:
+                p_pago = float(o["preco_pago"])
+                p_rec = float(o.get("preco_recebido") or 0.0)
+                aloc = float(o.get("valor_alocado") or 0.0)
+                v_fin = float(o.get("valor_final") or 0.0)
+                res_fin = float(o.get("resultado_financeiro") or 0.0)
+                res_pct = float(o.get("resultado_pct") or 0.0)
+                dias_op = o.get("dias") or bd._calcular_dias_operacao(o["data_inicio"], o.get("data_fim"))
 
-            with st.expander("🗑️ Excluir ou Corrigir uma Operação"):
-                op_del = st.selectbox(
-                    "Selecione a operação",
-                    options=encerradas,
-                    format_func=lambda o: f"{o['codigo']} ({_p_data(o['data_inicio'])} a {_p_data(o['data_fim'])}) — Lucro: {_moeda(o['resultado_financeiro'])}",
-                    key="sel_op_del"
+                linhas_enc.append({
+                    "ID": o["id"],
+                    "Código": o["codigo"],
+                    "Estrutura": o.get("estrutura", "—"),
+                    "Início": _p_data(o["data_inicio"]),
+                    "Fim": _p_data(o.get("data_fim")),
+                    "Dias": int(dias_op),
+                    "Pago": _moeda(p_pago),
+                    "Recebido": _moeda(p_rec),
+                    "Resultado %": f"{res_pct:+.1f}%",
+                    "Alocado": _moeda(aloc),
+                    "Final": _moeda(v_fin),
+                    "Lucro (R$)": _moeda(res_fin),
+                    "Status": str(o.get("status", "encerrada")).capitalize(),
+                    "Obs": o.get("observacoes") or ""
+                })
+
+            df_enc_view = pd.DataFrame(linhas_enc)
+            st.dataframe(df_enc_view.drop(columns=["ID"]), use_container_width=True, hide_index=True)
+
+            # Ações de Edição e Exclusão Individual
+            st.markdown("##### ⚙️ Gerenciar Operação Encerrada")
+            col_e_sel, col_e_btn1, col_e_btn2 = st.columns([3, 1.2, 1.2])
+            enc_dict = {
+                o["id"]: f"{o['codigo']} ({_p_data(o['data_inicio'])} a {_p_data(o.get('data_fim'))}) — Lucro: {_moeda(o.get('resultado_financeiro', 0))}"
+                for o in encerradas_filtradas
+            }
+            with col_e_sel:
+                op_enc_sel_id = st.selectbox(
+                    "Selecione uma operação para editar ou excluir:",
+                    options=list(enc_dict.keys()),
+                    format_func=lambda i: enc_dict[i],
+                    key="sel_op_enc_gerenciar"
                 )
-                if st.button("Excluir Operação Selecionada", type="secondary"):
-                    bd.excluir_opcao_operacao(conexao, usuario_id, op_del["id"])
-                    st.success("Operação excluída.")
-                    st.rerun()
+            op_enc_alvo = next((o for o in encerradas_filtradas if o["id"] == op_enc_sel_id), None)
+            if op_enc_alvo:
+                with col_e_btn1:
+                    if st.button("✏️ Editar Operação", type="primary", use_container_width=True, key="btn_edt_enc"):
+                        modal_editar_operacao(op_enc_alvo)
+                with col_e_btn2:
+                    if st.button("🗑️ Excluir Operação", type="secondary", use_container_width=True, key="btn_del_enc"):
+                        modal_excluir_operacao(op_enc_alvo)
 
-    # --- ABA 3: NOVA OPERAÇÃO MANUAL (SIMPLES COMO PREENCHER PLANILHA) ---
+    # --- ABA 3: VISÃO COMPLETA (INTEGRALIZADA COMO NA PLANILHA NITRO) ---
+    with aba_completa:
+        st.markdown("#### 📑 Visão Integralizada (Todas as Operações)")
+        st.caption(
+            "Visualização consolidada de todas as operações (abertas e encerradas) em ordem de execução, "
+            "exatamente como na sua planilha original. Edite ou exclua qualquer registro individualmente."
+        )
+
+        col_fc1, col_fc2, col_fc3 = st.columns([1.5, 1.5, 1.5])
+        with col_fc1:
+            filtro_status_comp = st.selectbox(
+                "Filtrar por Status",
+                ["Todos", "Abertas", "Encerradas", "Roladas", "Viradas"],
+                key="fil_comp_status"
+            )
+        with col_fc2:
+            ativos_todos = ["Todos"] + sorted(list({str(x.get("ativo_subjacente") or x["codigo"][:4]) for x in ops}))
+            filtro_comp_ativo = st.selectbox("Filtrar por Ativo", ativos_todos, key="fil_comp_ativo")
+        with col_fc3:
+            est_todas = ["Todas"] + sorted(list({str(x.get("estrutura")) for x in ops if x.get("estrutura")}))
+            filtro_comp_est = st.selectbox("Filtrar por Estrutura", est_todas, key="fil_comp_est")
+
+        ops_vis = ops
+        if filtro_status_comp == "Abertas":
+            ops_vis = [o for o in ops_vis if o["status"] == "aberta"]
+        elif filtro_status_comp == "Encerradas":
+            ops_vis = [o for o in ops_vis if o["status"] == "encerrada"]
+        elif filtro_status_comp == "Roladas":
+            ops_vis = [o for o in ops_vis if o["status"] == "rolada"]
+        elif filtro_status_comp == "Viradas":
+            ops_vis = [o for o in ops_vis if o["status"] == "virada"]
+
+        if filtro_comp_ativo != "Todos":
+            ops_vis = [o for o in ops_vis if (o.get("ativo_subjacente") or o["codigo"][:4]) == filtro_comp_ativo]
+        if filtro_comp_est != "Todas":
+            ops_vis = [o for o in ops_vis if o.get("estrutura") == filtro_comp_est]
+
+        st.caption(f"Exibindo {len(ops_vis)} de {len(ops)} operações registradas.")
+
+        linhas_comp = []
+        for o in ops_vis:
+            st_op = o.get("status", "aberta").lower()
+            p_pago = float(o["preco_pago"])
+            p_rec = float(o.get("preco_recebido") or 0.0)
+            p_atual = float(o.get("preco_atual") or p_pago)
+            aloc = float(o.get("valor_alocado") or 0.0)
+            v_fin = float(o.get("valor_final") or 0.0)
+            res_fin = float(o.get("resultado_financeiro") or 0.0)
+
+            if st_op == "aberta":
+                res_pct = ((p_atual - p_pago) / p_pago * 100) if p_pago > 0 else 0.0
+                preco_col = _moeda(p_atual) + " (atual)"
+                lucro_col = "—"
+                fin_col = "—"
+            else:
+                res_pct = float(o.get("resultado_pct") or 0.0)
+                preco_col = _moeda(p_rec)
+                lucro_col = _moeda(res_fin)
+                fin_col = _moeda(v_fin)
+
+            dias_op = o.get("dias") or bd._calcular_dias_operacao(o["data_inicio"], o.get("data_fim"))
+
+            linhas_comp.append({
+                "ID": o["id"],
+                "Código": o["codigo"],
+                "Estrutura": o.get("estrutura", "—"),
+                "Início": _p_data(o["data_inicio"]),
+                "Fim": _p_data(o.get("data_fim")),
+                "Dias": int(dias_op),
+                "Pago": _moeda(p_pago),
+                "Saída/Atual": preco_col,
+                "Resultado %": f"{res_pct:+.1f}%",
+                "Status": st_op.capitalize(),
+                "Alocado": _moeda(aloc),
+                "Final": fin_col,
+                "Lucro": lucro_col,
+                "Obs": o.get("observacoes") or ""
+            })
+
+        df_comp_view = pd.DataFrame(linhas_comp)
+        st.dataframe(df_comp_view.drop(columns=["ID"]), use_container_width=True, hide_index=True)
+
+        # Gestor individual
+        st.markdown("##### ⚙️ Ação Individual sobre a Operação")
+        col_c_sel, col_c_btn1, col_c_btn2 = st.columns([3, 1.2, 1.2])
+        comp_dict = {
+            o["id"]: f"#{o['id']} {o['codigo']} ({o.get('status').upper()}) — Entrada: {_p_data(o['data_inicio'])} Pago {_moeda(o['preco_pago'])}"
+            for o in ops_vis
+        }
+        with col_c_sel:
+            op_comp_sel_id = st.selectbox(
+                "Selecione uma operação para editar ou excluir:",
+                options=list(comp_dict.keys()),
+                format_func=lambda i: comp_dict[i],
+                key="sel_op_comp_gerenciar"
+            )
+        op_comp_alvo = next((o for o in ops_vis if o["id"] == op_comp_sel_id), None)
+        if op_comp_alvo:
+            with col_c_btn1:
+                if st.button("✏️ Editar Operação", type="primary", use_container_width=True, key="btn_edt_comp"):
+                    modal_editar_operacao(op_comp_alvo)
+            with col_c_btn2:
+                if st.button("🗑️ Excluir Operação", type="secondary", use_container_width=True, key="btn_del_comp"):
+                    modal_excluir_operacao(op_comp_alvo)
+
+    # --- ABA 4: NOVA OPERAÇÃO MANUAL (CADASTRO RÁPIDO COM QUANTIDADE E PREÇO) ---
     with aba_nova:
         st.markdown("#### ⚡ Adicionar Operação Rápida")
-        st.caption("Preencha apenas o código, estrutura, data e preço pago. O ativo base e tipo são identificados na hora.")
+        st.caption("Informe a quantidade de contratos e o preço pago unitário. O valor alocado é calculado automaticamente.")
 
         with st.form("form_nova_operacao_rapida"):
-            r1, r2, r3, r4, r5 = st.columns([1.5, 1.8, 1.2, 1.2, 1.3])
+            r1, r2, r3 = st.columns([1.5, 2, 1.5])
             with r1:
                 cod_in = st.text_input("Código da Opção", placeholder="Ex: BEEFX400").strip().upper()
             with r2:
@@ -449,16 +853,17 @@ def pagina_diario_opcoes() -> None:
                 )
             with r3:
                 dt_in = st.date_input("Data Início", value=date.today())
+
+            r4, r5, r6 = st.columns(3)
             with r4:
-                preco_in = st.number_input("Preço Pago (R$)", min_value=0.01, value=0.50, step=0.01, format="%.2f")
+                qtd_in = st.number_input("Quantidade de Contratos", min_value=1.0, value=100.0, step=100.0)
             with r5:
-                aloc_in = st.number_input("Valor Alocado (R$)", min_value=1.0, value=150.0, step=10.0, format="%.2f")
+                preco_in = st.number_input("Preço Pago Unitário (R$)", min_value=0.01, value=0.50, step=0.01, format="%.2f")
+            with r6:
+                aloc_calculado = qtd_in * preco_in
+                st.metric("Valor Alocado Total", _moeda(aloc_calculado))
 
-            obs_in = st.text_input("Observações (opcional)", placeholder="Ex: Entrada por tendência / rompimento")
-
-            # Cálculo automático de quantidade
-            qtd_estimada = round(aloc_in / preco_in) if preco_in > 0 else 100
-            st.caption(f"Quantidade estimada de contratos: **{qtd_estimada}** | Preço unitário: **{_moeda(preco_in)}**")
+            obs_in = st.text_input("Observações (opcional)", placeholder="Ex: Entrada por rompimento de suporte / média de 20")
 
             salvar = st.form_submit_button("➕ Salvar Operação no Diário", type="primary", use_container_width=True)
             if salvar:
@@ -469,24 +874,24 @@ def pagina_diario_opcoes() -> None:
                         "codigo": cod_in,
                         "estrutura": estrutura_in,
                         "data_inicio": dt_in.strftime("%d/%m/%Y"),
-                        "quantidade": qtd_estimada,
+                        "quantidade": qtd_in,
                         "preco_pago": preco_in,
                         "preco_atual": preco_in,
-                        "valor_alocado": aloc_in,
-                        "meta_rolagem_pct": 100.0,
+                        "valor_alocado": aloc_calculado,
+                        "meta_rolagem_pct": gatilho_global,
                         "observacoes": obs_in,
                         "status": "aberta"
                     })
                     st.success(f"Operação {cod_in} cadastrada com sucesso!")
                     st.rerun()
 
-    # --- ABA 4: IMPORTAR PLANILHA ---
+    # --- ABA 5: IMPORTAR PLANILHA ---
     with aba_importar:
         st.markdown("#### Importar Planilha de Operações (Excel ou CSV)")
         st.write(
-            "Anexe a planilha com o histórico das suas operações. O leitor identifica automaticamente "
-            "as colunas de **Código/Ticker**, **Estrutura**, **Datas**, **Preço Pago**, **Preço Recebido**, "
-            "**Valor Alocado** e **Status**."
+            "Anexe sua planilha Nitro ou arquivo de controle. O sistema mapeia automaticamente "
+            "as colunas de **Código**, **Estrutura**, **Datas**, **Preço Pago**, **Preço Recebido**, "
+            "**Quantidade** e **Status**, e calcula automaticamente dias e resultados ausentes."
         )
 
         col_up, col_mod = st.columns([2, 1.2])
@@ -515,7 +920,10 @@ def pagina_diario_opcoes() -> None:
                     with st.spinner("Processando e cadastrando operações..."):
                         bytes_arquivo = arquivo_subido.getvalue()
                         res = bd.importar_opcoes_arquivo(conexao, usuario_id, bytes_arquivo, arquivo_subido.name)
-                        st.success(f"Importação realizada com sucesso! {res['importadas']} nova(s) operação(ões) inserida(s) e {res['atualizadas']} atualizada(s).")
+                        st.success(
+                            f"Importação concluída com sucesso! **{res['importadas']}** nova(s) operação(ões) inserida(s) "
+                            f"e **{res['atualizadas']}** atualizada(s). Dias e resultados faltantes foram calculados automaticamente."
+                        )
                         st.rerun()
                 except Exception as e:
                     st.error(f"Erro ao processar o arquivo: {e}")

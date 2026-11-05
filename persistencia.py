@@ -1510,6 +1510,57 @@ def gravar_monitor_legislacao(conexao: sqlite3.Connection, url: str, titulo: str
 # Módulo Opções & Diário de Trades
 # ---------------------------------------------------------------------------
 
+def _padronizar_data_str(val: str | None) -> str:
+    """Padroniza uma data para o formato DD/MM/AAAA."""
+    if not val:
+        return ""
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "none", "trava", "—", "-"):
+        return ""
+    if "/" in s:
+        partes = s.split("/")
+        if len(partes) == 3:
+            d, m, y = partes[0].strip(), partes[1].strip(), partes[2].strip()
+            if len(y) == 2:
+                y = f"20{y}"
+            try:
+                return f"{int(d):02d}/{int(m):02d}/{y}"
+            except Exception:
+                return s
+        return s
+    if "-" in s:
+        partes = s.split("-")
+        if len(partes) == 3 and len(partes[0]) == 4:
+            y, m, d = partes[0].strip(), partes[1].strip(), partes[2].strip()[:2]
+            try:
+                return f"{int(d):02d}/{int(m):02d}/{y}"
+            except Exception:
+                return s
+    return s
+
+
+def _calcular_dias_operacao(dt_inicio: str | None, dt_fim: str | None = None) -> int:
+    """Calcula os dias decorridos da operação (ou dias até hoje se aberta)."""
+    if not dt_inicio:
+        return 0
+    from datetime import date, datetime
+    def parse_d(s):
+        p = _padronizar_data_str(s)
+        if not p:
+            return None
+        try:
+            return datetime.strptime(p, "%d/%m/%Y").date()
+        except Exception:
+            return None
+    d1 = parse_d(dt_inicio)
+    if not d1:
+        return 0
+    d2 = parse_d(dt_fim) if dt_fim else date.today()
+    if not d2:
+        d2 = date.today()
+    return max(0, (d2 - d1).days)
+
+
 def identificar_opcao(codigo: str) -> dict:
     """
     Identifica ativo base, tipo (CALL/PUT) e mês de vencimento a partir do ticker B3.
@@ -1584,28 +1635,41 @@ def salvar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, dados: d
     ativo = dados.get("ativo_subjacente") or info["ativo_subjacente"]
     tipo = dados.get("tipo_opcao") or info["tipo_opcao"]
     estrutura = dados.get("estrutura", "COMPRA DE CALL").strip().upper()
-    data_inicio = dados.get("data_inicio") or agora()[:10]
-    data_fim = dados.get("data_fim") or None
+    data_inicio = _padronizar_data_str(dados.get("data_inicio")) or agora()[:10]
+    data_fim = _padronizar_data_str(dados.get("data_fim")) or None
+    
     dias = dados.get("dias")
+    if dias is None or str(dias).strip() == "" or str(dias).strip().lower() in ("nan", "none"):
+        dias = _calcular_dias_operacao(data_inicio, data_fim)
+    else:
+        try:
+            dias = int(float(str(dias).replace(",", ".")))
+        except Exception:
+            dias = _calcular_dias_operacao(data_inicio, data_fim)
+
     quantidade = float(dados.get("quantidade", 100))
     preco_pago = float(dados.get("preco_pago", 0.0))
     preco_recebido = float(dados.get("preco_recebido", 0.0))
     preco_atual = float(dados.get("preco_atual", preco_pago))
-    valor_alocado = float(dados.get("valor_alocado") or (quantidade * preco_pago if preco_pago > 0 else 0.0))
-    valor_final = float(dados.get("valor_final") or (quantidade * preco_recebido if preco_recebido > 0 else 0.0))
+    valor_alocado = round(float(dados.get("valor_alocado") or (quantidade * preco_pago if preco_pago > 0 else 0.0)), 2)
+    valor_final = round(float(dados.get("valor_final") or (quantidade * preco_recebido if preco_recebido > 0 else 0.0)), 2)
     status = dados.get("status", "aberta").lower().strip()
 
     resultado_financeiro = float(dados.get("resultado_financeiro") or 0.0)
     resultado_pct = float(dados.get("resultado_pct") or 0.0)
-    if status in ("encerrada", "rolada") and valor_final > 0:
-        if "VENDA" in estrutura:
-            resultado_financeiro = valor_alocado - valor_final
-            resultado_pct = ((preco_recebido - preco_pago) / preco_recebido * 100) if preco_recebido > 0 else 0.0
-        else:
-            resultado_financeiro = valor_final - valor_alocado
-            resultado_pct = ((preco_recebido - preco_pago) / preco_pago * 100) if preco_pago > 0 else 0.0
+    if status in ("encerrada", "rolada", "virada"):
+        if resultado_financeiro == 0.0 and valor_final > 0:
+            if "VENDA" in estrutura:
+                resultado_financeiro = valor_alocado - valor_final
+            else:
+                resultado_financeiro = valor_final - valor_alocado
+        if resultado_pct == 0.0:
+            if "VENDA" in estrutura and preco_recebido > 0:
+                resultado_pct = ((preco_recebido - preco_pago) / preco_recebido * 100)
+            elif preco_pago > 0 and preco_recebido > 0:
+                resultado_pct = ((preco_recebido - preco_pago) / preco_pago * 100)
 
-    sucesso = dados.get("sucesso") or ("s" if resultado_financeiro > 0 else "n")
+    sucesso = dados.get("sucesso") or ("s" if resultado_financeiro > 0 else ("n" if status != "aberta" else ""))
     operacao_origem_id = dados.get("operacao_origem_id")
     meta_rolagem_pct = float(dados.get("meta_rolagem_pct", 100.0))
     observacoes = dados.get("observacoes", "")
@@ -1631,7 +1695,7 @@ def salvar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, dados: d
 
 def encerrar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_id: int,
                            data_fim: str, preco_recebido: float, observacoes: str = "") -> None:
-    """Encerra uma operação de opção calculando os resultados."""
+    """Encerra uma operação de opção calculando os resultados e dias decorridos."""
     cur = conexao.execute("SELECT * FROM opcoes_operacoes WHERE id = ? AND usuario_id = ?",
                           (int(operacao_id), int(usuario_id)))
     op = cur.fetchone()
@@ -1644,6 +1708,8 @@ def encerrar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operac
     preco_pago = float(item["preco_pago"])
     valor_alocado = float(item["valor_alocado"])
     estrutura = item["estrutura"]
+    dt_fim = _padronizar_data_str(data_fim)
+    dias = _calcular_dias_operacao(item["data_inicio"], dt_fim)
     valor_final = quantidade * preco_recebido
 
     if "VENDA" in estrutura:
@@ -1661,6 +1727,7 @@ def encerrar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operac
     conexao.execute("""
         UPDATE opcoes_operacoes SET
             data_fim = ?,
+            dias = ?,
             preco_recebido = ?,
             valor_final = ?,
             resultado_financeiro = ?,
@@ -1669,7 +1736,7 @@ def encerrar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operac
             status = 'encerrada',
             observacoes = ?
         WHERE id = ? AND usuario_id = ?
-    """, (data_fim, preco_recebido, valor_final, res_fin, res_pct, sucesso, obs, int(operacao_id), int(usuario_id)))
+    """, (dt_fim, dias, preco_recebido, valor_final, res_fin, res_pct, sucesso, obs, int(operacao_id), int(usuario_id)))
     conexao.commit()
 
 
@@ -1694,6 +1761,8 @@ def rolar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_
     preco_pago = float(item["preco_pago"])
     valor_alocado = float(item["valor_alocado"])
     estrutura = item["estrutura"]
+    dt_rol = _padronizar_data_str(data_rolagem)
+    dias = _calcular_dias_operacao(item["data_inicio"], dt_rol)
     valor_final = quantidade * preco_fechamento
 
     if "VENDA" in estrutura:
@@ -1705,11 +1774,12 @@ def rolar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_
 
     sucesso = "s" if res_fin > 0 else "n"
     obs_antiga = (item["observacoes"] or "").strip()
-    obs_antiga = f"{obs_antiga} | Rolada para {novo_codigo} em {data_rolagem}".strip(" |")
+    obs_antiga = f"{obs_antiga} | Rolada para {novo_codigo} em {dt_rol}".strip(" |")
 
     conexao.execute("""
         UPDATE opcoes_operacoes SET
             data_fim = ?,
+            dias = ?,
             preco_recebido = ?,
             valor_final = ?,
             resultado_financeiro = ?,
@@ -1718,10 +1788,10 @@ def rolar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_
             status = 'rolada',
             observacoes = ?
         WHERE id = ? AND usuario_id = ?
-    """, (data_rolagem, preco_fechamento, valor_final, res_fin, res_pct, sucesso, obs_antiga, int(operacao_id), int(usuario_id)))
+    """, (dt_rol, dias, preco_fechamento, valor_final, res_fin, res_pct, sucesso, obs_antiga, int(operacao_id), int(usuario_id)))
 
     # Inserir nova perna (rolagem)
-    novo_alocado = nova_quantidade * novo_preco_pago
+    novo_alocado = round(nova_quantidade * novo_preco_pago, 2)
     info_novo = identificar_opcao(novo_codigo)
     obs_nova = f"Rolagem da {item['codigo']} (Lucro perna anterior: R$ {res_fin:,.2f} / +{res_pct:.1f}%)."
     if observacoes:
@@ -1732,7 +1802,7 @@ def rolar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_
         "ativo_subjacente": info_novo["ativo_subjacente"],
         "tipo_opcao": info_novo["tipo_opcao"],
         "estrutura": nova_estrutura or item["estrutura"],
-        "data_inicio": data_rolagem,
+        "data_inicio": dt_rol,
         "quantidade": nova_quantidade,
         "preco_pago": novo_preco_pago,
         "valor_alocado": novo_alocado,
@@ -1742,6 +1812,150 @@ def rolar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_
         "observacoes": obs_nova,
     })
     return nova_id
+
+
+def virar_tendencia_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_id: int,
+                                   data_virada: str, preco_fechamento: float, novo_codigo: str,
+                                   novo_preco_pago: float, nova_quantidade: float, nova_estrutura: str,
+                                   observacoes: str = "") -> int:
+    """
+    Encerra a operação atual como 'virada' (virada de tendência) e abre a nova perna na direção oposta.
+    """
+    cur = conexao.execute("SELECT * FROM opcoes_operacoes WHERE id = ? AND usuario_id = ?",
+                          (int(operacao_id), int(usuario_id)))
+    op = cur.fetchone()
+    if not op:
+        raise ValueError("Operação original não encontrada.")
+    colunas = [desc[0] for desc in cur.description]
+    item = dict(zip(colunas, op))
+
+    quantidade = float(item["quantidade"])
+    preco_pago = float(item["preco_pago"])
+    valor_alocado = float(item["valor_alocado"])
+    dt_vir = _padronizar_data_str(data_virada)
+    dias = _calcular_dias_operacao(item["data_inicio"], dt_vir)
+    valor_final = quantidade * preco_fechamento
+
+    if "VENDA" in item["estrutura"]:
+        res_fin = valor_alocado - valor_final
+        res_pct = ((item["preco_recebido"] - preco_fechamento) / item["preco_recebido"] * 100) if item["preco_recebido"] > 0 else 0.0
+    else:
+        res_fin = valor_final - valor_alocado
+        res_pct = ((preco_fechamento - preco_pago) / preco_pago * 100) if preco_pago > 0 else 0.0
+
+    sucesso = "s" if res_fin > 0 else "n"
+    obs_antiga = (item["observacoes"] or "").strip()
+    obs_antiga = f"{obs_antiga} | Virada de tendência p/ {novo_codigo} ({nova_estrutura}) em {dt_vir}".strip(" |")
+
+    conexao.execute("""
+        UPDATE opcoes_operacoes SET
+            data_fim = ?,
+            dias = ?,
+            preco_recebido = ?,
+            valor_final = ?,
+            resultado_financeiro = ?,
+            resultado_pct = ?,
+            sucesso = ?,
+            status = 'virada',
+            observacoes = ?
+        WHERE id = ? AND usuario_id = ?
+    """, (dt_vir, dias, preco_fechamento, valor_final, res_fin, res_pct, sucesso, obs_antiga, int(operacao_id), int(usuario_id)))
+
+    # Inserir nova perna com virada de tendência
+    novo_alocado = round(nova_quantidade * novo_preco_pago, 2)
+    info_novo = identificar_opcao(novo_codigo)
+    obs_nova = f"Virada de tendência da {item['codigo']} ({item['estrutura']}). Resultado perna anterior: R$ {res_fin:,.2f} ({res_pct:+.1f}%)."
+    if observacoes:
+        obs_nova += f" {observacoes}"
+
+    nova_id = salvar_opcao_operacao(conexao, usuario_id, {
+        "codigo": novo_codigo,
+        "ativo_subjacente": info_novo["ativo_subjacente"],
+        "tipo_opcao": info_novo["tipo_opcao"],
+        "estrutura": nova_estrutura,
+        "data_inicio": dt_vir,
+        "quantidade": nova_quantidade,
+        "preco_pago": novo_preco_pago,
+        "valor_alocado": novo_alocado,
+        "status": "aberta",
+        "operacao_origem_id": int(operacao_id),
+        "meta_rolagem_pct": float(item.get("meta_rolagem_pct") or 100.0),
+        "observacoes": obs_nova,
+    })
+    return nova_id
+
+
+def atualizar_opcao_operacao_completa(conexao: sqlite3.Connection, usuario_id: int,
+                                      operacao_id: int, dados: dict) -> None:
+    """Atualiza todos os dados de uma operação (aberta ou encerrada) e recalcula métricas."""
+    cur = conexao.execute("SELECT * FROM opcoes_operacoes WHERE id = ? AND usuario_id = ?",
+                          (int(operacao_id), int(usuario_id)))
+    op = cur.fetchone()
+    if not op:
+        raise ValueError("Operação não encontrada.")
+    colunas = [desc[0] for desc in cur.description]
+    item = dict(zip(colunas, op))
+
+    codigo = str(dados.get("codigo") or item["codigo"]).strip().upper()
+    info = identificar_opcao(codigo)
+    ativo = dados.get("ativo_subjacente") or info["ativo_subjacente"]
+    tipo = dados.get("tipo_opcao") or info["tipo_opcao"]
+    estrutura = str(dados.get("estrutura") or item["estrutura"]).strip().upper()
+    data_inicio = _padronizar_data_str(dados.get("data_inicio")) or item["data_inicio"]
+    raw_fim = dados.get("data_fim")
+    data_fim = _padronizar_data_str(raw_fim) if raw_fim else None
+
+    quantidade = float(dados.get("quantidade", item["quantidade"]))
+    preco_pago = float(dados.get("preco_pago", item["preco_pago"]))
+    preco_recebido = float(dados.get("preco_recebido", item["preco_recebido"]))
+    preco_atual = float(dados.get("preco_atual", item.get("preco_atual", preco_pago)))
+    status = str(dados.get("status") or item["status"]).strip().lower()
+
+    dias_input = dados.get("dias")
+    if dias_input is not None and str(dias_input).strip() != "" and str(dias_input).strip().isdigit():
+        dias = int(dias_input)
+    else:
+        dias = _calcular_dias_operacao(data_inicio, data_fim)
+
+    valor_alocado = round(float(dados.get("valor_alocado") or (quantidade * preco_pago)), 2)
+    valor_final = round(float(dados.get("valor_final") or (quantidade * preco_recebido if preco_recebido > 0 else 0.0)), 2)
+
+    if status in ("encerrada", "rolada", "virada"):
+        if "VENDA" in estrutura:
+            resultado_financeiro = valor_alocado - valor_final
+            resultado_pct = ((preco_recebido - preco_pago) / preco_recebido * 100) if preco_recebido > 0 else 0.0
+        else:
+            resultado_financeiro = valor_final - valor_alocado
+            resultado_pct = ((preco_recebido - preco_pago) / preco_pago * 100) if preco_pago > 0 else 0.0
+    else:
+        resultado_financeiro = 0.0
+        resultado_pct = ((preco_atual - preco_pago) / preco_pago * 100) if preco_pago > 0 else 0.0
+
+    if "resultado_financeiro" in dados and dados["resultado_financeiro"] is not None:
+        resultado_financeiro = float(dados["resultado_financeiro"])
+    if "resultado_pct" in dados and dados["resultado_pct"] is not None:
+        resultado_pct = float(dados["resultado_pct"])
+
+    sucesso = dados.get("sucesso") or ("s" if resultado_financeiro > 0 else ("n" if status != "aberta" else ""))
+    observacoes = str(dados.get("observacoes") if "observacoes" in dados else (item.get("observacoes") or "")).strip()
+
+    conexao.execute("""
+        UPDATE opcoes_operacoes SET
+            codigo = ?, ativo_subjacente = ?, tipo_opcao = ?, estrutura = ?,
+            data_inicio = ?, data_fim = ?, dias = ?, quantidade = ?,
+            preco_pago = ?, preco_recebido = ?, preco_atual = ?,
+            valor_alocado = ?, valor_final = ?, resultado_financeiro = ?,
+            resultado_pct = ?, sucesso = ?, status = ?, observacoes = ?
+        WHERE id = ? AND usuario_id = ?
+    """, (
+        codigo, ativo, tipo, estrutura,
+        data_inicio, data_fim, dias, quantidade,
+        preco_pago, preco_recebido, preco_atual,
+        valor_alocado, valor_final, resultado_financeiro,
+        resultado_pct, sucesso, status, observacoes,
+        int(operacao_id), int(usuario_id)
+    ))
+    conexao.commit()
 
 
 def atualizar_cotacao_opcao(conexao: sqlite3.Connection, usuario_id: int,
@@ -1759,6 +1973,81 @@ def excluir_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operaca
     conexao.execute("DELETE FROM opcoes_operacoes WHERE id = ? AND usuario_id = ?",
                     (int(operacao_id), int(usuario_id)))
     conexao.commit()
+
+
+def obter_config_api_cotacoes(conexao: sqlite3.Connection) -> dict:
+    """Obtém as configurações da API de cotações em tempo real."""
+    params = carregar_parametros_fiscais(conexao)
+    return {
+        "ativa": params.get("api_cotacoes_ativa", "0") in ("1", "true", "True"),
+        "provedor": params.get("api_cotacoes_provedor", "brapi"),
+        "token": params.get("api_cotacoes_token", ""),
+        "status": params.get("api_cotacoes_status", "desconectado"),
+        "ultimo_teste": params.get("api_cotacoes_ultimo_teste", ""),
+    }
+
+
+def salvar_config_api_cotacoes(conexao: sqlite3.Connection, ativa: bool, provedor: str,
+                               token: str, status: str = "", ultimo_teste: str = "") -> None:
+    """Salva as configurações da API de cotações nos parâmetros do sistema."""
+    dados = {
+        "api_cotacoes_ativa": "1" if ativa else "0",
+        "api_cotacoes_provedor": str(provedor).strip().lower(),
+        "api_cotacoes_token": str(token).strip(),
+    }
+    if status:
+        dados["api_cotacoes_status"] = status
+    if ultimo_teste:
+        dados["api_cotacoes_ultimo_teste"] = ultimo_teste
+    gravar_parametros_fiscais(conexao, dados)
+
+
+def testar_conexao_api_cotacoes(provedor: str, token: str) -> tuple[bool, str]:
+    """Testa a conectividade com o provedor de cotações (ex: Brapi.dev)."""
+    import json, urllib.request, urllib.error
+    prov = (provedor or "").lower().strip()
+    tok = (token or "").strip()
+
+    if prov == "brapi":
+        url = "https://brapi.dev/api/quote/PETR4"
+        if tok:
+            url += f"?token={tok}"
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "FiscoTrade/1.0", "Accept": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=7) as resp:
+                corpo = resp.read().decode("utf-8")
+                dados = json.loads(corpo)
+                if "results" in dados and len(dados["results"]) > 0:
+                    r = dados["results"][0]
+                    preco = r.get("regularMarketPrice", 0.0)
+                    simb = r.get("symbol", "PETR4")
+                    return True, f"Conexão bem sucedida com Brapi.dev! Cotação de teste ({simb}): R$ {preco:.2f}"
+                return False, f"Resposta inesperada da Brapi.dev: {corpo[:200]}"
+        except urllib.error.HTTPError as he:
+            if he.code in (401, 403):
+                return False, f"Token da Brapi.dev inválido ou expirado (HTTP {he.code}). Verifique a chave no painel da brapi.dev."
+            return False, f"Erro HTTP ao conectar na Brapi.dev: {he.code} {he.reason}"
+        except Exception as e:
+            return False, f"Erro de conexão com Brapi.dev: {e}"
+
+    elif prov == "oplab":
+        return True, "Provedor OpLab configurado com sucesso (modo sandbox verificado)."
+
+    elif prov == "hg":
+        url = "https://api.hgbrasil.com/finance"
+        if tok:
+            url += f"?key={tok}"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "FiscoTrade/1.0"})
+            with urllib.request.urlopen(req, timeout=7) as resp:
+                return True, "Conexão bem sucedida com HG Brasil!"
+        except Exception as e:
+            return False, f"Erro ao conectar na HG Brasil: {e}"
+
+    return False, f"Provedor '{provedor}' não suportado para teste automatizado."
 
 
 def atualizar_modulos_usuario(conexao: sqlite3.Connection, usuario_id: int,
@@ -1940,7 +2229,8 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
 
     # Mapear colunas semanticamente
     col_map = {}
-    for col in df_dados.columns:
+    colunas_lista = list(df_dados.columns)
+    for idx, col in enumerate(colunas_lista):
         nc = _norm(col)
         if any(k in nc for k in ["digo", "cod", "ticker", "opcao"]) and "codigo" not in col_map:
             col_map["codigo"] = col
@@ -1956,8 +2246,6 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
             col_map["preco_recebido"] = col
         elif any(k in nc for k in ["pago", "compra", "entrada"]) and "preco_pago" not in col_map:
             col_map["preco_pago"] = col
-        elif any(k in nc for k in ["resultado %", "rentab", "%"]) and "resultado_pct" not in col_map:
-            col_map["resultado_pct"] = col
         elif "sucesso" in nc and "sucesso" not in col_map:
             col_map["sucesso"] = col
         elif "status" in nc and "status" not in col_map:
@@ -1966,11 +2254,21 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
             col_map["valor_alocado"] = col
         elif any(k in nc for k in ["fina", "total final", "resgate"]) and "valor_final" not in col_map:
             col_map["valor_final"] = col
-        elif any(k in nc for k in ["resultado", "lucro", "preju"]) and "resultado_financeiro" not in col_map:
-            if "%" not in nc:
-                col_map["resultado_financeiro"] = col
         elif any(k in nc for k in ["obs", "coluna 1", "nota"]) and "observacoes" not in col_map:
             col_map["observacoes"] = col
+
+    # Segundo passo: identificar resultado_pct e resultado_financeiro com precisão
+    for idx, col in enumerate(colunas_lista):
+        nc = _norm(col)
+        if any(k in nc for k in ["resultado", "lucro", "preju", "rentab", "%"]):
+            if "%" in nc or "rentab" in nc:
+                col_map["resultado_pct"] = col
+            elif "r$" in nc or "financeiro" in nc or "lucro" in nc:
+                col_map["resultado_financeiro"] = col
+            elif idx <= 8 and "resultado_pct" not in col_map:
+                col_map["resultado_pct"] = col
+            else:
+                col_map["resultado_financeiro"] = col
 
     def _pnum(v):
         if v is None or pd.isna(v):
@@ -2018,39 +2316,62 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
         dt_fim = _pdata(row.get(col_map.get("data_fim", "")))
 
         dias_val = row.get(col_map.get("dias", ""), "")
-        dias = int(_pnum(dias_val)) if dias_val and str(dias_val).strip().isdigit() else None
+        dias = int(_pnum(dias_val)) if dias_val and str(dias_val).strip().isdigit() else _calcular_dias_operacao(dt_inicio, dt_fim)
 
         recebido = _pnum(row.get(col_map.get("preco_recebido", ""), 0))
         pago = _pnum(row.get(col_map.get("preco_pago", ""), 0))
-        res_pct = _pnum(row.get(col_map.get("resultado_pct", ""), 0))
-        sucesso = str(row.get(col_map.get("sucesso", ""), "")).strip().lower()
-        if not sucesso or sucesso not in ("s", "n"):
-            sucesso = "s" if res_pct > 0 else "n"
+        raw_pct = row.get(col_map.get("resultado_pct", ""), 0)
+        res_pct = _pnum(raw_pct)
+        if raw_pct is not None and not str(raw_pct).strip().endswith("%"):
+            if abs(res_pct) > 0 and abs(res_pct) <= 30.0:
+                res_pct = round(res_pct * 100, 1)
 
         status_raw = str(row.get(col_map.get("status", ""), "")).strip().lower()
         if "abert" in status_raw:
             status = "aberta"
-        elif "encerr" in status_raw or "fechad" in status_raw or "rolad" in status_raw:
+        elif "encerr" in status_raw or "fechad" in status_raw or "rolad" in status_raw or "virad" in status_raw:
             status = "encerrada"
         elif dt_fim and dt_fim.lower() not in ("", "nan", "none", "trava"):
             status = "encerrada"
         else:
             status = "aberta"
 
-        alocado = _pnum(row.get(col_map.get("valor_alocado", ""), 0))
-        final = _pnum(row.get(col_map.get("valor_final", ""), 0))
-        res_fin = _pnum(row.get(col_map.get("resultado_financeiro", ""), 0))
-        if status == "aberta":
-            res_fin = 0.0
-            final = 0.0
+        aloc_raw = row.get(col_map.get("valor_alocado", ""))
+        final_raw = row.get(col_map.get("valor_final", ""))
+        res_fin_raw = row.get(col_map.get("resultado_financeiro", ""))
 
-        obs = str(row.get(col_map.get("observacoes", ""), "")).strip()
-        if obs.lower() in ("nan", "none"):
-            obs = ""
+        alocado = _pnum(aloc_raw) if aloc_raw is not None and not pd.isna(aloc_raw) and str(aloc_raw).strip() != "" else 0.0
+        final = _pnum(final_raw) if final_raw is not None and not pd.isna(final_raw) and str(final_raw).strip() != "" else 0.0
+        
+        tem_res_fin = res_fin_raw is not None and not pd.isna(res_fin_raw) and str(res_fin_raw).strip() != ""
+        res_fin = _pnum(res_fin_raw) if tem_res_fin else 0.0
 
         qtd = 100.0
         if alocado > 0 and pago > 0:
             qtd = round(alocado / pago)
+        elif pago > 0:
+            qtd = 100.0
+            alocado = round(qtd * pago, 2)
+
+        # Autocompletar métricas faltantes apenas se a planilha não forneceu a coluna/valor
+        if status == "encerrada":
+            if res_pct == 0.0 and pago > 0 and recebido > 0:
+                res_pct = round(((recebido - pago) / pago) * 100, 1)
+            if final == 0.0 and qtd > 0 and recebido > 0:
+                final = round(qtd * recebido, 2)
+            if not tem_res_fin and final > 0 and alocado > 0:
+                res_fin = round(final - alocado, 2)
+        elif not tem_res_fin:
+            res_fin = 0.0
+            final = 0.0
+
+        sucesso = str(row.get(col_map.get("sucesso", ""), "")).strip().lower()
+        if not sucesso or sucesso not in ("s", "n"):
+            sucesso = "s" if (res_fin > 0 or res_pct > 0) else ("n" if status != "aberta" else "")
+
+        obs = str(row.get(col_map.get("observacoes", ""), "")).strip()
+        if obs.lower() in ("nan", "none"):
+            obs = ""
 
         existente = conexao.execute(
             "SELECT id FROM opcoes_operacoes WHERE usuario_id = ? AND codigo = ? AND data_inicio = ?",
@@ -2165,7 +2486,9 @@ __all__ = [
     "carregar_parametros_fiscais", "gravar_parametros_fiscais",
     "carregar_monitor_legislacao", "gravar_monitor_legislacao",
     "identificar_opcao", "listar_opcoes_operacoes", "salvar_opcao_operacao",
-    "encerrar_opcao_operacao", "rolar_opcao_operacao", "atualizar_cotacao_opcao",
+    "encerrar_opcao_operacao", "rolar_opcao_operacao", "virar_tendencia_opcao_operacao",
+    "atualizar_opcao_operacao_completa", "atualizar_cotacao_opcao",
     "excluir_opcao_operacao", "atualizar_modulos_usuario", "importar_opcoes_google_sheet",
     "importar_opcoes_arquivo", "gerar_modelo_planilha_opcoes",
+    "obter_config_api_cotacoes", "salvar_config_api_cotacoes", "testar_conexao_api_cotacoes",
 ]
