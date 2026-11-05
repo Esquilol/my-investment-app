@@ -497,8 +497,94 @@ def _ratear_despesas(operacoes: list[Operacao], despesas: float) -> None:
         op.taxas = round(despesas * peso / total, 4)
 
 
+#: Padrões regex para identificação automática da corretora pelo cabeçalho da nota
+PADROES_CORRETORAS: list[tuple[str, list[str]]] = [
+    ("Genial", [
+        r"GENIAL\s+CCTVM",
+        r"GENIAL\s+INVESTIMENTOS",
+        r"05\.816\.451/0001-15",
+        r"05816451000115",
+        r"ouvidoria@genial\.com\.vc",
+        r"genialinvestimentos\.com\.br",
+    ]),
+    ("XP Investimentos", [
+        r"XP\s+INVESTIMENTOS\s+CCTVM",
+        r"XP\s+INVESTIMENTOS",
+        r"02\.332\.886/0001-04",
+        r"02332886000104",
+        r"xpi\.com\.br",
+    ]),
+    ("Clear", [
+        r"CLEAR\s+CORRETORA",
+        r"CLEAR\s+DISTRIBUIDORA",
+        r"02\.332\.886/0011-78",
+        r"clear\.com\.br",
+    ]),
+    ("Rico", [
+        r"RICO\s+INVESTIMENTOS",
+        r"RICO\s+CORRETORA",
+        r"02\.332\.886/0010-97",
+        r"rico\.com\.vc",
+    ]),
+    ("BTG Pactual", [
+        r"BTG\s+PACTUAL",
+        r"30\.306\.294/0002-26",
+        r"07\.472\.932/0001-29",
+        r"btgpactual\.com",
+    ]),
+    ("Inter", [
+        r"INTER\s+DTVM",
+        r"BANCO\s+INTER",
+        r"18\.945\.670/0001-46",
+        r"inter\.co",
+    ]),
+    ("Nubank", [
+        r"NU\s+INVEST",
+        r"EASYNVEST",
+        r"NUBANK",
+        r"62\.169\.875/0001-79",
+        r"nuinvest\.com\.br",
+    ]),
+    ("Santander", [
+        r"SANTANDER\s+C[C|T]VM",
+        r"BANCO\s+SANTANDER",
+        r"51\.014\.223/0001-70",
+    ]),
+    ("Ágora", [
+        r"AGORA\s+C[T|C]VM",
+        r"AGORA\s+CORRETORA",
+        r"74\.014\.747/0001-35",
+        r"agorainvestimentos\.com\.br",
+    ]),
+    ("Toro", [
+        r"TORO\s+C[T|C]VM",
+        r"TORO\s+INVESTIMENTOS",
+        r"29\.162\.769/0001-98",
+        r"toroinvestimentos\.com\.br",
+    ]),
+    ("Mirae", [
+        r"MIRAE\s+ASSET",
+        r"12\.392\.983/0001-38",
+    ]),
+]
+
+
+def detectar_corretora(texto: str) -> Optional[str]:
+    """
+    Identifica a corretora emissora a partir do texto ou cabeçalho da nota de corretagem.
+    Retorna o nome padronizado da corretora ou None se não reconhecido.
+    """
+    if not texto:
+        return None
+    for nome, padroes in PADROES_CORRETORAS:
+        for padrao in padroes:
+            if re.search(padrao, texto, re.IGNORECASE):
+                return nome
+    return None
+
+
 def extract_notas(pdf_file: Union[str, BinaryIO],
-                  corretora: str = "Genial",
+                  corretora: str = "Detectar automaticamente (recomendado)",
                   arquivo: Optional[str] = None) -> list[Nota]:
     """
     Extrai as notas de corretagem de um PDF, preservando o agrupamento original.
@@ -506,7 +592,7 @@ def extract_notas(pdf_file: Union[str, BinaryIO],
     Parâmetros
     ----------
     pdf_file : caminho ou arquivo binário do PDF.
-    corretora : rótulo da corretora de origem (usado nos relatórios).
+    corretora : rótulo da corretora de origem (ou 'Detectar automaticamente').
     arquivo : nome do arquivo (metadado). Se None, tenta inferir do caminho.
 
     Retorna
@@ -515,6 +601,7 @@ def extract_notas(pdf_file: Union[str, BinaryIO],
     """
     texto = extract_text(pdf_file)
     nome_arquivo = arquivo or (pdf_file if isinstance(pdf_file, str) else "")
+    corretora_doc = detectar_corretora(texto)
 
     be = NOTA_HEADER_RE.search(texto)
     data_fallback = _parse_br_date(be.group("data")) if be else None
@@ -535,9 +622,19 @@ def extract_notas(pdf_file: Union[str, BinaryIO],
         despesas = _extrair_despesas(bloco)
         irrf = _extrair_irrf(bloco)
 
+        # Resolução da corretora: auto-detecção por bloco ou documento têm prioridade
+        # caso detectada, evitando falso rótulo padrão de selectbox.
+        corretora_bloco = detectar_corretora(bloco) or corretora_doc
+        if corretora_bloco:
+            corretora_final = corretora_bloco
+        elif corretora and corretora not in ("Detectar automaticamente (recomendado)", "Auto", ""):
+            corretora_final = corretora
+        else:
+            corretora_final = "Genérico (SINACOR)"
+
         meta = {
             "data": data_nota,
-            "corretora": corretora,
+            "corretora": corretora_final,
             "arquivo": nome_arquivo,
             "nota": numero,
             "irrf": irrf,
@@ -557,7 +654,7 @@ def extract_notas(pdf_file: Union[str, BinaryIO],
         notas.append(Nota(
             numero=numero,
             data=data_nota,
-            corretora=corretora,
+            corretora=corretora_final,
             arquivo=nome_arquivo,
             despesas=despesas,
             irrf=irrf,
@@ -569,7 +666,7 @@ def extract_notas(pdf_file: Union[str, BinaryIO],
 
 
 def extract_operations(pdf_file: Union[str, BinaryIO],
-                       corretora: str = "Genial",
+                       corretora: str = "Detectar automaticamente (recomendado)",
                        arquivo: Optional[str] = None) -> list[Operacao]:
     """Lista achatada de todas as operações de um PDF (uma linha por negócio)."""
     operacoes: list[Operacao] = []
@@ -590,4 +687,6 @@ __all__ = [
     "extract_notas",
     "extract_operations",
     "operations_to_dicts",
+    "detectar_corretora",
+    "PADROES_CORRETORAS",
 ]

@@ -60,8 +60,15 @@ _falhas: list[str] = []
 
 def _primeiro_usuario(conexao) -> int:
     """Id do usuário semeado automaticamente por :func:`conectar` (admin)."""
-    return int(conexao.execute("SELECT MIN(id) FROM usuarios").fetchone()[0])
-
+    linha = conexao.execute("SELECT MIN(id) FROM usuarios").fetchone()
+    val = linha[0] if linha else None
+    if val is None:
+        conexao.execute(
+            "INSERT INTO usuarios (usuario, email, hash, plano_codigo, criado_em) VALUES ('admin', 'admin@local', 'hash', 'pro', '2026-01-01')"
+        )
+        conexao.commit()
+        val = conexao.execute("SELECT MIN(id) FROM usuarios").fetchone()[0]
+    return int(val)
 
 
 def _checar(descricao: str, obtido, esperado, tolerancia: float = 0.011) -> None:

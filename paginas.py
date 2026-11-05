@@ -24,7 +24,7 @@ import streamlit as st
 import auth
 import saas
 import tema
-from parser import extract_notas
+from parser import extract_notas, detectar_corretora
 from persistencia import (
     adicionar_provento,
     assinatura_ativa,
@@ -46,6 +46,7 @@ from persistencia import (
     obter_plano,
     obter_usuario,
     remover_notas,
+    sanitizar_duplicatas,
     remover_provento,
     resumo_importacao,
     salvar_notas,
@@ -66,6 +67,8 @@ from regras import (
 
 
 CORRETORAS = [
+    "Detectar automaticamente (recomendado)",
+    "Genial",
     "XP Investimentos",
     "Clear",
     "Rico",
@@ -73,7 +76,8 @@ CORRETORAS = [
     "Inter",
     "Nubank",
     "Santander",
-    "Genial",
+    "Ágora",
+    "Toro",
     "Genérico (SINACOR)",
 ]
 
@@ -564,9 +568,14 @@ def pagina_upload() -> None:
         resultado = {"notas": 0, "operacoes": 0, "arquivos": 0, "repetidas": 0,
                      "erros": [], "avisos": []}
         interrompido = False
-        ja_importadas = (
+        ja_importadas_chaves = (
             set(zip(notas["corretora"].astype(str), notas["numero"].astype(str),
                     notas["folha"].astype(str)))
+            if not notas.empty else set()
+        )
+        ja_importadas_num_data = (
+            set(zip(notas["numero"].astype(str), notas["folha"].astype(str),
+                    pd.to_datetime(notas["data"]).dt.strftime("%Y-%m-%d")))
             if not notas.empty else set()
         )
 
@@ -585,11 +594,15 @@ def pagina_upload() -> None:
 
             ineditas = []
             for nota in lidas:
-                chave = (str(nota.corretora), str(nota.numero), str(nota.folha or "1"))
-                if chave in ja_importadas:
+                data_str = nota.data.strftime("%Y-%m-%d") if nota.data else ""
+                chave_corretora = (str(nota.corretora), str(nota.numero), str(nota.folha or "1"))
+                chave_num_data = (str(nota.numero), str(nota.folha or "1"), data_str)
+                if chave_corretora in ja_importadas_chaves or (data_str and chave_num_data in ja_importadas_num_data):
                     resultado["repetidas"] += 1
                     continue
-                ja_importadas.add(chave)
+                ja_importadas_chaves.add(chave_corretora)
+                if data_str:
+                    ja_importadas_num_data.add(chave_num_data)
                 ineditas.append(nota)
 
             if not ineditas:
@@ -621,14 +634,40 @@ def pagina_upload() -> None:
 
     _secao_darf()
 
-    with st.expander(":material/delete: Limpar dados importados"):
-        st.caption(
-            "Remove as notas, operações e proventos deste usuário. Os saldos de "
-            "prejuízo a compensar informados na apuração são mantidos."
-        )
-        if st.button("Limpar operações importadas"):
-            limpar_dados(conexao, usuario_id)
-            st.rerun()
+    col_limp1, col_limp2 = st.columns(2)
+    with col_limp1:
+        with st.expander(":material/auto_fix_high: Corrigir / Deduplicar Notas"):
+            st.caption(
+                "Detecta automaticamente corretoras verdadeiras (ex: unificar notas da Genial "
+                "que foram salvas como XP por engano) e remove operações duplicadas."
+            )
+            if st.button("Unificar duplicatas e corrigir corretoras", type="secondary", icon=":material/auto_fix_high:"):
+                res_clean = sanitizar_duplicatas(conexao, usuario_id)
+                st.session_state["aviso_notas"] = (
+                    f"Limpeza concluída: {res_clean['notas_removidas']} nota(s) duplicada(s) e "
+                    f"{res_clean['operacoes_removidas']} operação(ões) duplicadas removidas; "
+                    f"{res_clean['corretoras_corrigidas']} corretora(s) corrigida(s)."
+                )
+                st.rerun()
+    with col_limp2:
+        with st.expander(":material/delete: Limpar dados importados"):
+            st.caption(
+                "Remove as notas, operações e proventos deste usuário. Os saldos de "
+                "prejuízo a compensar informados na apuração são mantidos."
+            )
+            if st.button("Limpar operações importadas", type="secondary", icon=":material/delete:"):
+                limpar_dados(conexao, usuario_id)
+                st.rerun()
+
+    # Alerta se houver notas XP e Genial simultaneamente
+    if not notas.empty:
+        has_xp = (notas["corretora"] == "XP Investimentos").any()
+        has_genial = (notas["corretora"] == "Genial").any()
+        if has_xp and has_genial:
+            st.warning(
+                "⚠️ **Atenção:** Foram encontradas notas registradas como **XP Investimentos** e outras como **Genial**. "
+                "Se você só utiliza a Genial, clique em **Corrigir / Deduplicar Notas** acima para consolidar os cálculos e remover duplicidades."
+            )
 
     if notas.empty:
         tema.vazio("Nenhuma nota importada ainda. Envie um PDF para começar.")
@@ -831,6 +870,197 @@ Você possui **{_moeda(base_tributavel)}** de base tributável apurada. Caso pos
             )
 
 
+def _secao_assistente_fechamento_mes() -> None:
+    """
+    Assistente Proativo de Fechamento de Mês & Otimização Fiscal.
+    Orienta o investidor a encerrar posições estrategicamente no mês para:
+    1) Aproveitar a margem restante de isenção dos R$ 20.000 em ações (Tax-Gain Harvesting).
+    2) Abater lucros tributáveis realizando posições perdedoras antes do dia 30/31 (Tax-Loss Harvesting).
+    3) Simular o impacto fiscal em tempo real de qualquer venda planejada.
+    """
+    if not tem_dados or tabela_ir.empty:
+        return
+
+    competencia = str(tabela_ir["mes"].iloc[-1])
+    dias_uteis = _dias_uteis_restantes_mes()
+    ultimo_linha = tabela_ir.iloc[-1]
+
+    # Dados de ações no mês
+    acoes_mes = resultados[
+        (resultados["mes"] == competencia)
+        & (resultados["grupo"] == "STOCK")
+        & (resultados["categoria"] == "Swing Trade")
+    ] if resultados is not None and not resultados.empty else pd.DataFrame()
+
+    vendas_acoes = float(acoes_mes["vendas"].sum()) if not acoes_mes.empty else 0.0
+    lucro_acoes = float(acoes_mes["resultado"].sum()) if not acoes_mes.empty else 0.0
+    limite_isencao = float(PARAMETROS.get("isencao_acoes", 20000.0))
+    margem_isencao = max(0.0, limite_isencao - vendas_acoes)
+
+    # Base tributável e DARF do mês
+    base_st = float(ultimo_linha.get("BaseCalcSwingTrade", 0.0))
+    base_dt = float(ultimo_linha.get("BaseCalcDayTrade", 0.0))
+    darf_atual = float(ultimo_linha.get("DARFFinal", 0.0))
+    base_tributavel = max(0.0, base_st) + max(0.0, base_dt)
+
+    tema.secao(f"🎯 Assistente de Fechamento de Posições — {_nome_mes(competencia)}")
+
+    st.markdown(f"""
+    <div style="background: rgba(37, 99, 235, 0.06); border: 1px solid rgba(37, 99, 235, 0.2); border-radius: 10px; padding: 14px 18px; margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <div>
+                <strong style="color: #60a5fa; font-size: 1.1em;">Estratégia Fiscal Ativa para {_nome_mes(competencia)}</strong><br>
+                <span style="color: #cbd5e1; font-size: 0.9em;">Rebalanceamento inteligente e otimização tributária antes do encerramento do mês.</span>
+            </div>
+            <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 4px 12px;">
+                <span style="color: #10b981; font-weight: 600; font-size: 0.9em;">⏱️ {dias_uteis} dia(s) útil(eis) restantes</span>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown(f"""
+        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 14px; min-height: 180px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <span style="font-size: 1.2em;">📈</span>
+                <strong style="color: #10b981; font-size: 1.05em;">Oportunidade de Tax-Gain Harvesting</strong>
+            </div>
+            <p style="color: #cbd5e1; font-size: 0.9em; margin-bottom: 8px;">
+                Você já realizou <strong>{_moeda(vendas_acoes)}</strong> em vendas de ações neste mês.
+            </p>
+            <div style="background: rgba(16, 185, 129, 0.08); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px;">
+                <small style="color: #9ca3af;">Margem restante com 0% de IR:</small><br>
+                <strong style="color: #10b981; font-size: 1.25em;">{_moeda(margem_isencao)}</strong>
+            </div>
+            <small style="color: #94a3b8; line-height: 1.4; display: block;">
+                💡 <strong>Dica Legal:</strong> Caso possua ações em custódia com lucro não realizado, vendê-las até <strong>{_moeda(margem_isencao)}</strong> antes do fechamento do mês permite embolsar o lucro com <strong>isenção total de IR</strong> (Art. 22 Lei 11.033/04). Em seguida, você pode recomprar as ações para elevar seu Preço Médio a custo fiscal zero.
+            </small>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        if darf_atual > 0 or base_tributavel > 0:
+            economia_potencial = darf_atual
+            st.markdown(f"""
+            <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 14px; min-height: 180px;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <span style="font-size: 1.2em;">📉</span>
+                    <strong style="color: #f59e0b; font-size: 1.05em;">Oportunidade de Tax-Loss Harvesting</strong>
+                </div>
+                <p style="color: #cbd5e1; font-size: 0.9em; margin-bottom: 8px;">
+                    Base tributável apurada: <strong>{_moeda(base_tributavel)}</strong> | DARF previsto: <strong style="color: #f59e0b;">{_moeda(darf_atual)}</strong>.
+                </p>
+                <div style="background: rgba(245, 158, 11, 0.08); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px;">
+                    <small style="color: #9ca3af;">Economia de DARF possível este mês:</small><br>
+                    <strong style="color: #f59e0b; font-size: 1.25em;">Até {_moeda(economia_potencial)}</strong>
+                </div>
+                <small style="color: #94a3b8; line-height: 1.4; display: block;">
+                    💡 <strong>Dica Legal:</strong> Se você possui em carteira posições perdedoras (no vermelho) que pretendia encerrar ou rebalancear, executar a venda antes do último dia útil gera prejuízo fiscal que <strong>abate diretamente a base de cálculo</strong>, diminuindo o DARF a pagar!
+                </small>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 14px; min-height: 180px;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <span style="font-size: 1.2em;">🛡️</span>
+                    <strong style="color: #10b981; font-size: 1.05em;">Sem DARF Devido em {_nome_mes(competencia)}</strong>
+                </div>
+                <p style="color: #cbd5e1; font-size: 0.9em; margin-bottom: 8px;">
+                    Seus resultados neste mês estão totalmente isentos ou protegidos por prejuízos fiscais anteriores.
+                </p>
+                <div style="background: rgba(16, 185, 129, 0.08); border-radius: 6px; padding: 8px 12px; margin-bottom: 8px;">
+                    <small style="color: #9ca3af;">DARF devido:</small><br>
+                    <strong style="color: #10b981; font-size: 1.25em;">R$ 0,00 (Isento)</strong>
+                </div>
+                <small style="color: #94a3b8; line-height: 1.4; display: block;">
+                    Seus prejuízos acumulados continuam salvaguardando seus lucros futuros sem prazo de validade (Art. 72 Lei 8.981/95).
+                </small>
+            </div>
+            """, unsafe_allow_html=True)
+
+    # 3. Simulador Interativo de Fechamento de Posições
+    with st.expander("🧮 Simulador Interativo de Fechamento de Posições no Mês", expanded=False):
+        st.caption(
+            "Simule o impacto de encerrar uma posição (lucro ou prejuízo) antes do fim do mês "
+            "e veja em tempo real o novo valor do DARF e a economia tributária."
+        )
+        sim_col1, sim_col2, sim_col3 = st.columns([1.5, 1, 1])
+
+        with sim_col1:
+            modo_sim = st.radio(
+                "Objetivo da simulação:",
+                ["Realizar Lucro em Ações (Tax-Gain)", "Realizar Prejuízo para Abater IR (Tax-Loss)"],
+                horizontal=True,
+                key="modo_sim_fechamento",
+            )
+        with sim_col2:
+            if "Tax-Gain" in modo_sim:
+                valor_venda_sim = st.number_input(
+                    "Valor total da venda (R$):",
+                    min_value=0.0,
+                    value=min(5000.0, float(margem_isencao)) if margem_isencao > 0 else 5000.0,
+                    step=500.0,
+                    key="sim_venda_val",
+                )
+                lucro_est_sim = st.number_input(
+                    "Lucro estimado na venda (R$):",
+                    min_value=0.0,
+                    value=800.0,
+                    step=100.0,
+                    key="sim_lucro_val",
+                )
+            else:
+                prejuizo_sim = st.number_input(
+                    "Prejuízo a realizar (R$):",
+                    min_value=0.0,
+                    value=min(1000.0, base_tributavel) if base_tributavel > 0 else 1000.0,
+                    step=100.0,
+                    key="sim_prej_val",
+                )
+                tipo_mercado_sim = st.selectbox(
+                    "Mercado do ativo:",
+                    ["Ações / Opções (15%)", "Day Trade (20%)"],
+                    key="sim_mercado_tipo",
+                )
+
+        with sim_col3:
+            st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True)
+            if "Tax-Gain" in modo_sim:
+                novo_total_vendas = vendas_acoes + valor_venda_sim
+                if novo_total_vendas <= limite_isencao:
+                    economia = lucro_est_sim * 0.15
+                    st.success(f"""
+                    **✅ 100% Isento de IR!**
+                    - Novas vendas: {_moeda(novo_total_vendas)} (Abaixo dos R$ 20k)
+                    - Lucro realizado: {_moeda(lucro_est_sim)}
+                    - **Economia fiscal gerada: {_moeda(economia)}**
+                    """)
+                else:
+                    imposto_novo = (lucro_acoes + lucro_est_sim) * 0.15
+                    st.error(f"""
+                    **⚠️ Estourou o limite de R$ 20.000!**
+                    - Novas vendas: {_moeda(novo_total_vendas)}
+                    - Todo o lucro ({_moeda(lucro_acoes + lucro_est_sim)}) passa a ser tributado à alíquota de 15%.
+                    - **IR adicional a pagar: {_moeda(imposto_novo)}**
+                    """)
+            else:
+                aliq = 0.20 if "Day Trade" in tipo_mercado_sim else 0.15
+                economia_darf = min(darf_atual, prejuizo_sim * aliq)
+                novo_darf = max(0.0, darf_atual - economia_darf)
+                st.info(f"""
+                **📉 Abatimento de DARF Projetado:**
+                - DARF atual: {_moeda(darf_atual)}
+                - Redução no DARF: **- {_moeda(economia_darf)}**
+                - **Novo DARF projetado: {_moeda(novo_darf)}**
+                """)
+
+
+
+
 def _secao_guia_estrategias() -> None:
     """Guia consolidado das 5 estratégias de inteligência fiscal."""
     with st.expander("📚 Guia das 5 Estratégias de Inteligência Fiscal Integradas no FiscoTrade", expanded=False):
@@ -903,7 +1133,10 @@ def pagina_visao() -> None:
         # 4. Estoque de Prejuízos Fiscais & Tax-Loss Harvesting
         _secao_estoque_prejuizos_estrategias()
 
-        # 5. KPIs de Patrimônio e IR
+        # 5. Assistente de Fechamento de Posições no Mês (Tax Harvesting)
+        _secao_assistente_fechamento_mes()
+
+        # 6. KPIs de Patrimônio e IR
         custo_total = float(posicao["Custo Total"].sum()) if not posicao.empty else 0.0
         ir_total = float(tabela_ir["IRRFFinal"].sum()) if not tabela_ir.empty else 0.0
         total_proventos = float(proventos["valor"].sum()) if not proventos.empty else 0.0
