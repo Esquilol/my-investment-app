@@ -591,43 +591,45 @@ def pagina_diario_opcoes() -> None:
                     "Gatilho": f"🎯 ROLAR (+{rend_pct:.0f}%)" if atingiu else "Normal"
                 })
 
-            df_ab_view = pd.DataFrame(linhas_abertas)
-            st.dataframe(
-                df_ab_view.drop(columns=["ID"]),
-                use_container_width=True,
-                hide_index=True
-            )
-
-            # Barra de Ações Rápidas por Opção
-            st.markdown("##### ⚡ Ações Rápidas por Ativo")
-            col_sel, col_act1, col_act2, col_act3, col_act4, col_act5 = st.columns([2.5, 1.2, 1.3, 1.2, 1.2, 1.1])
-
-            opcoes_dict = {o["id"]: f"{o['codigo']} ({o.get('estrutura')}) — Pago {_moeda(o['preco_pago'])}" for o in abertas_filtradas}
-            with col_sel:
-                op_escolhida_id = st.selectbox(
-                    "Selecione uma opção:",
-                    options=list(opcoes_dict.keys()),
-                    format_func=lambda i: opcoes_dict[i],
-                    key="sel_op_aberta_acao"
+            if not linhas_abertas:
+                st.info("Nenhuma posição aberta encontrada com os filtros selecionados.")
+            else:
+                df_ab_view = pd.DataFrame(linhas_abertas)
+                st.dataframe(
+                    df_ab_view.drop(columns=["ID"], errors="ignore"),
+                    use_container_width=True,
+                    hide_index=True
                 )
 
-            op_alvo = next((o for o in abertas_filtradas if o["id"] == op_escolhida_id), None)
-            if op_alvo:
-                with col_act1:
-                    if st.button("🔄 Rolar", type="primary", use_container_width=True, help="Rolar com 50% de lucro no bolso"):
-                        modal_rolar_opcao(op_alvo)
-                with col_act2:
-                    if st.button("🔄 Virar", type="secondary", use_container_width=True, help="Virada de tendência (CALL ⇄ PUT)"):
-                        modal_virar_tendencia(op_alvo)
-                with col_act3:
-                    if st.button("✏️ Editar", use_container_width=True, help="Editar e corrigir qualquer dado"):
-                        modal_editar_operacao(op_alvo)
-                with col_act4:
-                    if st.button("🏁 Encerrar", use_container_width=True, help="Encerrar posição"):
-                        modal_encerrar_opcao(op_alvo)
-                with col_act5:
-                    if st.button("🗑️ Excluir", use_container_width=True, help="Remover do diário"):
-                        modal_excluir_operacao(op_alvo)
+                # Barra de Ações Rápidas por Opção
+                if opcoes_dict:
+                    st.markdown("##### ⚡ Ações Rápidas por Ativo")
+                    col_sel, col_act1, col_act2, col_act3, col_act4, col_act5 = st.columns([2.5, 1.2, 1.3, 1.2, 1.2, 1.1])
+                    with col_sel:
+                        op_escolhida_id = st.selectbox(
+                            "Selecione uma opção:",
+                            options=list(opcoes_dict.keys()),
+                            format_func=lambda i: opcoes_dict[i],
+                            key="sel_op_aberta_acao"
+                        )
+
+                    op_alvo = next((o for o in abertas_filtradas if o["id"] == op_escolhida_id), None)
+                    if op_alvo:
+                        with col_act1:
+                            if st.button("🔄 Rolar", type="primary", use_container_width=True, help="Rolar com 50% de lucro no bolso"):
+                                modal_rolar_opcao(op_alvo)
+                        with col_act2:
+                            if st.button("🔄 Virar", type="secondary", use_container_width=True, help="Virada de tendência (CALL ⇄ PUT)"):
+                                modal_virar_tendencia(op_alvo)
+                        with col_act3:
+                            if st.button("✏️ Editar", use_container_width=True, help="Editar e corrigir qualquer dado"):
+                                modal_editar_operacao(op_alvo)
+                        with col_act4:
+                            if st.button("🏁 Encerrar", use_container_width=True, help="Encerrar posição"):
+                                modal_encerrar_opcao(op_alvo)
+                        with col_act5:
+                            if st.button("🗑️ Excluir", use_container_width=True, help="Remover do diário"):
+                                modal_excluir_operacao(op_alvo)
 
             # Editor rápido de cotações em massa
             with st.expander("⚡ Atualizar Cotações de Todas as Opções Abertas"):
@@ -706,31 +708,31 @@ def pagina_diario_opcoes() -> None:
                     "Obs": o.get("observacoes") or ""
                 })
 
-            df_enc_view = pd.DataFrame(linhas_enc)
-            st.dataframe(df_enc_view.drop(columns=["ID"]), use_container_width=True, hide_index=True)
+            if not linhas_enc:
+                st.info("Nenhuma operação encerrada encontrada com os filtros selecionados.")
+            else:
+                df_enc_view = pd.DataFrame(linhas_enc)
+                st.dataframe(df_enc_view.drop(columns=["ID"], errors="ignore"), use_container_width=True, hide_index=True)
 
-            # Ações de Edição e Exclusão Individual
-            st.markdown("##### ⚙️ Gerenciar Operação Encerrada")
-            col_e_sel, col_e_btn1, col_e_btn2 = st.columns([3, 1.2, 1.2])
-            enc_dict = {
-                o["id"]: f"{o['codigo']} ({_p_data(o['data_inicio'])} a {_p_data(o.get('data_fim'))}) — Lucro: {_moeda(o.get('resultado_financeiro', 0))}"
-                for o in encerradas_filtradas
-            }
-            with col_e_sel:
-                op_enc_sel_id = st.selectbox(
-                    "Selecione uma operação para editar ou excluir:",
-                    options=list(enc_dict.keys()),
-                    format_func=lambda i: enc_dict[i],
-                    key="sel_op_enc_gerenciar"
-                )
-            op_enc_alvo = next((o for o in encerradas_filtradas if o["id"] == op_enc_sel_id), None)
-            if op_enc_alvo:
-                with col_e_btn1:
-                    if st.button("✏️ Editar Operação", type="primary", use_container_width=True, key="btn_edt_enc"):
-                        modal_editar_operacao(op_enc_alvo)
-                with col_e_btn2:
-                    if st.button("🗑️ Excluir Operação", type="secondary", use_container_width=True, key="btn_del_enc"):
-                        modal_excluir_operacao(op_enc_alvo)
+                # Ações de Edição e Exclusão Individual
+                if enc_dict:
+                    st.markdown("##### ⚙️ Gerenciar Operação Encerrada")
+                    col_e_sel, col_e_btn1, col_e_btn2 = st.columns([3, 1.2, 1.2])
+                    with col_e_sel:
+                        op_enc_sel_id = st.selectbox(
+                            "Selecione uma operação para editar ou excluir:",
+                            options=list(enc_dict.keys()),
+                            format_func=lambda i: enc_dict[i],
+                            key="sel_op_enc_gerenciar"
+                        )
+                    op_enc_alvo = next((o for o in encerradas_filtradas if o["id"] == op_enc_sel_id), None)
+                    if op_enc_alvo:
+                        with col_e_btn1:
+                            if st.button("✏️ Editar Operação", type="primary", use_container_width=True, key="btn_edt_enc"):
+                                modal_editar_operacao(op_enc_alvo)
+                        with col_e_btn2:
+                            if st.button("🗑️ Excluir Operação", type="secondary", use_container_width=True, key="btn_del_enc"):
+                                modal_excluir_operacao(op_enc_alvo)
 
     # --- ABA 3: VISÃO COMPLETA (INTEGRALIZADA COMO NA PLANILHA NITRO) ---
     with aba_completa:
@@ -811,31 +813,31 @@ def pagina_diario_opcoes() -> None:
                 "Obs": o.get("observacoes") or ""
             })
 
-        df_comp_view = pd.DataFrame(linhas_comp)
-        st.dataframe(df_comp_view.drop(columns=["ID"]), use_container_width=True, hide_index=True)
+        if not linhas_comp:
+            st.info("Nenhuma operação encontrada com os filtros selecionados.")
+        else:
+            df_comp_view = pd.DataFrame(linhas_comp)
+            st.dataframe(df_comp_view.drop(columns=["ID"], errors="ignore"), use_container_width=True, hide_index=True)
 
-        # Gestor individual
-        st.markdown("##### ⚙️ Ação Individual sobre a Operação")
-        col_c_sel, col_c_btn1, col_c_btn2 = st.columns([3, 1.2, 1.2])
-        comp_dict = {
-            o["id"]: f"#{o['id']} {o['codigo']} ({o.get('status').upper()}) — Entrada: {_p_data(o['data_inicio'])} Pago {_moeda(o['preco_pago'])}"
-            for o in ops_vis
-        }
-        with col_c_sel:
-            op_comp_sel_id = st.selectbox(
-                "Selecione uma operação para editar ou excluir:",
-                options=list(comp_dict.keys()),
-                format_func=lambda i: comp_dict[i],
-                key="sel_op_comp_gerenciar"
-            )
-        op_comp_alvo = next((o for o in ops_vis if o["id"] == op_comp_sel_id), None)
-        if op_comp_alvo:
-            with col_c_btn1:
-                if st.button("✏️ Editar Operação", type="primary", use_container_width=True, key="btn_edt_comp"):
-                    modal_editar_operacao(op_comp_alvo)
-            with col_c_btn2:
-                if st.button("🗑️ Excluir Operação", type="secondary", use_container_width=True, key="btn_del_comp"):
-                    modal_excluir_operacao(op_comp_alvo)
+            # Gestor individual
+            if comp_dict:
+                st.markdown("##### ⚙️ Ação Individual sobre a Operação")
+                col_c_sel, col_c_btn1, col_c_btn2 = st.columns([3, 1.2, 1.2])
+                with col_c_sel:
+                    op_comp_sel_id = st.selectbox(
+                        "Selecione uma operação para editar ou excluir:",
+                        options=list(comp_dict.keys()),
+                        format_func=lambda i: comp_dict[i],
+                        key="sel_op_comp_gerenciar"
+                    )
+                op_comp_alvo = next((o for o in ops_vis if o["id"] == op_comp_sel_id), None)
+                if op_comp_alvo:
+                    with col_c_btn1:
+                        if st.button("✏️ Editar Operação", type="primary", use_container_width=True, key="btn_edt_comp"):
+                            modal_editar_operacao(op_comp_alvo)
+                    with col_c_btn2:
+                        if st.button("🗑️ Excluir Operação", type="secondary", use_container_width=True, key="btn_del_comp"):
+                            modal_excluir_operacao(op_comp_alvo)
 
     # --- ABA 4: NOVA OPERAÇÃO MANUAL (CADASTRO RÁPIDO COM QUANTIDADE E PREÇO) ---
     with aba_nova:
