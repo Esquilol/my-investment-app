@@ -548,19 +548,25 @@ def pagina_parametros() -> None:
         for chave, rotulo, tipo, descricao, padrao in regras.PARAMETROS_FISCAIS:
             atual = atuais.get(chave, str(padrao))
             if tipo is float and chave.startswith("aliquota"):
+                pct = float(atual) * 100
+                rotulo_vis = f"{rotulo} — {pct:.1f}% (fração: {float(atual):.2f})"
                 valores[chave] = st.number_input(
-                    rotulo, min_value=0.0, max_value=1.0, value=float(atual),
-                    step=0.01, format="%.2f", help=descricao)
+                    rotulo_vis, min_value=0.0, max_value=1.0, value=float(atual),
+                    step=0.01, format="%.2f", help=f"{descricao} — Ex: 0,20 equivale a 20%, 0,15 equivale a 15%.")
             elif tipo is float:
+                val_moeda = f"R$ {float(atual):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                rotulo_vis = f"{rotulo} — atual: {val_moeda}"
                 valores[chave] = st.number_input(
-                    rotulo, min_value=0.0, value=float(atual), step=100.0,
-                    format="%.2f", help=descricao)
+                    rotulo_vis, min_value=0.0, value=float(atual), step=100.0,
+                    format="%.2f", help=f"{descricao} — Valor em Reais (R$).")
             elif tipo is int:
+                rotulo_vis = f"{rotulo} (em meses)"
                 valores[chave] = st.number_input(
-                    rotulo, min_value=0, max_value=12, value=int(float(atual)),
+                    rotulo_vis, min_value=0, max_value=12, value=int(float(atual)),
                     step=1, help=descricao)
             else:
-                valores[chave] = st.text_input(rotulo, value=str(atual),
+                rotulo_vis = f"{rotulo} (Código Receita Federal)"
+                valores[chave] = st.text_input(rotulo_vis, value=str(atual),
                                                help=descricao)
 
         if st.form_submit_button("Salvar parâmetros", type="primary",

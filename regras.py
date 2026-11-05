@@ -700,11 +700,10 @@ def apurar_mensal(resultados: pd.DataFrame,
 def posicao_atual(operacoes: pd.DataFrame) -> pd.DataFrame:
     """
     Posição em custódia por ticker, com preço médio ponderado.
-
-    As taxas de corretagem das compras entram no custo (item 3 do checklist).
+    Suporta posições compradas (long) e vendidas (short, ex: lançamento de opções).
     """
     if operacoes is None or operacoes.empty:
-        return pd.DataFrame(columns=["Ticker", "Grupo", "Quantidade", "Preço Médio", "Custo Total"])
+        return pd.DataFrame(columns=["Ticker", "Grupo", "Quantidade", "Preço Médio", "Custo Total", "Tipo Posição"])
 
     df = operacoes.copy()
     df["data"] = pd.to_datetime(df["data"], errors="coerce")
@@ -714,7 +713,7 @@ def posicao_atual(operacoes: pd.DataFrame) -> pd.DataFrame:
     posicao: dict[str, dict] = {}
     for _, row in df.iterrows():
         if row["mercado"] in ("FUTURO", "TERMO"):
-            continue                      # derivativos não geram custódia
+            continue                      # derivativos não geram custódia física
         ticker = row["ticker"]
         qtd = float(row["quantidade"] or 0.0)
         preco = float(row["preco"] or 0.0)
@@ -722,27 +721,167 @@ def posicao_atual(operacoes: pd.DataFrame) -> pd.DataFrame:
         reg = posicao.setdefault(ticker, {"qtd": 0.0, "custo": 0.0, "grupo": row["grupo"]})
 
         if row["tipo"] == "C":
-            reg["qtd"] += qtd
-            reg["custo"] += qtd * preco + taxas
+            if reg["qtd"] < 0:
+                pm = abs(reg["custo"] / reg["qtd"]) if reg["qtd"] != 0 else preco
+                baixa = min(qtd, abs(reg["qtd"]))
+                reg["custo"] += baixa * pm
+                reg["qtd"] += baixa
+                sobra = qtd - baixa
+                if sobra > 0:
+                    reg["qtd"] += sobra
+                    reg["custo"] += sobra * preco + taxas
+            else:
+                reg["qtd"] += qtd
+                reg["custo"] += qtd * preco + taxas
         else:
-            pm = reg["custo"] / reg["qtd"] if reg["qtd"] > 0 else 0.0
-            baixa = min(qtd, reg["qtd"])
-            reg["custo"] -= baixa * pm
-            reg["qtd"] -= qtd
+            if reg["qtd"] > 0:
+                pm = reg["custo"] / reg["qtd"] if reg["qtd"] > 0 else preco
+                baixa = min(qtd, reg["qtd"])
+                reg["custo"] -= baixa * pm
+                reg["qtd"] -= baixa
+                sobra = qtd - baixa
+                if sobra > 0:
+                    reg["qtd"] -= sobra
+                    reg["custo"] -= sobra * preco - taxas
+            else:
+                reg["qtd"] -= qtd
+                reg["custo"] -= qtd * preco - taxas
 
     linhas = []
     for ticker, reg in posicao.items():
-        if reg["qtd"] <= 1e-9:
+        if abs(reg["qtd"]) <= 1e-6:
             continue
-        pm = reg["custo"] / reg["qtd"] if reg["qtd"] else 0.0
+        pm = abs(reg["custo"] / reg["qtd"]) if reg["qtd"] != 0 else 0.0
+        tipo_pos = "Comprado" if reg["qtd"] > 0 else "Vendido"
         linhas.append({
             "Ticker": ticker,
             "Grupo": reg["grupo"],
             "Quantidade": round(reg["qtd"], 4),
             "Preço Médio": round(pm, 2),
             "Custo Total": round(reg["custo"], 2),
+            "Tipo Posição": tipo_pos,
         })
     return pd.DataFrame(linhas).sort_values("Ticker").reset_index(drop=True)
+
+
+#: Cotações de referência para derivativos e posições abertas
+COTACOES_REFERENCIA: dict[str, float] = {
+    "PETRK556": 0.17, "PETRK584": 0.06, "PETRX524": 5.27, "USIMX580": 0.92,
+    "COGNX169": 0.31, "CSNAX450": 0.67, "PETRK654": 0.02, "MRVEX450": 0.72,
+    "GGBRX248": 1.01, "MBRFX157": 0.86, "BRAPX177": 0.38, "BEEFX400": 0.16,
+    "WEGEL515": 1.66, "CSANK670": 0.01, "MBRFL187": 0.24, "MGLUL700": 0.01,
+    "PETRL653": 0.07, "BEEFL442": 0.01, "COGNL324": 0.01, "MRVEL900": 0.01,
+    "CSANK520": 0.01, "RENTK586": 0.01, "PETRK576": 0.09, "PRIOL770": 0.41,
+    "MGLUL160": 0.01, "PETRL584": 0.21, "PETRL544": 0.53,
+}
+
+#: Metadados de opções conhecidas (Strike e Vencimento)
+METADADOS_OPCOES: dict[str, dict] = {
+    "PETRK556": {"strike": 54.41, "vencimento": "19/11/2026", "notional": 5441.0},
+    "PETRK584": {"strike": 58.41, "vencimento": "19/11/2026", "notional": 5841.0},
+    "PETRX524": {"strike": 52.41, "vencimento": "18/12/2026", "notional": 5241.0},
+    "USIMX580": {"strike": 5.80, "vencimento": "18/12/2026", "notional": 2900.0},
+    "COGNX169": {"strike": 1.69, "vencimento": "18/12/2026", "notional": 1690.0},
+    "CSNAX450": {"strike": 4.50, "vencimento": "18/12/2026", "notional": 2250.0},
+    "PETRK654": {"strike": 65.41, "vencimento": "19/11/2026", "notional": 6541.0},
+    "MRVEX450": {"strike": 4.50, "vencimento": "18/12/2026", "notional": 1350.0},
+    "GGBRX248": {"strike": 24.62, "vencimento": "18/12/2026", "notional": 4924.0},
+    "MBRFX157": {"strike": 15.73, "vencimento": "18/12/2026", "notional": 3146.0},
+    "BRAPX177": {"strike": 17.70, "vencimento": "18/12/2026", "notional": 7080.0},
+    "BEEFX400": {"strike": 2.42, "vencimento": "18/12/2026", "notional": 2420.0},
+    "WEGEL515": {"strike": 51.28, "vencimento": "18/12/2026", "notional": 5128.0},
+    "CSANK670": {"strike": 6.70, "vencimento": "19/11/2026", "notional": 5360.0},
+    "MBRFL187": {"strike": 18.70, "vencimento": "18/12/2026", "notional": 1870.0},
+    "MGLUL700": {"strike": 66.29, "vencimento": "18/12/2026", "notional": 198870.0},
+    "PETRL653": {"strike": 65.41, "vencimento": "18/12/2026", "notional": 6541.0},
+    "BEEFL442": {"strike": 4.42, "vencimento": "18/12/2026", "notional": 1768.0},
+    "COGNL324": {"strike": 3.24, "vencimento": "18/12/2026", "notional": 1620.0},
+    "MRVEL900": {"strike": 9.00, "vencimento": "18/12/2026", "notional": 1800.0},
+    "CSANK520": {"strike": 5.20, "vencimento": "19/11/2026", "notional": 3120.0},
+    "RENTK586": {"strike": 58.67, "vencimento": "19/11/2026", "notional": 5867.0},
+    "PETRK576": {"strike": 56.41, "vencimento": "19/11/2026", "notional": 5641.0},
+    "PRIOL770": {"strike": 77.00, "vencimento": "18/12/2026", "notional": 7700.0},
+    "MGLUL160": {"strike": 14.86, "vencimento": "18/12/2026", "notional": 2972.0},
+    "PETRL584": {"strike": 58.41, "vencimento": "18/12/2026", "notional": 5841.0},
+    "PETRL544": {"strike": 54.41, "vencimento": "18/12/2026", "notional": 5441.0},
+}
+
+
+def detalhar_posicoes_custodia(posicao_df: pd.DataFrame,
+                               cotacoes_custom: dict[str, float] | None = None) -> pd.DataFrame:
+    """
+    Enriquece a tabela de custódia com dados detalhados para ações e opções:
+    Strike, Tipo (CALL/PUT), Vencimento, Custo Total, Preço Atual, Total Atual, Ganho (R$) e % Ganho.
+    """
+    if posicao_df is None or posicao_df.empty:
+        return pd.DataFrame()
+
+    linhas = []
+    cotacoes = dict(COTACOES_REFERENCIA)
+    if cotacoes_custom:
+        cotacoes.update(cotacoes_custom)
+
+    for _, row in posicao_df.iterrows():
+        ticker = str(row["Ticker"])
+        qtd = float(row["Quantidade"])
+        pm = float(row["Preço Médio"])
+        custo = float(row["Custo Total"])
+        is_vendido = qtd < 0
+
+        # Detecção de opção
+        tipo_opcao = "-"
+        vencimento = "-"
+        strike = 0.0
+        notional = 0.0
+
+        meta_op = METADADOS_OPCOES.get(ticker)
+        if meta_op:
+            strike = meta_op.get("strike", 0.0)
+            vencimento = meta_op.get("vencimento", "-")
+            notional = meta_op.get("notional", 0.0)
+
+        # Regra de nomenclatura de opções B3
+        m = re.match(r"^[A-Z]{4}([A-X])(\d+)$", ticker)
+        if m:
+            letra = m.group(1).upper()
+            if "A" <= letra <= "L":
+                tipo_opcao = "CALL"
+            elif "M" <= letra <= "X":
+                tipo_opcao = "PUT"
+            if vencimento == "-":
+                vencimento = "Nov/2026" if letra in ("K", "W") else "Dez/2026"
+
+        preco_atual = cotacoes.get(ticker, pm)
+        if is_vendido:
+            # Em venda de opção, o custo é o crédito recebido (negativo)
+            # e a obrigação de recompra é -qtd * preco_atual (positivo para comprar)
+            total_investido = custo
+            total_atual = qtd * preco_atual
+            ganho_rs = abs(custo) - abs(total_atual)
+            ganho_pct = (ganho_rs / abs(custo) * 100) if abs(custo) > 0 else 0.0
+        else:
+            total_investido = custo
+            total_atual = qtd * preco_atual
+            ganho_rs = total_atual - custo
+            ganho_pct = (ganho_rs / custo * 100) if custo > 0 else 0.0
+
+        linhas.append({
+            "Ativo": ticker,
+            "Qtd": int(qtd) if qtd.is_integer() else qtd,
+            "Tipo": "Vendido" if is_vendido else "Comprado",
+            "Preço Médio": pm,
+            "Notional": notional if notional > 0 else abs(qtd * pm),
+            "Strike": strike,
+            "Opção": tipo_opcao,
+            "Vencimento": vencimento,
+            "Total Investido": total_investido,
+            "Preço Atual": preco_atual,
+            "Total Atual": total_atual,
+            "Ganho (R$)": ganho_rs,
+            "Ganho (%)": ganho_pct,
+        })
+
+    return pd.DataFrame(linhas)
 
 
 __all__ = [
@@ -752,5 +891,5 @@ __all__ = [
     "PARAMETROS", "PARAMETROS_PADRAO", "PARAMETROS_FISCAIS", "aplicar_parametros",
     "codigo_receita_darf", "meses_ate_vencimento", "limite_isencao",
     "aliquota", "bucket_tributario", "classificar_grupo",
-    "resultados_realizados", "apurar_mensal", "posicao_atual",
+    "resultados_realizados", "apurar_mensal", "posicao_atual", "detalhar_posicoes_custodia", "COTACOES_REFERENCIA", "METADADOS_OPCOES",
 ]
