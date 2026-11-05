@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import altair as alt
 
 import auth
@@ -428,37 +429,19 @@ def modal_emitir_darf_oficial(competencia: str, recolher: float) -> None:
         except Exception:
             pass
 
-    col_nav1, col_nav2 = st.columns([1, 1.2])
-    with col_nav1:
-        st.link_button(
-            "🏛️ Bancos conveniados",
-            "https://www.gov.br/receitafederal/pt-br/assuntos/orientacao-tributaria/pagamentos-e-parcelamentos/rede-arrecadadora-de-receitas-federais-bancos",
-            icon=":material/account_balance:",
-            help="Rede arrecadadora de receitas federais autorizada.",
-        )
-    with col_nav2:
-        with st.popover("❓ Como pagar sem código?", icon=":material/help:"):
-            st.markdown(
-                "**Como pagar DARF sem código de barras?**\n\n"
-                "O DARF sem código de barras pode ser pago via internet nos bancos credenciados à rede arrecadadora da Receita Federal "
-                "através da opção **Pagamentos -> DARF**, digitando os mesmos dados informados na guia abaixo. Caso seu banco não seja conveniado, "
-                "procure uma agência bancária de um banco credenciado.\n\n"
-                "De acordo com a **IN SRF 96/2001 da Receita Federal**, aplicativos de terceiros não podem emitir DARF com códigos de barras."
-            )
-
     def _via_html(numero_via: str) -> str:
-        return f"""<div style="background: #ffffff; color: #000000; padding: 10px; border-radius: 2px; margin-bottom: 8px;">
+        return f"""<div style="background: #ffffff; color: #000000; padding: 6px; margin-bottom: 6px;">
 <div style="display: flex; justify-content: space-between; font-size: 9px; color: #333333; margin-bottom: 3px; font-family: Arial, sans-serif;">
 <span>Aprovado pela IN/RFB nº 736/2007</span>
 <span><strong>{numero_via} Via</strong></span>
 </div>
 <table class="darf-table">
 <tr>
-<td rowspan="3" style="width: 55%; text-align: center; vertical-align: middle; padding: 8px;">
+<td rowspan="3" style="width: 55%; text-align: center; vertical-align: middle; padding: 6px;">
 <div style="font-weight: 800; font-size: 13px; letter-spacing: 0.5px;">MINISTÉRIO DA FAZENDA</div>
 <div style="font-size: 10px; font-weight: bold; margin-top: 2px;">SECRETARIA DA RECEITA FEDERAL DO BRASIL</div>
-<div style="font-size: 9px; margin-top: 4px;">Documento de Arrecadação de Receitas Federais</div>
-<div style="font-size: 22px; font-weight: 900; margin-top: 4px; letter-spacing: 2px;">DARF</div>
+<div style="font-size: 9px; margin-top: 3px;">Documento de Arrecadação de Receitas Federais</div>
+<div style="font-size: 20px; font-weight: 900; margin-top: 3px; letter-spacing: 2px;">DARF</div>
 </td>
 <td style="width: 45%;">
 <div class="darf-label">02 PERÍODO DE APURAÇÃO</div>
@@ -481,7 +464,7 @@ def modal_emitir_darf_oficial(competencia: str, recolher: float) -> None:
 <td rowspan="3">
 <div class="darf-label">01 NOME / TELEFONE</div>
 <div class="darf-value" style="margin-top: 2px; text-align: left; font-size: 11px;">{usuario_nome} / {usuario_telefone}</div>
-<div style="margin-top: 8px; font-size: 9px; color: #000000; line-height: 1.3;">
+<div style="margin-top: 6px; font-size: 9px; color: #000000; line-height: 1.3;">
 <strong>REF. OPERAÇÕES EM BOLSA DE VALORES</strong><br>
 {_nome_mes(competencia)}<br><br>
 <strong>DARF válido para pagamento até {venc_str}</strong><br>
@@ -523,7 +506,7 @@ Domicílio tributário do contribuinte:<br>
 </td>
 </tr>
 <tr>
-<td style="font-size: 9px; font-weight: bold; text-align: center; vertical-align: middle; padding: 6px;">
+<td style="font-size: 9px; font-weight: bold; text-align: center; vertical-align: middle; padding: 4px;">
 DARF emitido em duas vias. Recorte nas linhas pontilhadas e efetue o pagamento na rede bancária autorizada.
 </td>
 <td>
@@ -534,19 +517,32 @@ DARF emitido em duas vias. Recorte nas linhas pontilhadas e efetue o pagamento n
 </table>
 </div>"""
 
-    conteudo_html = f"""
+    conteudo_html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>DARF {competencia} - Código {cod_rec}</title>
 <style>
 @media print {{
-    body * {{ visibility: hidden !important; }}
-    .darf-print-modal, .darf-print-modal * {{ visibility: visible !important; }}
-    .darf-print-modal {{ position: fixed; left: 0; top: 0; width: 100%; margin: 0; padding: 10mm; background: #fff !important; }}
+    body {{ margin: 0; padding: 0; background: #ffffff !important; }}
     .no-print {{ display: none !important; }}
+    .darf-doc {{ border: none !important; box-shadow: none !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; }}
 }}
-.darf-print-modal {{
-    background: #ffffff;
+body {{
+    font-family: Arial, Helvetica, sans-serif;
+    background: #f8fafc;
     color: #000000;
-    font-family: Arial, sans-serif;
-    padding: 4px;
+    margin: 0;
+    padding: 10px;
+}}
+.darf-doc {{
+    max-width: 660px;
+    margin: 0 auto;
+    background: #ffffff;
+    padding: 14px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }}
 .darf-table {{
     width: 100%;
@@ -578,28 +574,29 @@ DARF emitido em duas vias. Recorte nas linhas pontilhadas e efetue o pagamento n
     color: #ffffff;
     border: none;
     border-radius: 6px;
-    padding: 7px 16px;
+    padding: 8px 18px;
     font-size: 13px;
     font-weight: 700;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    text-decoration: none;
     box-shadow: 0 1px 2px rgba(0,0,0,0.1);
 }}
 .darf-btn-print:hover {{
     background-color: #059669;
 }}
 </style>
-<div class="no-print" style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
+</head>
+<body>
+<div class="no-print" style="display: flex; justify-content: flex-end; margin-bottom: 10px; max-width: 660px; margin-left: auto; margin-right: auto;">
     <button onclick="window.print()" class="darf-btn-print">
         🖨️ Imprimir / Salvar em PDF (Ctrl+P)
     </button>
 </div>
-<div class="darf-print-modal">
+<div class="darf-doc">
     {_via_html("1ª")}
-    <div style="text-align: center; border-bottom: 2px dashed #000000; margin: 14px 0 10px 0; color: #444444; font-size: 10px; font-family: monospace;">
+    <div style="text-align: center; border-bottom: 2px dashed #000000; margin: 12px 0 8px 0; color: #444444; font-size: 10px; font-family: monospace;">
         ✂️ cortar nesta linha
     </div>
     {_via_html("2ª")}
@@ -607,8 +604,40 @@ DARF emitido em duas vias. Recorte nas linhas pontilhadas e efetue o pagamento n
         DARF impresso sem código de barras por conter número de referência ou acréscimo de multa e/ou juros ou ano do período de apuração e/ou do vencimento anterior a 2007 ou posterior a 2016.
     </div>
 </div>
+</body>
+</html>
 """
-    st.html(conteudo_html)
+
+    col_nav1, col_nav2, col_nav3 = st.columns([1, 1, 1.2])
+    with col_nav1:
+        st.link_button(
+            "🏛️ Bancos conveniados",
+            "https://www.gov.br/receitafederal/pt-br/assuntos/orientacao-tributaria/pagamentos-e-parcelamentos/rede-arrecadadora-de-receitas-federais-bancos",
+            icon=":material/account_balance:",
+            help="Rede arrecadadora de receitas federais autorizada.",
+        )
+    with col_nav2:
+        with st.popover("❓ Como pagar sem código?", icon=":material/help:"):
+            st.markdown(
+                "**Como pagar DARF sem código de barras?**\n\n"
+                "O DARF sem código de barras pode ser pago via internet nos bancos credenciados à rede arrecadadora da Receita Federal "
+                "através da opção **Pagamentos -> DARF**, digitando os mesmos dados informados na guia abaixo. Caso seu banco não seja conveniado, "
+                "procure uma agência bancária de um banco credenciado.\n\n"
+                "De acordo com a **IN SRF 96/2001 da Receita Federal**, aplicativos de terceiros não podem emitir DARF com códigos de barras."
+            )
+    with col_nav3:
+        st.download_button(
+            "⬇️ Baixar DARF (HTML)",
+            data=conteudo_html,
+            file_name=f"DARF_{competencia}_6015.html",
+            mime="text/html",
+            icon=":material/download:",
+            type="primary",
+            use_container_width=True,
+        )
+
+    # Renderização oficial via iframe isolado: garante 100% de compatibilidade visual
+    components.html(conteudo_html, height=780, scrolling=True)
 
     with st.expander("📋 Dados para preenchimento rápido via Internet Banking"):
         texto_ib = "\n".join([
@@ -2354,7 +2383,7 @@ def pagina_darf() -> None:
             with c_act1:
                 if rec > 0:
                     if st.button("💵 Gerar DARF", key=f"btn_gdarf_{mes}", type="primary", use_container_width=True):
-                        modal_confirmar_gerar_darf(mes, rec)
+                        modal_emitir_darf_oficial(mes, rec)
             with c_act2:
                 if rec > 0:
                     if pago:

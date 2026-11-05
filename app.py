@@ -45,6 +45,8 @@ import html
 
 import streamlit as st
 
+import importlib
+
 import admin
 import auth
 import email_service
@@ -52,6 +54,9 @@ import landing
 import paginas
 import saas
 import tema
+
+# Força recarga em tempo de execução para sincronizar atualizações em hot-reload
+importlib.reload(paginas)
 from persistencia import obter_parceiro_por_codigo, obter_usuario, obter_por_email
 
 st.set_page_config(
