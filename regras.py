@@ -61,7 +61,7 @@ GRUPOS_FEE: dict[str, GrupoFee] = {
     for g in (
         GrupoFee("STOCK", "Ações", "STOCK", True, 0.15, 20000.0),
         GrupoFee("STOCK_USA", "Ações EUA", "STOCK_USA", True, 0.15, 35000.0),
-        GrupoFee("BDR", "BDR", "STOCK", True, 0.15, 20000.0),
+        GrupoFee("BDR", "BDR", "STOCK", False, 0.15, 0.0),
         GrupoFee("EXPENSES", "Despesas", "EXPENSES", False, 0.0, 0.0),
         GrupoFee("RIGHT", "Direito de subscrição", "STOCK", True, 0.15, 20000.0),
         GrupoFee("FUTUSD", "Dólar Futuro", "FUTUSD", False, 0.15, 0.0),
@@ -128,8 +128,8 @@ PARAMETROS_FISCAIS = (
     ("aliquota_fii", "Alíquota de FII / FIAGRO", float,
      "Fração aplicada ao ganho de fundos imobiliários (0,20 = 20%), que têm "
      "DARF próprio e não têm isenção.", 0.20),
-    ("isencao_acoes", "Isenção de vendas — ações, BDR e ouro", float,
-     "Vendas mensais até este valor ficam isentas no swing trade.", 20000.0),
+    ("isencao_acoes", "Isenção de vendas — ações e ouro", float,
+     "Vendas mensais até este valor ficam isentas no swing trade (Lei 8.981/95, art. 72). BDRs não gozam de isenção (Cosit 28/2021).", 20000.0),
     ("isencao_eua", "Isenção de vendas — ativos dos EUA", float,
      "Limite mensal de vendas isentas de ações e ETFs dos EUA.", 35000.0),
     ("valor_minimo_darf", "Valor mínimo para emissão de DARF", float,
@@ -220,7 +220,7 @@ def limite_isencao(grupo: str) -> float:
     """
     Limite de vendas isentas no mês para o grupo (``0`` = grupo sem isenção).
 
-    Ações, BDR e ouro usam o limite nacional; ações e ETFs dos EUA têm o limite
+    Ações e ouro usam o limite nacional; ações e ETFs dos EUA têm o limite
     próprio — ambos editáveis no painel administrativo.
     """
     meta = GRUPOS_FEE.get(grupo)

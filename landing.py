@@ -37,7 +37,7 @@ FUNCIONALIDADES = [
             "Apuração mensal automática",
             "Cálculo de lucros e prejuízos",
             "Compensação de prejuízos anteriores",
-            "Isenção de até R$ 20 mil (ações/BDR/ouro) e R$ 35 mil (EUA)",
+            "Isenção de até R$ 20 mil em ações e ouro (mercado à vista)",
         ],
     },
     {
