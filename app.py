@@ -249,7 +249,9 @@ with st.sidebar:
     if st.session_state["is_admin"]:
         tema.mostrar_chip("Administrador", "admin", "\U0001F6E1\uFE0F")
     st.write("")
-    if st.button("Sair", icon=":material/logout:", width="stretch"):
+    if st.button("💬 Suporte & Chamados", icon=":material/support_agent:", use_container_width=True):
+        paginas.modal_suporte_ticket()
+    if st.button("Sair", icon=":material/logout:", use_container_width=True):
         st.session_state.clear()
         st.rerun()
 
@@ -263,6 +265,8 @@ pagina_upload = st.Page(paginas.pagina_upload, title="Upload de Notas",
                         icon=":material/upload_file:")
 pagina_darf = st.Page(paginas.pagina_darf, title="DARF",
                       icon=":material/request_quote:")
+pagina_otimizacao = st.Page(paginas.pagina_otimizacao, title="Otimização Fiscal",
+                            icon=":material/tune:")
 
 paginas.PAGINA_VISAO = pagina_visao
 paginas.PAGINA_UPLOAD = pagina_upload
@@ -273,6 +277,7 @@ paginas_investidor = [
     pagina_upload,
     st.Page(paginas.pagina_patrimonio, title="Meu Patrimônio",
             icon=":material/account_balance_wallet:"),
+    pagina_otimizacao,
     st.Page(paginas.pagina_ir, title="Apuração de IR", icon=":material/calculate:"),
     pagina_darf,
     st.Page(paginas.pagina_extrato, title="Extrato", icon=":material/receipt_long:"),

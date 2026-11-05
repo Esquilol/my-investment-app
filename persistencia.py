@@ -59,6 +59,11 @@ CREATE TABLE IF NOT EXISTS usuarios (
     plano_codigo  TEXT    NOT NULL DEFAULT 'free',
     nome          TEXT,
     cpf           TEXT,
+    telefone      TEXT,
+    cidade        TEXT,
+    estado        TEXT,
+    endereco      TEXT,
+    cep           TEXT,
     origem        TEXT,
     reset_token   TEXT,
     reset_expira  TEXT,
@@ -272,7 +277,16 @@ def _acrescentar_colunas(conexao: sqlite3.Connection) -> None:
     falhariam com *no such column*.
     """
     novas = {
-        "usuarios": {"nome": "TEXT", "cpf": "TEXT", "origem": "TEXT"},
+        "usuarios": {
+            "nome": "TEXT",
+            "cpf": "TEXT",
+            "telefone": "TEXT",
+            "cidade": "TEXT",
+            "estado": "TEXT",
+            "endereco": "TEXT",
+            "cep": "TEXT",
+            "origem": "TEXT",
+        },
         "cupons": {
             "tipo": "TEXT NOT NULL DEFAULT 'percentual'",
             "meses_gratis": "INTEGER NOT NULL DEFAULT 0",
@@ -486,8 +500,8 @@ def garantir_esquema(conexao: sqlite3.Connection) -> sqlite3.Connection:
 # Usuários
 # ---------------------------------------------------------------------------
 
-_CAMPOS_PUBLICOS = ("id, usuario, nome, email, cpf, origem, is_admin, ativo, "
-                    "plano_codigo, criado_em")
+_CAMPOS_PUBLICOS = ("id, usuario, nome, email, cpf, telefone, cidade, estado, "
+                    "endereco, cep, origem, is_admin, ativo, plano_codigo, criado_em")
 
 
 def criar_usuario(conexao: sqlite3.Connection, usuario: str, email: str,
@@ -557,7 +571,8 @@ def listar_usuarios(conexao: sqlite3.Connection) -> pd.DataFrame:
 def atualizar_usuario(conexao: sqlite3.Connection, usuario_id: int, **campos) -> None:
     """Atualiza os campos informados de um usuário (usuario, email, hash, ativo...)."""
     permitidos = {"usuario", "email", "hash", "is_admin", "ativo", "plano_codigo",
-                  "nome", "cpf", "origem", "reset_token", "reset_expira"}
+                  "nome", "cpf", "telefone", "cidade", "estado", "endereco", "cep",
+                  "origem", "reset_token", "reset_expira"}
     itens = {k: v for k, v in campos.items() if k in permitidos}
     if not itens:
         return
