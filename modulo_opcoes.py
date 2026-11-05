@@ -38,6 +38,312 @@ def _p_data(val: str | None) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Estilos e Renderizadores de Tabelas Web Nativas (Layout Slim com Rolagem Fluida)
+# ---------------------------------------------------------------------------
+
+def _render_css_tabela() -> str:
+    return """
+    <style>
+    .ft-tab-wrapper {
+        width: 100%;
+        overflow-x: auto;
+        margin-top: 10px;
+        margin-bottom: 22px;
+        border-radius: 8px;
+        border: 1px solid #23303d;
+        background-color: #0f172a;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.25);
+    }
+    .ft-tab {
+        width: 100%;
+        min-width: 860px;
+        border-collapse: collapse;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 0.86rem;
+        color: #f8fafc;
+        text-align: left;
+    }
+    .ft-tab th {
+        background: linear-gradient(180deg, #15803d 0%, #166534 100%);
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 0.78rem;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        padding: 12px 14px;
+        border-bottom: 2px solid #22c55e;
+        white-space: nowrap;
+    }
+    .ft-tab th.col-r { text-align: right; }
+    .ft-tab th.col-c { text-align: center; }
+    .ft-tab td {
+        padding: 11px 14px;
+        border-bottom: 1px solid #1e293b;
+        white-space: nowrap;
+    }
+    .ft-tab tr:nth-child(even) { background-color: #111827; }
+    .ft-tab tr:nth-child(odd) { background-color: #0b1120; }
+    .ft-tab tr:hover { background-color: #1e293b; transition: background-color 0.15s ease; }
+    .ft-tab td.col-r { text-align: right; }
+    .ft-tab td.col-c { text-align: center; }
+    
+    .ft-ticker {
+        color: #38bdf8;
+        font-weight: 700;
+        text-decoration: underline;
+        letter-spacing: 0.4px;
+    }
+    .ft-badge-call {
+        font-size: 0.68rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: rgba(34, 197, 94, 0.18);
+        color: #4ade80;
+        border: 1px solid rgba(34, 197, 94, 0.35);
+        font-weight: 700;
+        margin-left: 6px;
+    }
+    .ft-badge-put {
+        font-size: 0.68rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: rgba(239, 68, 68, 0.18);
+        color: #f87171;
+        border: 1px solid rgba(239, 68, 68, 0.35);
+        font-weight: 700;
+        margin-left: 6px;
+    }
+    .ft-badge-rolar {
+        background-color: rgba(34, 197, 94, 0.22);
+        color: #4ade80;
+        border: 1px solid #22c55e;
+        padding: 3px 8px;
+        border-radius: 6px;
+        font-weight: 700;
+        font-size: 0.74rem;
+        display: inline-block;
+    }
+    .ft-badge-status {
+        padding: 2px 8px;
+        border-radius: 5px;
+        font-size: 0.74rem;
+        font-weight: 600;
+        display: inline-block;
+    }
+    .ft-status-aberta { background: rgba(56, 189, 248, 0.18); color: #38bdf8; border: 1px solid #0284c7; }
+    .ft-status-encerrada { background: rgba(148, 163, 184, 0.18); color: #cbd5e1; border: 1px solid #64748b; }
+    .ft-status-rolada { background: rgba(34, 197, 94, 0.18); color: #4ade80; border: 1px solid #22c55e; }
+    .ft-status-virada { background: rgba(168, 85, 247, 0.18); color: #c084fc; border: 1px solid #9333ea; }
+    
+    .ft-val-pos { color: #4ade80; font-weight: 700; }
+    .ft-val-neg { color: #f87171; font-weight: 700; }
+    .ft-val-neu { color: #94a3b8; font-weight: 500; }
+    </style>
+    """
+
+
+def _format_pct_html(val: float) -> str:
+    if val > 0.05:
+        return f'<span class="ft-val-pos">+{val:.1f}% &utrif;</span>'
+    elif val < -0.05:
+        return f'<span class="ft-val-neg">{val:.1f}% &dtrif;</span>'
+    return '<span class="ft-val-neu">0,0% &mdash;</span>'
+
+
+def _format_moeda_delta_html(val: float) -> str:
+    if val > 0.01:
+        return f'<span class="ft-val-pos">+{_moeda(val)} &utrif;</span>'
+    elif val < -0.01:
+        return f'<span class="ft-val-neg">{_moeda(val)} &dtrif;</span>'
+    return f'<span class="ft-val-neu">{_moeda(0.0)} &mdash;</span>'
+
+
+def _badge_estrutura_html(estrutura: str | None) -> str:
+    est = str(estrutura or "").upper()
+    if "PUT" in est:
+        return '<span class="ft-badge-put">PUT</span>'
+    elif "CALL" in est:
+        return '<span class="ft-badge-call">CALL</span>'
+    return ""
+
+
+def _badge_status_html(status: str | None) -> str:
+    st_norm = str(status or "aberta").lower().strip()
+    rotulo = st_norm.capitalize()
+    if st_norm == "aberta":
+        return f'<span class="ft-badge-status ft-status-aberta">{rotulo}</span>'
+    elif st_norm == "encerrada":
+        return f'<span class="ft-badge-status ft-status-encerrada">{rotulo}</span>'
+    elif st_norm == "rolada":
+        return f'<span class="ft-badge-status ft-status-rolada">{rotulo}</span>'
+    elif st_norm == "virada":
+        return f'<span class="ft-badge-status ft-status-virada">{rotulo}</span>'
+    return f'<span class="ft-badge-status ft-status-encerrada">{rotulo}</span>'
+
+
+def _render_html_tabela_abertas(linhas: list[dict]) -> str:
+    """Renderiza a tabela web nativa para posições abertas com rolagem fluida e cabeçalho verde."""
+    html_out = [_render_css_tabela(), '<div class="ft-tab-wrapper"><table class="ft-tab"><thead><tr>']
+    html_out.append('<th>Ativo</th>')
+    html_out.append('<th>Estrutura</th>')
+    html_out.append('<th class="col-c">Início</th>')
+    html_out.append('<th class="col-c">Dias</th>')
+    html_out.append('<th class="col-r">Qtd</th>')
+    html_out.append('<th class="col-r">Preço Pago</th>')
+    html_out.append('<th class="col-r">Cotação Atual</th>')
+    html_out.append('<th class="col-r">Alocado</th>')
+    html_out.append('<th class="col-r">% Rendimento</th>')
+    html_out.append('<th class="col-r">R$ Retorno</th>')
+    html_out.append('<th class="col-c">Gatilho / Alerta</th>')
+    html_out.append('</tr></thead><tbody>')
+
+    for r in linhas:
+        badge_est = _badge_estrutura_html(r.get("estrutura"))
+        subjacente = r.get("ativo") or ""
+        codigo = r.get("codigo") or ""
+        
+        ativo_html = f'<span class="ft-ticker">{codigo}</span> {badge_est}'
+        if subjacente and subjacente != codigo:
+            ativo_html += f'<br><small style="color: #94a3b8; font-size: 0.72rem;">Subj: {subjacente}</small>'
+
+        rend_pct = float(r.get("rend_pct_num", 0.0))
+        lucro_rs = float(r.get("lucro_rs_num", 0.0))
+        atingiu = bool(r.get("atingiu_gatilho", False))
+
+        gatilho_html = (
+            f'<span class="ft-badge-rolar">🎯 ROLAR (+{rend_pct:.0f}%)</span>'
+            if atingiu
+            else '<span class="ft-val-neu">Normal</span>'
+        )
+
+        html_out.append('<tr>')
+        html_out.append(f'<td>{ativo_html}</td>')
+        html_out.append(f'<td>{r.get("estrutura", "—")}</td>')
+        html_out.append(f'<td class="col-c">{r.get("inicio", "—")}</td>')
+        html_out.append(f'<td class="col-c">{r.get("dias", 0)} d</td>')
+        qtd_fmt = f"{int(r.get('qtd', 0)):,}".replace(",", ".")
+        html_out.append(f'<td class="col-r">{qtd_fmt}</td>')
+        html_out.append(f'<td class="col-r">{_moeda(r.get("pago_num", 0.0))}</td>')
+        html_out.append(f'<td class="col-r" style="font-weight: 600;">{_moeda(r.get("atual_num", 0.0))}</td>')
+        html_out.append(f'<td class="col-r">{_moeda(r.get("alocado_num", 0.0))}</td>')
+        html_out.append(f'<td class="col-r">{_format_pct_html(rend_pct)}</td>')
+        html_out.append(f'<td class="col-r">{_format_moeda_delta_html(lucro_rs)}</td>')
+        html_out.append(f'<td class="col-c">{gatilho_html}</td>')
+        html_out.append('</tr>')
+
+    html_out.append('</tbody></table></div>')
+    return "".join(html_out)
+
+
+def _render_html_tabela_encerradas(linhas: list[dict]) -> str:
+    """Renderiza a tabela web nativa para o histórico de operações encerradas."""
+    html_out = [_render_css_tabela(), '<div class="ft-tab-wrapper"><table class="ft-tab"><thead><tr>']
+    html_out.append('<th>Ativo</th>')
+    html_out.append('<th>Estrutura</th>')
+    html_out.append('<th class="col-c">Início</th>')
+    html_out.append('<th class="col-c">Fim</th>')
+    html_out.append('<th class="col-c">Dias</th>')
+    html_out.append('<th class="col-r">Qtd</th>')
+    html_out.append('<th class="col-r">Pago</th>')
+    html_out.append('<th class="col-r">Recebido</th>')
+    html_out.append('<th class="col-r">Alocado</th>')
+    html_out.append('<th class="col-r">Valor Final</th>')
+    html_out.append('<th class="col-r">% Resultado</th>')
+    html_out.append('<th class="col-r">Lucro (R$)</th>')
+    html_out.append('<th class="col-c">Status</th>')
+    html_out.append('</tr></thead><tbody>')
+
+    for r in linhas:
+        badge_est = _badge_estrutura_html(r.get("estrutura"))
+        codigo = r.get("codigo") or ""
+        subjacente = r.get("ativo") or ""
+        ativo_html = f'<span class="ft-ticker">{codigo}</span> {badge_est}'
+        if subjacente and subjacente != codigo:
+            ativo_html += f'<br><small style="color: #94a3b8; font-size: 0.72rem;">Subj: {subjacente}</small>'
+
+        res_pct = float(r.get("res_pct_num", 0.0))
+        res_fin = float(r.get("res_fin_num", 0.0))
+
+        html_out.append('<tr>')
+        html_out.append(f'<td>{ativo_html}</td>')
+        html_out.append(f'<td>{r.get("estrutura", "—")}</td>')
+        html_out.append(f'<td class="col-c">{r.get("inicio", "—")}</td>')
+        html_out.append(f'<td class="col-c">{r.get("fim", "—")}</td>')
+        html_out.append(f'<td class="col-c">{r.get("dias", 0)} d</td>')
+        qtd_fmt = f"{int(r.get('qtd', 0)):,}".replace(",", ".")
+        html_out.append(f'<td class="col-r">{qtd_fmt}</td>')
+        html_out.append(f'<td class="col-r">{_moeda(r.get("pago_num", 0.0))}</td>')
+        html_out.append(f'<td class="col-r">{_moeda(r.get("rec_num", 0.0))}</td>')
+        html_out.append(f'<td class="col-r">{_moeda(r.get("alocado_num", 0.0))}</td>')
+        html_out.append(f'<td class="col-r">{_moeda(r.get("final_num", 0.0))}</td>')
+        html_out.append(f'<td class="col-r">{_format_pct_html(res_pct)}</td>')
+        html_out.append(f'<td class="col-r">{_format_moeda_delta_html(res_fin)}</td>')
+        html_out.append(f'<td class="col-c">{_badge_status_html(r.get("status"))}</td>')
+        html_out.append('</tr>')
+
+    html_out.append('</tbody></table></div>')
+    return "".join(html_out)
+
+
+def _render_html_tabela_completa(linhas: list[dict]) -> str:
+    """Renderiza a tabela web nativa consolidada (Visão Integralizada / Planilha Nitro)."""
+    html_out = [_render_css_tabela(), '<div class="ft-tab-wrapper"><table class="ft-tab"><thead><tr>']
+    html_out.append('<th class="col-c">#</th>')
+    html_out.append('<th>Ativo</th>')
+    html_out.append('<th>Estrutura</th>')
+    html_out.append('<th class="col-c">Início</th>')
+    html_out.append('<th class="col-c">Fim</th>')
+    html_out.append('<th class="col-c">Dias</th>')
+    html_out.append('<th class="col-r">Qtd</th>')
+    html_out.append('<th class="col-r">Preço Pago</th>')
+    html_out.append('<th class="col-r">Saída / Atual</th>')
+    html_out.append('<th class="col-r">Alocado</th>')
+    html_out.append('<th class="col-r">Valor Final</th>')
+    html_out.append('<th class="col-r">% Resultado</th>')
+    html_out.append('<th class="col-r">Lucro (R$)</th>')
+    html_out.append('<th class="col-c">Status</th>')
+    html_out.append('</tr></thead><tbody>')
+
+    for r in linhas:
+        badge_est = _badge_estrutura_html(r.get("estrutura"))
+        codigo = r.get("codigo") or ""
+        subjacente = r.get("ativo") or ""
+        ativo_html = f'<span class="ft-ticker">{codigo}</span> {badge_est}'
+        if subjacente and subjacente != codigo:
+            ativo_html += f'<br><small style="color: #94a3b8; font-size: 0.72rem;">Subj: {subjacente}</small>'
+
+        res_pct = float(r.get("res_pct_num", 0.0))
+        st_norm = str(r.get("status", "")).lower()
+
+        final_col = _moeda(r.get("final_num", 0.0)) if st_norm != "aberta" else "—"
+        if st_norm != "aberta":
+            lucro_col = _format_moeda_delta_html(r.get("lucro_num", 0.0))
+        else:
+            lucro_col = '<span class="ft-val-neu">—</span>'
+
+        html_out.append('<tr>')
+        html_out.append(f'<td class="col-c" style="color: #94a3b8; font-size: 0.75rem;">#{r.get("id")}</td>')
+        html_out.append(f'<td>{ativo_html}</td>')
+        html_out.append(f'<td>{r.get("estrutura", "—")}</td>')
+        html_out.append(f'<td class="col-c">{r.get("inicio", "—")}</td>')
+        html_out.append(f'<td class="col-c">{r.get("fim", "—")}</td>')
+        html_out.append(f'<td class="col-c">{r.get("dias", 0)} d</td>')
+        qtd_fmt = f"{int(r.get('qtd', 0)):,}".replace(",", ".")
+        html_out.append(f'<td class="col-r">{qtd_fmt}</td>')
+        html_out.append(f'<td class="col-r">{_moeda(r.get("pago_num", 0.0))}</td>')
+        html_out.append(f'<td class="col-r">{r.get("preco_col_str", "—")}</td>')
+        html_out.append(f'<td class="col-r">{_moeda(r.get("alocado_num", 0.0))}</td>')
+        html_out.append(f'<td class="col-r">{final_col}</td>')
+        html_out.append(f'<td class="col-r">{_format_pct_html(res_pct)}</td>')
+        html_out.append(f'<td class="col-r">{lucro_col}</td>')
+        html_out.append(f'<td class="col-c">{_badge_status_html(st_norm)}</td>')
+        html_out.append('</tr>')
+
+    html_out.append('</tbody></table></div>')
+    return "".join(html_out)
+
+
+# ---------------------------------------------------------------------------
 # Modais de Ações do Diário
 # ---------------------------------------------------------------------------
 
@@ -533,6 +839,29 @@ def pagina_diario_opcoes() -> None:
         if not abertas:
             st.info("Nenhuma posição aberta no momento.")
         else:
+            # Status e Sincronização de Cotações com a B3
+            cfg_api = bd.obter_config_api_cotacoes(conexao)
+            col_sync1, col_sync2 = st.columns([2.2, 1.8])
+            with col_sync1:
+                if cfg_api.get("ativa"):
+                    if st.button("⚡ Sincronizar Cotações em Tempo Real (API B3)", type="primary", use_container_width=True, icon=":material/sync:"):
+                        with st.spinner("Buscando cotações atualizadas na B3 via Brapi.dev..."):
+                            atualizadas, msg_api = bd.sincronizar_cotacoes_opcoes(conexao, usuario_id)
+                            if atualizadas > 0:
+                                st.success(msg_api)
+                                st.rerun()
+                            else:
+                                st.warning(msg_api)
+                else:
+                    st.info("💡 **Cotações Automáticas B3:** A integração está desligada no Painel Admin. Ative-a no **Painel Admin > Cotações B3** com seu token gratuito da Brapi.dev para atualizar as cotações em 1 clique.")
+            with col_sync2:
+                if cfg_api.get("ativa"):
+                    prov_nome = str(cfg_api.get("provedor", "brapi")).upper()
+                    ult_teste = cfg_api.get("ultimo_teste") or "Hoje"
+                    st.caption(f"🟢 **Integração B3 Ativa ({prov_nome})** — Cotações em tempo real disponíveis. Última verificação: `{ult_teste}`.")
+                else:
+                    st.caption("⚪ Cotações manuais ativas. Ative o provedor gratuito Brapi.dev no painel administrativo.")
+
             # Barra de Configuração e Filtros
             col_cfg1, col_cfg2, col_cfg3 = st.columns([1.5, 1.5, 1.5])
             with col_cfg1:
@@ -565,7 +894,7 @@ def pagina_diario_opcoes() -> None:
 
             st.caption(f"Exibindo {len(abertas_filtradas)} de {len(abertas)} opções abertas.")
 
-            # Montagem da tabela limpa
+            # Montagem das linhas para a tabela web
             linhas_abertas = []
             for op in abertas_filtradas:
                 p_pago = float(op["preco_pago"])
@@ -573,38 +902,35 @@ def pagina_diario_opcoes() -> None:
                 alocado_op = float(op["valor_alocado"])
                 qtd_op = float(op["quantidade"])
                 rend_pct = ((p_atual - p_pago) / p_pago * 100) if p_pago > 0 else 0.0
+                lucro_rs = alocado_op * (rend_pct / 100.0)
                 atingiu = rend_pct >= gatilho_global
                 dias_op = op.get("dias") or bd._calcular_dias_operacao(op["data_inicio"])
 
                 linhas_abertas.append({
-                    "ID": op["id"],
-                    "Código": op["codigo"],
-                    "Ativo": op.get("ativo_subjacente") or op["codigo"][:4],
-                    "Estrutura": op.get("estrutura", "—"),
-                    "Início": _p_data(op["data_inicio"]),
-                    "Dias": int(dias_op),
-                    "Qtd": int(qtd_op),
-                    "Pago": _moeda(p_pago),
-                    "Atual": _moeda(p_atual),
-                    "Rendimento %": f"{rend_pct:+.1f}%",
-                    "Alocado": _moeda(alocado_op),
-                    "Gatilho": f"🎯 ROLAR (+{rend_pct:.0f}%)" if atingiu else "Normal"
+                    "id": op["id"],
+                    "codigo": op["codigo"],
+                    "ativo": op.get("ativo_subjacente") or op["codigo"][:4],
+                    "estrutura": op.get("estrutura", "—"),
+                    "inicio": _p_data(op["data_inicio"]),
+                    "dias": int(dias_op),
+                    "qtd": int(qtd_op),
+                    "pago_num": p_pago,
+                    "atual_num": p_atual,
+                    "alocado_num": alocado_op,
+                    "rend_pct_num": rend_pct,
+                    "lucro_rs_num": lucro_rs,
+                    "atingiu_gatilho": atingiu
                 })
 
             opcoes_dict = {
-                o["id"]: f"{o['codigo']} ({o.get('estrutura')}) — Pago {_moeda(o['preco_pago'])}"
+                o["id"]: f"{o['codigo']} ({o.get('estrutura')}) — Pago {_moeda(o['preco_pago'])} | Atual {_moeda(o.get('preco_atual') or o['preco_pago'])}"
                 for o in abertas_filtradas
             }
 
             if not linhas_abertas:
                 st.info("Nenhuma posição aberta encontrada com os filtros selecionados.")
             else:
-                df_ab_view = pd.DataFrame(linhas_abertas)
-                st.dataframe(
-                    df_ab_view.drop(columns=["ID"], errors="ignore"),
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.markdown(_render_html_tabela_abertas(linhas_abertas), unsafe_allow_html=True)
 
                 # Barra de Ações Rápidas por Opção
                 if opcoes_dict:
@@ -695,22 +1021,25 @@ def pagina_diario_opcoes() -> None:
                 res_fin = float(o.get("resultado_financeiro") or 0.0)
                 res_pct = float(o.get("resultado_pct") or 0.0)
                 dias_op = o.get("dias") or bd._calcular_dias_operacao(o["data_inicio"], o.get("data_fim"))
+                qtd_op = float(o.get("quantidade") or 0.0)
 
                 linhas_enc.append({
-                    "ID": o["id"],
-                    "Código": o["codigo"],
-                    "Estrutura": o.get("estrutura", "—"),
-                    "Início": _p_data(o["data_inicio"]),
-                    "Fim": _p_data(o.get("data_fim")),
-                    "Dias": int(dias_op),
-                    "Pago": _moeda(p_pago),
-                    "Recebido": _moeda(p_rec),
-                    "Resultado %": f"{res_pct:+.1f}%",
-                    "Alocado": _moeda(aloc),
-                    "Final": _moeda(v_fin),
-                    "Lucro (R$)": _moeda(res_fin),
-                    "Status": str(o.get("status", "encerrada")).capitalize(),
-                    "Obs": o.get("observacoes") or ""
+                    "id": o["id"],
+                    "codigo": o["codigo"],
+                    "ativo": o.get("ativo_subjacente") or o["codigo"][:4],
+                    "estrutura": o.get("estrutura", "—"),
+                    "inicio": _p_data(o["data_inicio"]),
+                    "fim": _p_data(o.get("data_fim")),
+                    "dias": int(dias_op),
+                    "qtd": int(qtd_op),
+                    "pago_num": p_pago,
+                    "rec_num": p_rec,
+                    "alocado_num": aloc,
+                    "final_num": v_fin,
+                    "res_pct_num": res_pct,
+                    "res_fin_num": res_fin,
+                    "status": str(o.get("status", "encerrada")),
+                    "obs": o.get("observacoes") or ""
                 })
 
             enc_dict = {
@@ -721,8 +1050,7 @@ def pagina_diario_opcoes() -> None:
             if not linhas_enc:
                 st.info("Nenhuma operação encerrada encontrada com os filtros selecionados.")
             else:
-                df_enc_view = pd.DataFrame(linhas_enc)
-                st.dataframe(df_enc_view.drop(columns=["ID"], errors="ignore"), use_container_width=True, hide_index=True)
+                st.markdown(_render_html_tabela_encerradas(linhas_enc), unsafe_allow_html=True)
 
                 # Ações de Edição e Exclusão Individual
                 if enc_dict:
@@ -792,35 +1120,34 @@ def pagina_diario_opcoes() -> None:
             aloc = float(o.get("valor_alocado") or 0.0)
             v_fin = float(o.get("valor_final") or 0.0)
             res_fin = float(o.get("resultado_financeiro") or 0.0)
+            qtd_op = float(o.get("quantidade") or 0.0)
 
             if st_op == "aberta":
                 res_pct = ((p_atual - p_pago) / p_pago * 100) if p_pago > 0 else 0.0
-                preco_col = _moeda(p_atual) + " (atual)"
-                lucro_col = "—"
-                fin_col = "—"
+                preco_col_str = _moeda(p_atual) + " (atual)"
             else:
                 res_pct = float(o.get("resultado_pct") or 0.0)
-                preco_col = _moeda(p_rec)
-                lucro_col = _moeda(res_fin)
-                fin_col = _moeda(v_fin)
+                preco_col_str = _moeda(p_rec)
 
             dias_op = o.get("dias") or bd._calcular_dias_operacao(o["data_inicio"], o.get("data_fim"))
 
             linhas_comp.append({
-                "ID": o["id"],
-                "Código": o["codigo"],
-                "Estrutura": o.get("estrutura", "—"),
-                "Início": _p_data(o["data_inicio"]),
-                "Fim": _p_data(o.get("data_fim")),
-                "Dias": int(dias_op),
-                "Pago": _moeda(p_pago),
-                "Saída/Atual": preco_col,
-                "Resultado %": f"{res_pct:+.1f}%",
-                "Status": st_op.capitalize(),
-                "Alocado": _moeda(aloc),
-                "Final": fin_col,
-                "Lucro": lucro_col,
-                "Obs": o.get("observacoes") or ""
+                "id": o["id"],
+                "codigo": o["codigo"],
+                "ativo": o.get("ativo_subjacente") or o["codigo"][:4],
+                "estrutura": o.get("estrutura", "—"),
+                "inicio": _p_data(o["data_inicio"]),
+                "fim": _p_data(o.get("data_fim")),
+                "dias": int(dias_op),
+                "qtd": int(qtd_op),
+                "pago_num": p_pago,
+                "preco_col_str": preco_col_str,
+                "alocado_num": aloc,
+                "final_num": v_fin,
+                "res_pct_num": res_pct,
+                "lucro_num": res_fin,
+                "status": st_op,
+                "obs": o.get("observacoes") or ""
             })
 
         comp_dict = {
@@ -831,8 +1158,7 @@ def pagina_diario_opcoes() -> None:
         if not linhas_comp:
             st.info("Nenhuma operação encontrada com os filtros selecionados.")
         else:
-            df_comp_view = pd.DataFrame(linhas_comp)
-            st.dataframe(df_comp_view.drop(columns=["ID"], errors="ignore"), use_container_width=True, hide_index=True)
+            st.markdown(_render_html_tabela_completa(linhas_comp), unsafe_allow_html=True)
 
             # Gestor individual
             if comp_dict:

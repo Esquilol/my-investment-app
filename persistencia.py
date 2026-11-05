@@ -2050,6 +2050,85 @@ def testar_conexao_api_cotacoes(provedor: str, token: str) -> tuple[bool, str]:
     return False, f"Provedor '{provedor}' não suportado para teste automatizado."
 
 
+def sincronizar_cotacoes_opcoes(conexao: sqlite3.Connection, usuario_id: int) -> tuple[int, str]:
+    """
+    Sincroniza as cotações atuais de todas as opções abertas do usuário
+    consultando a API de mercado configurada no painel administrativo (ex: Brapi.dev).
+    Retorna (quantidade_atualizada, mensagem_status).
+    """
+    import json, urllib.request, urllib.error
+    cfg = obter_config_api_cotacoes(conexao)
+
+    if not cfg["ativa"]:
+        return 0, "A integração de cotações em tempo real está desligada no Painel Admin. Ative-a para buscar preços automaticamente da B3."
+
+    token = cfg.get("token", "").strip()
+    provedor = cfg.get("provedor", "brapi").strip().lower()
+
+    cur = conexao.execute(
+        "SELECT id, codigo, preco_pago FROM opcoes_operacoes WHERE usuario_id = ? AND status = 'aberta'",
+        (int(usuario_id),)
+    )
+    abertas = cur.fetchall()
+    if not abertas:
+        return 0, "Nenhuma opção aberta para sincronizar."
+
+    mapa_ops = {str(row["codigo"]).upper().strip(): int(row["id"]) for row in abertas}
+    tickers_lista = list(mapa_ops.keys())
+
+    atualizadas = 0
+
+    if provedor == "brapi":
+        # Consultar em lotes de até 20 tickers
+        lote_tamanho = 20
+        for i in range(0, len(tickers_lista), lote_tamanho):
+            lote = tickers_lista[i:i + lote_tamanho]
+            tickers_param = ",".join(lote)
+            url = f"https://brapi.dev/api/quote/{tickers_param}"
+            if token:
+                url += f"?token={token}"
+
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "FiscoTrade/1.0", "Accept": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    dados = json.loads(resp.read().decode("utf-8"))
+                    results = dados.get("results", [])
+                    for item in results:
+                        sym = str(item.get("symbol", "")).upper().strip()
+                        preco = float(item.get("regularMarketPrice") or item.get("close") or item.get("price") or 0.0)
+                        if sym in mapa_ops and preco > 0:
+                            op_id = mapa_ops[sym]
+                            atualizar_cotacao_opcao(conexao, usuario_id, op_id, preco)
+                            atualizadas += 1
+            except urllib.error.HTTPError as he:
+                if he.code in (401, 403):
+                    return atualizadas, f"Falha de autenticação na Brapi.dev (HTTP {he.code}): Verifique seu Token no Painel Admin."
+                return atualizadas, f"Erro HTTP ao consultar Brapi.dev: {he.code} {he.reason}"
+            except Exception as e:
+                return atualizadas, f"Erro de conexão com a API Brapi.dev: {e}"
+
+        if atualizadas > 0:
+            salvar_config_api_cotacoes(
+                conexao,
+                ativa=True,
+                provedor="brapi",
+                token=token,
+                status="conectado",
+                ultimo_teste=agora()[:19].replace("T", " ")
+            )
+            return atualizadas, f"Sucesso! {atualizadas} opção(ões) aberta(s) atualizada(s) em tempo real via Brapi.dev."
+        else:
+            return 0, "A API respondeu com sucesso, mas nenhum dos tickers abertos retornou cotação no momento."
+
+    elif provedor == "hg":
+        return 0, "Provedor HG Brasil não possui cotações de opções da B3 em tempo real."
+
+    return 0, f"Provedor '{provedor}' não configurado para atualização automática."
+
+
 def atualizar_modulos_usuario(conexao: sqlite3.Connection, usuario_id: int,
                              modulo_fiscal: bool, modulo_opcoes: bool) -> None:
     """Ativa ou desativa os módulos de um usuário."""
@@ -2491,4 +2570,5 @@ __all__ = [
     "excluir_opcao_operacao", "atualizar_modulos_usuario", "importar_opcoes_google_sheet",
     "importar_opcoes_arquivo", "gerar_modelo_planilha_opcoes",
     "obter_config_api_cotacoes", "salvar_config_api_cotacoes", "testar_conexao_api_cotacoes",
+    "sincronizar_cotacoes_opcoes",
 ]
