@@ -44,20 +44,22 @@ def _p_data(val: str | None) -> str:
 def _render_css_tabela() -> str:
     return (
         "<style>"
-        ".ft-tab-container{width:100%;overflow-x:auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.04);margin:10px 0 18px 0;}"
-        ".ft-tab{width:100%;border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:0.85rem;color:#1e293b;text-align:left;}"
-        ".ft-tab th{background-color:#f8fafc;color:#475569;font-weight:700;font-size:0.74rem;text-transform:uppercase;letter-spacing:0.4px;padding:11px 12px;border-bottom:2px solid #e2e8f0;white-space:nowrap;}"
+        ".ft-tab-container{width:100%;max-width:100%;overflow-x:auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.04);margin:8px 0 16px 0;}"
+        ".ft-tab{width:100%;border-collapse:collapse;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:0.84rem;color:#1e293b;text-align:left;}"
+        ".ft-tab th{background-color:#f8fafc;color:#475569;font-weight:700;font-size:0.72rem;text-transform:uppercase;letter-spacing:0.4px;padding:9px 12px;border-bottom:2px solid #e2e8f0;white-space:nowrap;}"
         ".ft-tab th.col-r{text-align:right;}"
         ".ft-tab th.col-c{text-align:center;}"
-        ".ft-tab td{padding:10px 12px;border-bottom:1px solid #f1f5f9;white-space:nowrap;vertical-align:middle;}"
-        ".ft-tab tr:hover{background-color:#f8fafc;transition:background-color 0.15s ease;}"
+        ".ft-tab td{padding:8px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle;}"
+        ".ft-tab tr:hover{background-color:#f8fafc;transition:background-color 0.12s ease;}"
         ".ft-tab tr:last-child td{border-bottom:none;}"
         ".ft-tab td.col-r{text-align:right;font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:0.84rem;}"
         ".ft-tab td.col-c{text-align:center;}"
-        ".ft-ticker{font-weight:700;color:#0f172a;letter-spacing:0.2px;}"
-        ".ft-badge-call{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;padding:2px 6px;border-radius:4px;font-weight:600;font-size:0.70rem;}"
-        ".ft-badge-put{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;padding:2px 6px;border-radius:4px;font-weight:600;font-size:0.70rem;}"
-        ".ft-badge-rolar{background:#dcfce7;color:#15803d;border:1px solid #22c55e;padding:2px 8px;border-radius:5px;font-weight:700;font-size:0.72rem;display:inline-block;}"
+        ".ft-sub{font-size:0.73rem;color:#64748b;margin-top:2px;display:flex;align-items:center;gap:5px;}"
+        ".ft-sub-r{font-size:0.73rem;color:#64748b;margin-top:2px;display:flex;justify-content:flex-end;align-items:center;gap:5px;}"
+        ".ft-ticker{font-weight:700;color:#0f172a;letter-spacing:0.2px;font-size:0.88rem;}"
+        ".ft-badge-call{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;padding:1px 5px;border-radius:4px;font-weight:700;font-size:0.65rem;text-transform:uppercase;}"
+        ".ft-badge-put{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;padding:1px 5px;border-radius:4px;font-weight:700;font-size:0.65rem;text-transform:uppercase;}"
+        ".ft-badge-rolar{background:#dcfce7;color:#15803d;border:1.5px solid #22c55e;padding:3px 8px;border-radius:5px;font-weight:800;font-size:0.72rem;display:inline-block;white-space:nowrap;}"
         ".ft-status-aberta{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;padding:2px 6px;border-radius:4px;font-weight:600;font-size:0.70rem;}"
         ".ft-status-encerrada{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;padding:2px 6px;border-radius:4px;font-weight:600;font-size:0.70rem;}"
         ".ft-status-rolada{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;padding:2px 6px;border-radius:4px;font-weight:600;font-size:0.70rem;}"
@@ -88,9 +90,9 @@ def _fmt_moeda_delta(val: float) -> str:
 def _badge_est(est: str | None) -> str:
     est_u = (est or "").upper()
     if "PUT" in est_u:
-        return f'<span class="ft-badge-put">{est}</span>'
+        return '<span class="ft-badge-put">PUT</span>'
     elif "CALL" in est_u:
-        return f'<span class="ft-badge-call">{est}</span>'
+        return '<span class="ft-badge-call">CALL</span>'
     return f'<span class="ft-badge-call">{est or "—"}</span>'
 
 
@@ -106,11 +108,13 @@ def _render_html_tabela_abertas(linhas: list[dict]) -> str:
     parts = [_render_css_tabela(), '<div class="ft-tab-container"><table class="ft-tab">']
     parts.append(
         "<thead><tr>"
-        "<th>Código</th><th>Ativo</th><th>Estrutura</th><th>Início</th>"
-        "<th class=\"col-c\">Dias</th><th class=\"col-r\">Qtd</th><th class=\"col-r\">Pago</th>"
-        "<th class=\"col-r\">Atual</th><th class=\"col-r\">Rendimento %</th>"
-        "<th class=\"col-r\">Lucro/Prej (R$)</th><th class=\"col-r\">Alocado</th>"
-        "<th class=\"col-c\">Gatilho Rolagem</th>"
+        "<th>Opção / Ativo</th>"
+        "<th>Início / Prazo</th>"
+        "<th class=\"col-r\">Cotação (Pago ➔ Atual)</th>"
+        "<th class=\"col-r\">Alocado</th>"
+        "<th class=\"col-r\">Rendimento %</th>"
+        "<th class=\"col-r\">Lucro / Prej (R$)</th>"
+        "<th class=\"col-c\">Alerta Rolagem</th>"
         "</tr></thead><tbody>"
     )
     for row in linhas:
@@ -124,17 +128,15 @@ def _render_html_tabela_abertas(linhas: list[dict]) -> str:
         )
         parts.append(
             "<tr>"
-            f'<td><span class="ft-ticker">{row["codigo"]}</span></td>'
-            f'<td><strong>{row["ativo"]}</strong></td>'
-            f'<td>{_badge_est(row["estrutura"])}</td>'
-            f'<td>{row["inicio"]}</td>'
-            f'<td class="col-c">{row["dias"]}</td>'
-            f'<td class="col-r">{row["qtd"]:,}</td>'
-            f'<td class="col-r">{_moeda(row["pago"])}</td>'
-            f'<td class="col-r"><strong>{_moeda(row["atual"])}</strong></td>'
+            f'<td><div><span class="ft-ticker">{row["codigo"]}</span></div>'
+            f'<div class="ft-sub">{_badge_est(row["estrutura"])} <span>{row["ativo"]}</span></div></td>'
+            f'<td><div>{row["inicio"]}</div>'
+            f'<div class="ft-sub">{row["dias"]} dias &bull; {row["qtd"]:,} un</div></td>'
+            f'<td class="col-r"><div>Pago: {_moeda(row["pago"])}</div>'
+            f'<div class="ft-sub-r">Atual: <strong>{_moeda(row["atual"])}</strong></div></td>'
+            f'<td class="col-r">{_moeda(row["alocado"])}</td>'
             f'<td class="col-r">{_fmt_pct(rend_pct)}</td>'
             f'<td class="col-r">{_fmt_moeda_delta(lucro_rs)}</td>'
-            f'<td class="col-r">{_moeda(row["alocado"])}</td>'
             f'<td class="col-c">{badge_gatilho}</td>'
             "</tr>"
         )
@@ -146,11 +148,13 @@ def _render_html_tabela_encerradas(linhas: list[dict]) -> str:
     parts = [_render_css_tabela(), '<div class="ft-tab-container"><table class="ft-tab">']
     parts.append(
         "<thead><tr>"
-        "<th>Código</th><th>Ativo</th><th>Estrutura</th><th>Início</th><th>Fim</th>"
-        "<th class=\"col-c\">Dias</th><th class=\"col-r\">Qtd</th><th class=\"col-r\">Pago</th>"
-        "<th class=\"col-r\">Recebido</th><th class=\"col-r\">Resultado %</th>"
-        "<th class=\"col-r\">Lucro (R$)</th><th class=\"col-r\">Alocado</th>"
-        "<th class=\"col-r\">Final</th><th class=\"col-c\">Status</th><th>Observações</th>"
+        "<th>Opção / Ativo</th>"
+        "<th>Período / Prazo</th>"
+        "<th class=\"col-r\">Preço (Pago ➔ Saída)</th>"
+        "<th class=\"col-r\">Capital (Aloc ➔ Final)</th>"
+        "<th class=\"col-r\">Resultado %</th>"
+        "<th class=\"col-r\">Lucro (R$)</th>"
+        "<th class=\"col-c\">Status</th>"
         "</tr></thead><tbody>"
     )
     for row in linhas:
@@ -159,21 +163,17 @@ def _render_html_tabela_encerradas(linhas: list[dict]) -> str:
         st_badge = f'<span class="ft-status-{row["status"].lower()}">{row["status"].capitalize()}</span>'
         parts.append(
             "<tr>"
-            f'<td><span class="ft-ticker">{row["codigo"]}</span></td>'
-            f'<td><strong>{row["ativo"]}</strong></td>'
-            f'<td>{_badge_est(row["estrutura"])}</td>'
-            f'<td>{row["inicio"]}</td>'
-            f'<td>{row["fim"]}</td>'
-            f'<td class="col-c">{row["dias"]}</td>'
-            f'<td class="col-r">{row["qtd"]:,}</td>'
-            f'<td class="col-r">{_moeda(row["pago"])}</td>'
-            f'<td class="col-r"><strong>{_moeda(row["recebido"])}</strong></td>'
+            f'<td><div><span class="ft-ticker">{row["codigo"]}</span></div>'
+            f'<div class="ft-sub">{_badge_est(row["estrutura"])} <span>{row["ativo"]}</span></div></td>'
+            f'<td><div>{row["inicio"]} &rarr; {row["fim"]}</div>'
+            f'<div class="ft-sub">{row["dias"]} dias &bull; {row["qtd"]:,} un</div></td>'
+            f'<td class="col-r"><div>Pago: {_moeda(row["pago"])}</div>'
+            f'<div class="ft-sub-r">Saída: <strong>{_moeda(row["recebido"])}</strong></div></td>'
+            f'<td class="col-r"><div>Aloc: {_moeda(row["alocado"])}</div>'
+            f'<div class="ft-sub-r">Final: {_moeda(row["final"])}</div></td>'
             f'<td class="col-r">{_fmt_pct(res_pct)}</td>'
             f'<td class="col-r">{_fmt_moeda_delta(res_fin)}</td>'
-            f'<td class="col-r">{_moeda(row["alocado"])}</td>'
-            f'<td class="col-r">{_moeda(row["final"])}</td>'
             f'<td class="col-c">{st_badge}</td>'
-            f'<td style="color:#64748b; font-size:0.78rem;">{row["obs"]}</td>'
             "</tr>"
         )
     parts.append("</tbody></table></div>")
@@ -184,34 +184,33 @@ def _render_html_tabela_completa(linhas: list[dict]) -> str:
     parts = [_render_css_tabela(), '<div class="ft-tab-container"><table class="ft-tab">']
     parts.append(
         "<thead><tr>"
-        "<th>Código</th><th>Ativo</th><th>Estrutura</th><th>Início</th><th>Fim</th>"
-        "<th class=\"col-c\">Dias</th><th class=\"col-r\">Qtd</th><th class=\"col-r\">Pago</th>"
-        "<th class=\"col-r\">Saída / Atual</th><th class=\"col-r\">Resultado %</th>"
-        "<th class=\"col-r\">Lucro (R$)</th><th class=\"col-r\">Alocado</th>"
-        "<th class=\"col-r\">Final</th><th class=\"col-c\">Status</th><th>Observações</th>"
+        "<th>Opção / Ativo</th>"
+        "<th>Período / Prazo</th>"
+        "<th class=\"col-r\">Preço (Pago ➔ Saída/Atual)</th>"
+        "<th class=\"col-r\">Capital (Aloc ➔ Final)</th>"
+        "<th class=\"col-r\">Resultado %</th>"
+        "<th class=\"col-r\">Lucro (R$)</th>"
+        "<th class=\"col-c\">Status</th>"
         "</tr></thead><tbody>"
     )
     for row in linhas:
         res_pct = row["res_pct"]
         lucro_val = row["lucro_val"]
         st_badge = f'<span class="ft-status-{row["status"].lower()}">{row["status"].capitalize()}</span>'
+        fim_txt = row["fim"] if row["status"] != "aberta" else "Em aberto"
         parts.append(
             "<tr>"
-            f'<td><span class="ft-ticker">{row["codigo"]}</span></td>'
-            f'<td><strong>{row["ativo"]}</strong></td>'
-            f'<td>{_badge_est(row["estrutura"])}</td>'
-            f'<td>{row["inicio"]}</td>'
-            f'<td>{row["fim"]}</td>'
-            f'<td class="col-c">{row["dias"]}</td>'
-            f'<td class="col-r">{row["qtd"]:,}</td>'
-            f'<td class="col-r">{_moeda(row["pago"])}</td>'
-            f'<td class="col-r"><strong>{row["preco_col_str"]}</strong></td>'
+            f'<td><div><span class="ft-ticker">{row["codigo"]}</span></div>'
+            f'<div class="ft-sub">{_badge_est(row["estrutura"])} <span>{row["ativo"]}</span></div></td>'
+            f'<td><div>{row["inicio"]} &rarr; {fim_txt}</div>'
+            f'<div class="ft-sub">{row["dias"]} dias &bull; {row["qtd"]:,} un</div></td>'
+            f'<td class="col-r"><div>Pago: {_moeda(row["pago"])}</div>'
+            f'<div class="ft-sub-r">Saída/Atual: <strong>{row["preco_col_str"]}</strong></div></td>'
+            f'<td class="col-r"><div>Aloc: {_moeda(row["alocado"])}</div>'
+            f'<div class="ft-sub-r">Final: {_moeda(row["final"]) if row["status"] != "aberta" else "—"}</div></td>'
             f'<td class="col-r">{_fmt_pct(res_pct)}</td>'
             f'<td class="col-r">{_fmt_moeda_delta(lucro_val) if row["status"] != "aberta" else "—"}</td>'
-            f'<td class="col-r">{_moeda(row["alocado"])}</td>'
-            f'<td class="col-r">{_moeda(row["final"]) if row["status"] != "aberta" else "—"}</td>'
             f'<td class="col-c">{st_badge}</td>'
-            f'<td style="color:#64748b; font-size:0.78rem;">{row["obs"]}</td>'
             "</tr>"
         )
     parts.append("</tbody></table></div>")
