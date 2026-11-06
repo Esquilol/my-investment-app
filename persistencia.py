@@ -2879,6 +2879,27 @@ def gerar_modelo_planilha_opcoes() -> bytes:
     return buf.getvalue()
 
 
+def obter_capital_inicial_opcoes(conexao: sqlite3.Connection, usuario_id: int, padrao: float = 1000.0) -> float:
+    """Retorna o capital inicial alocado pelo usuário para operações de opções."""
+    chave = f"opcoes_cap_inicial_{usuario_id}"
+    cur = conexao.execute("SELECT valor FROM parametros_fiscais WHERE chave = ?", (chave,))
+    row = cur.fetchone()
+    if row and row["valor"]:
+        try:
+            val = float(str(row["valor"]).replace(",", "."))
+            if val > 0:
+                return val
+        except (ValueError, TypeError):
+            pass
+    return padrao
+
+
+def salvar_capital_inicial_opcoes(conexao: sqlite3.Connection, usuario_id: int, capital: float) -> None:
+    """Salva o capital inicial de opções para o usuário nos parâmetros do sistema."""
+    chave = f"opcoes_cap_inicial_{usuario_id}"
+    gravar_parametros_fiscais(conexao, {chave: f"{float(capital):.2f}"})
+
+
 __all__ = [
     "CAMINHO_PADRAO", "VERSAO_ESQUEMA", "PLANOS_PADRAO", "agora", "conectar",
     "garantir_esquema",
@@ -2907,6 +2928,7 @@ __all__ = [
     "atualizar_opcao_operacao_completa", "atualizar_cotacao_opcao",
     "excluir_opcao_operacao", "atualizar_modulos_usuario", "importar_opcoes_google_sheet",
     "importar_opcoes_arquivo", "gerar_modelo_planilha_opcoes",
+    "obter_capital_inicial_opcoes", "salvar_capital_inicial_opcoes",
     "obter_config_api_cotacoes", "salvar_config_api_cotacoes", "testar_conexao_api_cotacoes",
     "sincronizar_cotacoes_opcoes", "obter_cotacao_opcao_mercado", "obter_radar_tendencia_ativo",
 ]

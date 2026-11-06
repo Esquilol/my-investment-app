@@ -720,18 +720,6 @@ def pagina_diario_opcoes() -> None:
         st.session_state["opcoes_ocultar_moeda"] = False
     ocultar_moeda = bool(st.session_state["opcoes_ocultar_moeda"])
 
-    # Barra Superior de Ações Globais: Modo Print (Olho 👁️ / 🙈)
-    c_top1, c_top2 = st.columns([3.6, 1.4])
-    with c_top1:
-        if ocultar_moeda:
-            st.info("👁️ **Modo Print Ativo**: Valores em R$ estão ocultos com `*****`. Percentuais, rentabilidades e dados analíticos continuam visíveis para você tirar prints e compartilhar com segurança.")
-    with c_top2:
-        btn_txt = "🙈 Exibir R$ (Print Ativo)" if ocultar_moeda else "👁️ Ocultar R$ (Modo Print)"
-        btn_tipo = "primary" if ocultar_moeda else "secondary"
-        if st.button(btn_txt, key="btn_toggle_print_opcoes", type=btn_tipo, use_container_width=True, help="Oculta valores em R$ para você tirar print mantendo apenas as porcentagens e dados analíticos"):
-            st.session_state["opcoes_ocultar_moeda"] = not ocultar_moeda
-            st.rerun()
-
     ops = bd.listar_opcoes_operacoes(conexao, usuario_id)
 
     # 1. Onboarding se o diário estiver vazio
@@ -748,16 +736,71 @@ def pagina_diario_opcoes() -> None:
     capital_aberto = sum(float(o["valor_alocado"]) for o in abertas)
     capital_encerrado = sum(float(o["valor_alocado"]) for o in encerradas)
 
+    # Capital Inicial da Carteira (editável pelo usuário e persistido no banco)
+    chave_cap_sessao = "opcoes_capital_inicial"
+    if chave_cap_sessao not in st.session_state:
+        st.session_state[chave_cap_sessao] = bd.obter_capital_inicial_opcoes(conexao, usuario_id, padrao=1000.0)
+    capital_inicial = float(st.session_state[chave_cap_sessao])
+
+    patrimonio_realizado = capital_inicial + lucro_total
     # Nova métrica: % acumulada (soma das % de ganho das operações encerradas)
     pct_acumulada = sum(float(o.get("resultado_pct") or 0.0) for o in encerradas)
-    # Nova métrica: % retorno sobre capital inicial nas encerradas
-    retorno_sobre_capital = (lucro_total / capital_encerrado * 100) if capital_encerrado > 0 else 0.0
+    # Retorno Real sobre Capital Inicial nas operações encerradas
+    retorno_sobre_capital = (lucro_total / capital_inicial * 100) if capital_inicial > 0 else 0.0
 
     # Configuração dinâmica do alerta de rolagem (80%, 100%, 120%, 150%)
     if "meta_alerta_rolagem" not in st.session_state:
         st.session_state["meta_alerta_rolagem"] = 100.0
 
     gatilho_global = float(st.session_state["meta_alerta_rolagem"])
+
+    # Barra Superior de Controles: Capital Inicial | Patrimônio Realizado | Modo Print
+    if ocultar_moeda:
+        st.info("👁️ **Modo Print Ativo**: Valores em R$ estão ocultos com `*****`. Percentuais, rentabilidades e dados analíticos continuam visíveis para você tirar prints e compartilhar com segurança.")
+
+    c_cap1, c_cap2, c_cap3 = st.columns([1.8, 1.8, 1.4])
+    with c_cap1:
+        if ocultar_moeda:
+            st.text_input(
+                "💼 Capital Inicial (R$)",
+                value="R$ *****",
+                disabled=True,
+                help="Oculto no Modo Print para compartilhamento seguro."
+            )
+        else:
+            def _atualizar_cap_inicial():
+                val = float(st.session_state.get("widget_cap_inicial_opcoes", 1000.0))
+                st.session_state[chave_cap_sessao] = val
+                bd.salvar_capital_inicial_opcoes(conexao, usuario_id, val)
+
+            st.number_input(
+                "💼 Capital Inicial da Carteira (R$)",
+                min_value=1.0,
+                max_value=10_000_000.0,
+                value=capital_inicial,
+                step=100.0,
+                format="%.2f",
+                key="widget_cap_inicial_opcoes",
+                on_change=_atualizar_cap_inicial,
+                help="Informe o valor inicial da sua carteira para calcular o retorno real das operações encerradas."
+            )
+
+    with c_cap2:
+        val_patrimonio = _moeda_priv(patrimonio_realizado, ocultar_moeda)
+        st.text_input(
+            "💰 Patrimônio Atual (Realizado)",
+            value=val_patrimonio,
+            disabled=True,
+            help="Capital Inicial + Lucro Realizado acumulado das operações encerradas."
+        )
+
+    with c_cap3:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        btn_txt = "🙈 Exibir R$ (Print Ativo)" if ocultar_moeda else "👁️ Ocultar R$ (Modo Print)"
+        btn_tipo = "primary" if ocultar_moeda else "secondary"
+        if st.button(btn_txt, key="btn_toggle_print_opcoes", type=btn_tipo, use_container_width=True, help="Oculta valores em R$ para você tirar print mantendo apenas as porcentagens e dados analíticos"):
+            st.session_state["opcoes_ocultar_moeda"] = not ocultar_moeda
+            st.rerun()
 
     # Verificar gatilhos de rolagem prontos
     rolagens_prontas = []
@@ -772,11 +815,18 @@ def pagina_diario_opcoes() -> None:
             if rend >= gatilho_global:
                 rolagens_prontas.append((o, rend))
 
+    delta_base = f"Base: {_moeda_priv(capital_inicial, ocultar_moeda)}"
     tema.kpis([
         {"rotulo": "Taxa de Acerto (Win Rate)", "valor": f"{win_rate:.1f}%", "icone": "🎯"},
         {"rotulo": "Lucro Realizado Total", "valor": _moeda_priv(lucro_total, ocultar_moeda), "icone": "💰"},
         {"rotulo": "Rentabilidade Acumulada (%)", "valor": f"{pct_acumulada:+.1f}%", "icone": "📈"},
-        {"rotulo": "Retorno S/ Capital Inicial", "valor": f"{retorno_sobre_capital:+.1f}%", "icone": "🚀"},
+        {
+            "rotulo": "Retorno S/ Capital Inicial",
+            "valor": f"{retorno_sobre_capital:+.1f}%",
+            "icone": "🚀",
+            "delta": delta_base,
+            "tom": "pos" if retorno_sobre_capital >= 0 else "neg",
+        },
     ])
     tema.kpis([
         {"rotulo": "Capital Alocado em Aberto", "valor": _moeda_priv(capital_aberto, ocultar_moeda), "icone": "🛡️"},
