@@ -197,13 +197,14 @@ def _render_html_tabela_abertas(linhas: list[dict], ocultar: bool = False) -> st
             else '<span class="ft-val-neu">Normal</span>'
         )
         badge_radar = row.get("badge_radar", '<span class="ft-radar-ind">⚪ Em Análise</span>')
+        rot_pr = "Rec:" if "VENDA" in str(row.get("estrutura", "")).upper() else "Pago:"
         parts.append(
             "<tr>"
             f'<td><div><span class="ft-ticker">{row["codigo"]}</span></div>'
             f'<div class="ft-sub">{_badge_est(row["estrutura"])} <span>{row["ativo"]}</span></div></td>'
             f'<td><div>{row["inicio"]}</div>'
             f'<div class="ft-sub">{row["dias"]} dias &bull; {row["qtd"]:,} un</div></td>'
-            f'<td class="col-r"><div>Pago: {_moeda_priv(row["pago"], ocultar)}</div>'
+            f'<td class="col-r"><div>{rot_pr} {_moeda_priv(row["pago"], ocultar)}</div>'
             f'<div class="ft-sub-r">Atual: <strong>{_moeda_priv(row["atual"], ocultar)}</strong></div></td>'
             f'<td class="col-r"><div>{_fmt_pct(rend_pct)}</div>'
             f'<div class="ft-sub-r">{_fmt_moeda_delta_priv(lucro_rs, ocultar)}</div></td>'
@@ -233,14 +234,16 @@ def _render_html_tabela_encerradas(linhas: list[dict], ocultar: bool = False) ->
         res_pct = row["res_pct"]
         res_fin = row["res_fin"]
         st_badge = f'<span class="ft-status-{row["status"].lower()}">{row["status"].capitalize()}</span>'
+        rot_e = "Rec:" if "VENDA" in str(row.get("estrutura", "")).upper() else "Pago:"
+        rot_s = "Recompra:" if "VENDA" in str(row.get("estrutura", "")).upper() else "Saída:"
         parts.append(
             "<tr>"
             f'<td><div><span class="ft-ticker">{row["codigo"]}</span></div>'
             f'<div class="ft-sub">{_badge_est(row["estrutura"])} <span>{row["ativo"]}</span></div></td>'
             f'<td><div>{row["inicio"]} &rarr; {row["fim"]}</div>'
             f'<div class="ft-sub">{row["dias"]} dias &bull; {row["qtd"]:,} un</div></td>'
-            f'<td class="col-r"><div>Pago: {_moeda_priv(row["pago"], ocultar)}</div>'
-            f'<div class="ft-sub-r">Saída: <strong>{_moeda_priv(row["recebido"], ocultar)}</strong></div></td>'
+            f'<td class="col-r"><div>{rot_e} {_moeda_priv(row["pago"], ocultar)}</div>'
+            f'<div class="ft-sub-r">{rot_s} <strong>{_moeda_priv(row["recebido"], ocultar)}</strong></div></td>'
             f'<td class="col-r"><div>Aloc: {_moeda_priv(row["alocado"], ocultar)}</div>'
             f'<div class="ft-sub-r">Final: {_moeda_priv(row["final"], ocultar)}</div></td>'
             f'<td class="col-r">{_fmt_pct(res_pct)}</td>'
@@ -730,11 +733,55 @@ def pagina_diario_opcoes() -> None:
     encerradas = [o for o in ops if o["status"] in ("encerrada", "rolada", "virada")]
     abertas = [o for o in ops if o["status"] == "aberta"]
 
+    # Ordenação das Posições Abertas: Ordem Alfabética por Código
+    abertas.sort(key=lambda x: (str(x.get("codigo", "")).upper(), x.get("id", 0)))
+
+    # Ordenação do Histórico de Encerradas: Fechamento mais recente para o mais antigo
+    def _chave_data_recente(d_str: str | None) -> str:
+        if not d_str or not isinstance(d_str, str):
+            return ""
+        partes = d_str.strip().split("/")
+        if len(partes) == 3:
+            return f"{partes[2]}-{partes[1].zfill(2)}-{partes[0].zfill(2)}"
+        return d_str.strip()
+
+    encerradas.sort(
+        key=lambda x: (_chave_data_recente(x.get("data_fim")), _chave_data_recente(x.get("data_inicio")), x.get("id", 0)),
+        reverse=True
+    )
+
     vitoriosas = len([o for o in encerradas if o["sucesso"] == "s"])
     win_rate = (vitoriosas / len(encerradas) * 100) if encerradas else 0.0
     lucro_total = sum(float(o["resultado_financeiro"]) for o in encerradas)
-    capital_aberto = sum(float(o["valor_alocado"]) for o in abertas)
-    capital_encerrado = sum(float(o["valor_alocado"]) for o in encerradas)
+
+    # Reconciliação com a métrica oficial do Profit para posições em aberto:
+    custo_compras_ab = 0.0
+    credito_vendas_ab = 0.0
+    total_posicionado = 0.0
+    res_aberto = 0.0
+
+    for o in abertas:
+        pago = float(o["preco_pago"])
+        rec = float(o.get("preco_recebido") or pago)
+        atual = float(o.get("preco_atual") or pago)
+        qtd = int(o["quantidade"])
+        est = o.get("estrutura", "")
+
+        if "VENDA" in est:
+            credito_vendas_ab += rec * qtd
+            val_pos = - (atual * qtd)
+            res = (rec - atual) * qtd
+        else:
+            custo_compras_ab += pago * qtd
+            val_pos = atual * qtd
+            res = (atual - pago) * qtd
+
+        total_posicionado += val_pos
+        res_aberto += res
+
+    custo_liquido_aberto = custo_compras_ab - credito_vendas_ab
+    vol_bruto_aberto = custo_compras_ab + credito_vendas_ab
+    pct_res_aberto = (res_aberto / vol_bruto_aberto * 100) if vol_bruto_aberto > 0 else 0.0
 
     # Capital Inicial da Carteira (editável pelo usuário e persistido no banco)
     chave_cap_sessao = "opcoes_capital_inicial"
@@ -829,8 +876,25 @@ def pagina_diario_opcoes() -> None:
         },
     ])
     tema.kpis([
-        {"rotulo": "Capital Alocado em Aberto", "valor": _moeda_priv(capital_aberto, ocultar_moeda), "icone": "🛡️"},
-        {"rotulo": f"Posições Prontas p/ Rolar (≥{gatilho_global:.0f}%)", "valor": f"{len(rolagens_prontas)} alerta(s)", "icone": "🚨"},
+        {
+            "rotulo": "Total Posicionado (A Mercado)",
+            "valor": _moeda_priv(total_posicionado, ocultar_moeda),
+            "icone": "💼",
+            "delta": f"Custo Desembolsado: {_moeda_priv(custo_liquido_aberto, ocultar_moeda)}",
+        },
+        {
+            "rotulo": "Resultado em Aberto (Flutuante)",
+            "valor": f"{_moeda_priv(res_aberto, ocultar_moeda)} ({pct_res_aberto:+.1f}%)",
+            "icone": "📊",
+            "tom": "pos" if res_aberto >= 0 else "neg",
+            "delta": f"{len(abertas)} opções em carteira",
+        },
+        {
+            "rotulo": f"Posições Prontas p/ Rolar (≥{gatilho_global:.0f}%)",
+            "valor": f"{len(rolagens_prontas)} alerta(s)",
+            "icone": "🚨",
+            "tom": "pos" if rolagens_prontas else "neg",
+        },
     ])
 
     # 3. Alerta de Destaque para Rolagem
@@ -906,6 +970,8 @@ def pagina_diario_opcoes() -> None:
             if filtro_ab_est != "Todas":
                 abertas_filtradas = [o for o in abertas_filtradas if o.get("estrutura") == filtro_ab_est]
 
+            abertas_filtradas.sort(key=lambda x: (str(x.get("codigo", "")).upper(), x.get("id", 0)))
+
             st.caption(f"Exibindo {len(abertas_filtradas)} de {len(abertas)} opções abertas.")
 
             # Pré-busca quantitativa de radar para os ativos únicos em aberto (cache interno de 10 min)
@@ -919,8 +985,14 @@ def pagina_diario_opcoes() -> None:
                 p_atual = float(op.get("preco_atual") or p_pago)
                 alocado_op = float(op["valor_alocado"])
                 qtd_op = float(op["quantidade"])
-                rend_pct = ((p_atual - p_pago) / p_pago * 100) if p_pago > 0 else 0.0
-                lucro_rs = alocado_op * (rend_pct / 100.0)
+                if "VENDA" in str(op.get("estrutura", "")).upper():
+                    p_rec = float(op.get("preco_recebido") or p_pago)
+                    rend_pct = ((p_rec - p_atual) / p_rec * 100) if p_rec > 0 else 0.0
+                    lucro_rs = (p_rec - p_atual) * qtd_op
+                else:
+                    rend_pct = ((p_atual - p_pago) / p_pago * 100) if p_pago > 0 else 0.0
+                    lucro_rs = (p_atual - p_pago) * qtd_op
+
                 atingiu = rend_pct >= gatilho_global
                 dias_op = op.get("dias") or bd._calcular_dias_operacao(op["data_inicio"])
                 ativo_nome = str(op.get("ativo_subjacente") or op["codigo"][:4])
@@ -1032,6 +1104,11 @@ def pagina_diario_opcoes() -> None:
                 encerradas_filtradas = [o for o in encerradas_filtradas if (o.get("ativo_subjacente") or o["codigo"][:4]) == filtro_ativo]
             if filtro_est != "Todas":
                 encerradas_filtradas = [o for o in encerradas_filtradas if o.get("estrutura") == filtro_est]
+
+            encerradas_filtradas.sort(
+                key=lambda x: (_chave_data_recente(x.get("data_fim")), _chave_data_recente(x.get("data_inicio")), x.get("id", 0)),
+                reverse=True
+            )
 
             st.caption(f"Exibindo {len(encerradas_filtradas)} de {len(encerradas)} operações encerradas.")
 
