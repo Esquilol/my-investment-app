@@ -38,6 +38,281 @@ def _p_data(val: str | None) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Estilos e Renderizadores de Tabelas Web Nativas (Layout Slim com Rolagem Fluida)
+# ---------------------------------------------------------------------------
+
+def _render_css_tabela() -> str:
+    return """
+    <style>
+    .ft-tab-container {
+        width: 100%;
+        overflow-x: auto;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        margin: 10px 0 18px 0;
+    }
+    .ft-tab {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 0.85rem;
+        color: #1e293b;
+        text-align: left;
+    }
+    .ft-tab th {
+        background-color: #f8fafc;
+        color: #475569;
+        font-weight: 700;
+        font-size: 0.74rem;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        padding: 11px 12px;
+        border-bottom: 2px solid #e2e8f0;
+        white-space: nowrap;
+    }
+    .ft-tab th.col-r { text-align: right; }
+    .ft-tab th.col-c { text-align: center; }
+    .ft-tab td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #f1f5f9;
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+    .ft-tab tr:hover {
+        background-color: #f8fafc;
+        transition: background-color 0.15s ease;
+    }
+    .ft-tab tr:last-child td {
+        border-bottom: none;
+    }
+    .ft-tab td.col-r {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.84rem;
+    }
+    .ft-tab td.col-c { text-align: center; }
+    .ft-ticker {
+        font-weight: 700;
+        color: #0f172a;
+        letter-spacing: 0.2px;
+    }
+    .ft-badge-call {
+        background: #f0fdf4;
+        color: #15803d;
+        border: 1px solid #bbf7d0;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.70rem;
+    }
+    .ft-badge-put {
+        background: #fef2f2;
+        color: #b91c1c;
+        border: 1px solid #fecaca;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.70rem;
+    }
+    .ft-badge-rolar {
+        background: #dcfce7;
+        color: #15803d;
+        border: 1px solid #22c55e;
+        padding: 2px 8px;
+        border-radius: 5px;
+        font-weight: 700;
+        font-size: 0.72rem;
+        display: inline-block;
+    }
+    .ft-status-aberta { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 0.70rem; }
+    .ft-status-encerrada { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 0.70rem; }
+    .ft-status-rolada { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 0.70rem; }
+    .ft-status-virada { background: #faf5ff; color: #7e22ce; border: 1px solid #e9d5ff; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 0.70rem; }
+    .ft-val-pos { color: #16a34a; font-weight: 700; }
+    .ft-val-neg { color: #dc2626; font-weight: 700; }
+    .ft-val-neu { color: #64748b; font-weight: 500; }
+    </style>
+    """
+
+
+def _fmt_pct(val: float) -> str:
+    if val > 0.05:
+        return f'<span class="ft-val-pos">+{val:.1f}% &utrif;</span>'
+    elif val < -0.05:
+        return f'<span class="ft-val-neg">{val:.1f}% &dtrif;</span>'
+    return '<span class="ft-val-neu">+0.0% &mdash;</span>'
+
+
+def _fmt_moeda_delta(val: float) -> str:
+    if val > 0.01:
+        return f'<span class="ft-val-pos">+{_moeda(val)} &utrif;</span>'
+    elif val < -0.01:
+        return f'<span class="ft-val-neg">-{_moeda(abs(val))} &dtrif;</span>'
+    return f'<span class="ft-val-neu">{_moeda(0.0)} &mdash;</span>'
+
+
+def _badge_est(est: str | None) -> str:
+    est_u = (est or "").upper()
+    if "PUT" in est_u:
+        return f'<span class="ft-badge-put">{est}</span>'
+    elif "CALL" in est_u:
+        return f'<span class="ft-badge-call">{est}</span>'
+    return f'<span class="ft-badge-call">{est or "—"}</span>'
+
+
+def _render_html_tabela_abertas(linhas: list[dict]) -> str:
+    html = [_render_css_tabela(), '<div class="ft-tab-container"><table class="ft-tab">']
+    html.append("""
+    <thead>
+        <tr>
+            <th>Código</th>
+            <th>Ativo</th>
+            <th>Estrutura</th>
+            <th>Início</th>
+            <th class="col-c">Dias</th>
+            <th class="col-r">Qtd</th>
+            <th class="col-r">Pago</th>
+            <th class="col-r">Atual</th>
+            <th class="col-r">Rendimento %</th>
+            <th class="col-r">Lucro/Prej (R$)</th>
+            <th class="col-r">Alocado</th>
+            <th class="col-c">Gatilho Rolagem</th>
+        </tr>
+    </thead>
+    <tbody>
+    """)
+    for row in linhas:
+        rend_pct = row["rend_pct"]
+        lucro_rs = row["lucro_rs"]
+        atingiu = row["atingiu"]
+        badge_gatilho = f'<span class="ft-badge-rolar">🎯 ROLAR (+{rend_pct:.0f}%)</span>' if atingiu else '<span class="ft-val-neu">Normal</span>'
+
+        html.append(f"""
+        <tr>
+            <td><span class="ft-ticker">{row["codigo"]}</span></td>
+            <td><strong>{row["ativo"]}</strong></td>
+            <td>{_badge_est(row["estrutura"])}</td>
+            <td>{row["inicio"]}</td>
+            <td class="col-c">{row["dias"]}</td>
+            <td class="col-r">{row["qtd"]:,}</td>
+            <td class="col-r">{_moeda(row["pago"])}</td>
+            <td class="col-r"><strong>{_moeda(row["atual"])}</strong></td>
+            <td class="col-r">{_fmt_pct(rend_pct)}</td>
+            <td class="col-r">{_fmt_moeda_delta(lucro_rs)}</td>
+            <td class="col-r">{_moeda(row["alocado"])}</td>
+            <td class="col-c">{badge_gatilho}</td>
+        </tr>
+        """)
+    html.append("</tbody></table></div>")
+    return "\n".join(html)
+
+
+def _render_html_tabela_encerradas(linhas: list[dict]) -> str:
+    html = [_render_css_tabela(), '<div class="ft-tab-container"><table class="ft-tab">']
+    html.append("""
+    <thead>
+        <tr>
+            <th>Código</th>
+            <th>Ativo</th>
+            <th>Estrutura</th>
+            <th>Início</th>
+            <th>Fim</th>
+            <th class="col-c">Dias</th>
+            <th class="col-r">Qtd</th>
+            <th class="col-r">Pago</th>
+            <th class="col-r">Recebido</th>
+            <th class="col-r">Resultado %</th>
+            <th class="col-r">Lucro (R$)</th>
+            <th class="col-r">Alocado</th>
+            <th class="col-r">Final</th>
+            <th class="col-c">Status</th>
+            <th>Observações</th>
+        </tr>
+    </thead>
+    <tbody>
+    """)
+    for row in linhas:
+        res_pct = row["res_pct"]
+        res_fin = row["res_fin"]
+        st_badge = f'<span class="ft-status-{row["status"].lower()}">{row["status"].capitalize()}</span>'
+        html.append(f"""
+        <tr>
+            <td><span class="ft-ticker">{row["codigo"]}</span></td>
+            <td><strong>{row["ativo"]}</strong></td>
+            <td>{_badge_est(row["estrutura"])}</td>
+            <td>{row["inicio"]}</td>
+            <td>{row["fim"]}</td>
+            <td class="col-c">{row["dias"]}</td>
+            <td class="col-r">{row["qtd"]:,}</td>
+            <td class="col-r">{_moeda(row["pago"])}</td>
+            <td class="col-r"><strong>{_moeda(row["recebido"])}</strong></td>
+            <td class="col-r">{_fmt_pct(res_pct)}</td>
+            <td class="col-r">{_fmt_moeda_delta(res_fin)}</td>
+            <td class="col-r">{_moeda(row["alocado"])}</td>
+            <td class="col-r">{_moeda(row["final"])}</td>
+            <td class="col-c">{st_badge}</td>
+            <td style="color:#64748b; font-size:0.78rem;">{row["obs"]}</td>
+        </tr>
+        """)
+    html.append("</tbody></table></div>")
+    return "\n".join(html)
+
+
+def _render_html_tabela_completa(linhas: list[dict]) -> str:
+    html = [_render_css_tabela(), '<div class="ft-tab-container"><table class="ft-tab">']
+    html.append("""
+    <thead>
+        <tr>
+            <th>Código</th>
+            <th>Ativo</th>
+            <th>Estrutura</th>
+            <th>Início</th>
+            <th>Fim</th>
+            <th class="col-c">Dias</th>
+            <th class="col-r">Qtd</th>
+            <th class="col-r">Pago</th>
+            <th class="col-r">Saída / Atual</th>
+            <th class="col-r">Resultado %</th>
+            <th class="col-r">Lucro (R$)</th>
+            <th class="col-r">Alocado</th>
+            <th class="col-r">Final</th>
+            <th class="col-c">Status</th>
+            <th>Observações</th>
+        </tr>
+    </thead>
+    <tbody>
+    """)
+    for row in linhas:
+        res_pct = row["res_pct"]
+        lucro_val = row["lucro_val"]
+        st_badge = f'<span class="ft-status-{row["status"].lower()}">{row["status"].capitalize()}</span>'
+        html.append(f"""
+        <tr>
+            <td><span class="ft-ticker">{row["codigo"]}</span></td>
+            <td><strong>{row["ativo"]}</strong></td>
+            <td>{_badge_est(row["estrutura"])}</td>
+            <td>{row["inicio"]}</td>
+            <td>{row["fim"]}</td>
+            <td class="col-c">{row["dias"]}</td>
+            <td class="col-r">{row["qtd"]:,}</td>
+            <td class="col-r">{_moeda(row["pago"])}</td>
+            <td class="col-r"><strong>{row["preco_col_str"]}</strong></td>
+            <td class="col-r">{_fmt_pct(res_pct)}</td>
+            <td class="col-r">{_fmt_moeda_delta(lucro_val) if row["status"] != "aberta" else "—"}</td>
+            <td class="col-r">{_moeda(row["alocado"])}</td>
+            <td class="col-r">{_moeda(row["final"]) if row["status"] != "aberta" else "—"}</td>
+            <td class="col-c">{st_badge}</td>
+            <td style="color:#64748b; font-size:0.78rem;">{row["obs"]}</td>
+        </tr>
+        """)
+    html.append("</tbody></table></div>")
+    return "\n".join(html)
+
+
+# ---------------------------------------------------------------------------
 # Modais de Ações do Diário
 # ---------------------------------------------------------------------------
 
@@ -88,19 +363,19 @@ def modal_rolar_opcao(op: dict) -> None:
     # Cartões de resumo responsivos (sem truncamento por ellipsis)
     st.markdown(f"""
     <div style="display: flex; gap: 10px; margin: 15px 0;">
-        <div style="flex: 1; background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 12px; text-align: center;">
+        <div style="flex: 1; min-width: 0; background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 12px; text-align: center;">
             <div style="font-size: 0.72rem; color: #64748b; font-weight: 700; text-transform: uppercase;">Total Obtido</div>
-            <div style="font-size: 1.15rem; font-weight: 700; color: #0f172a; margin: 4px 0;">{_moeda(valor_final)}</div>
+            <div style="font-size: clamp(0.95rem, 2vw, 1.2rem); font-weight: 700; color: #0f172a; margin: 4px 0; white-space: nowrap;">{_moeda(valor_final)}</div>
             <div style="font-size: 0.75rem; color: #16a34a; font-weight: 700;">{lucro_pct:+.1f}%</div>
         </div>
-        <div style="flex: 1; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; padding: 12px; text-align: center;">
+        <div style="flex: 1; min-width: 0; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; padding: 12px; text-align: center;">
             <div style="font-size: 0.72rem; color: #15803d; font-weight: 700; text-transform: uppercase;">💰 50% no Bolso</div>
-            <div style="font-size: 1.15rem; font-weight: 700; color: #166534; margin: 4px 0;">{_moeda(metade_bolso)}</div>
+            <div style="font-size: clamp(0.95rem, 2vw, 1.2rem); font-weight: 700; color: #166534; margin: 4px 0; white-space: nowrap;">{_moeda(metade_bolso)}</div>
             <div style="font-size: 0.75rem; color: #15803d; font-weight: 600;">Lucro Garantido</div>
         </div>
-        <div style="flex: 1; background: #eff6ff; border: 1.5px solid #93c5fd; border-radius: 8px; padding: 12px; text-align: center;">
+        <div style="flex: 1; min-width: 0; background: #eff6ff; border: 1.5px solid #93c5fd; border-radius: 8px; padding: 12px; text-align: center;">
             <div style="font-size: 0.72rem; color: #1d4ed8; font-weight: 700; text-transform: uppercase;">🚀 50% Reinvestir</div>
-            <div style="font-size: 1.15rem; font-weight: 700; color: #1e40af; margin: 4px 0;">{_moeda(metade_reinvestir)}</div>
+            <div style="font-size: clamp(0.95rem, 2vw, 1.2rem); font-weight: 700; color: #1e40af; margin: 4px 0; white-space: nowrap;">{_moeda(metade_reinvestir)}</div>
             <div style="font-size: 0.75rem; color: #1d4ed8; font-weight: 600;">Nova Perna</div>
         </div>
     </div>
@@ -590,19 +865,19 @@ def pagina_diario_opcoes() -> None:
                 dias_op = op.get("dias") or bd._calcular_dias_operacao(op["data_inicio"])
 
                 linhas_abertas.append({
-                    "ID": op["id"],
-                    "Código": op["codigo"],
-                    "Ativo": op.get("ativo_subjacente") or op["codigo"][:4],
-                    "Estrutura": op.get("estrutura", "—"),
-                    "Início": _p_data(op["data_inicio"]),
-                    "Dias": int(dias_op),
-                    "Qtd": int(qtd_op),
-                    "Pago": _moeda(p_pago),
-                    "Atual": _moeda(p_atual),
-                    "Rendimento %": f"{rend_pct:+.1f}%",
-                    "Lucro/Prej (R$)": _moeda(lucro_rs),
-                    "Alocado": _moeda(alocado_op),
-                    "Gatilho": f"🎯 ROLAR (+{rend_pct:.0f}%)" if atingiu else "Normal"
+                    "id": op["id"],
+                    "codigo": op["codigo"],
+                    "ativo": op.get("ativo_subjacente") or op["codigo"][:4],
+                    "estrutura": op.get("estrutura", "—"),
+                    "inicio": _p_data(op["data_inicio"]),
+                    "dias": int(dias_op),
+                    "qtd": int(qtd_op),
+                    "pago": p_pago,
+                    "atual": p_atual,
+                    "rend_pct": rend_pct,
+                    "lucro_rs": lucro_rs,
+                    "alocado": alocado_op,
+                    "atingiu": atingiu,
                 })
 
             opcoes_dict = {
@@ -613,14 +888,7 @@ def pagina_diario_opcoes() -> None:
             if not linhas_abertas:
                 st.info("Nenhuma posição aberta encontrada com os filtros selecionados.")
             else:
-                df_ab_view = pd.DataFrame(linhas_abertas)
-                altura_ab = min(1200, max(220, (len(linhas_abertas) + 1) * 35 + 5))
-                st.dataframe(
-                    df_ab_view.drop(columns=["ID"], errors="ignore"),
-                    use_container_width=True,
-                    hide_index=True,
-                    height=altura_ab
-                )
+                st.markdown(_render_html_tabela_abertas(linhas_abertas), unsafe_allow_html=True)
 
                 # Barra de Ações Rápidas por Opção
                 if opcoes_dict:
@@ -714,21 +982,22 @@ def pagina_diario_opcoes() -> None:
                 qtd_op = float(o.get("quantidade") or 0.0)
 
                 linhas_enc.append({
-                    "ID": o["id"],
-                    "Código": o["codigo"],
-                    "Estrutura": o.get("estrutura", "—"),
-                    "Início": _p_data(o["data_inicio"]),
-                    "Fim": _p_data(o.get("data_fim")),
-                    "Dias": int(dias_op),
-                    "Qtd": int(qtd_op),
-                    "Pago": _moeda(p_pago),
-                    "Recebido": _moeda(p_rec),
-                    "Resultado %": f"{res_pct:+.1f}%",
-                    "Alocado": _moeda(aloc),
-                    "Final": _moeda(v_fin),
-                    "Lucro (R$)": _moeda(res_fin),
-                    "Status": str(o.get("status", "encerrada")).capitalize(),
-                    "Obs": o.get("observacoes") or ""
+                    "id": o["id"],
+                    "codigo": o["codigo"],
+                    "ativo": o.get("ativo_subjacente") or o["codigo"][:4],
+                    "estrutura": o.get("estrutura", "—"),
+                    "inicio": _p_data(o["data_inicio"]),
+                    "fim": _p_data(o.get("data_fim")),
+                    "dias": int(dias_op),
+                    "qtd": int(qtd_op),
+                    "pago": p_pago,
+                    "recebido": p_rec,
+                    "res_pct": res_pct,
+                    "res_fin": res_fin,
+                    "alocado": aloc,
+                    "final": v_fin,
+                    "status": str(o.get("status", "encerrada")),
+                    "obs": o.get("observacoes") or ""
                 })
 
             enc_dict = {
@@ -739,14 +1008,7 @@ def pagina_diario_opcoes() -> None:
             if not linhas_enc:
                 st.info("Nenhuma operação encerrada encontrada com os filtros selecionados.")
             else:
-                df_enc_view = pd.DataFrame(linhas_enc)
-                altura_enc = min(1200, max(220, (len(linhas_enc) + 1) * 35 + 5))
-                st.dataframe(
-                    df_enc_view.drop(columns=["ID"], errors="ignore"),
-                    use_container_width=True,
-                    hide_index=True,
-                    height=altura_enc
-                )
+                st.markdown(_render_html_tabela_encerradas(linhas_enc), unsafe_allow_html=True)
 
                 # Ações de Edição e Exclusão Individual
                 if enc_dict:
@@ -832,21 +1094,22 @@ def pagina_diario_opcoes() -> None:
             dias_op = o.get("dias") or bd._calcular_dias_operacao(o["data_inicio"], o.get("data_fim"))
 
             linhas_comp.append({
-                "ID": o["id"],
-                "Código": o["codigo"],
-                "Estrutura": o.get("estrutura", "—"),
-                "Início": _p_data(o["data_inicio"]),
-                "Fim": _p_data(o.get("data_fim")),
-                "Dias": int(dias_op),
-                "Qtd": int(qtd_op),
-                "Pago": _moeda(p_pago),
-                "Saída/Atual": preco_col,
-                "Resultado %": f"{res_pct:+.1f}%",
-                "Status": st_op.capitalize(),
-                "Alocado": _moeda(aloc),
-                "Final": fin_col,
-                "Lucro": lucro_col,
-                "Obs": o.get("observacoes") or ""
+                "id": o["id"],
+                "codigo": o["codigo"],
+                "ativo": o.get("ativo_subjacente") or o["codigo"][:4],
+                "estrutura": o.get("estrutura", "—"),
+                "inicio": _p_data(o["data_inicio"]),
+                "fim": _p_data(o.get("data_fim")),
+                "dias": int(dias_op),
+                "qtd": int(qtd_op),
+                "pago": p_pago,
+                "preco_col_str": preco_col,
+                "res_pct": res_pct,
+                "lucro_val": res_fin,
+                "alocado": aloc,
+                "final": v_fin,
+                "status": st_op,
+                "obs": o.get("observacoes") or ""
             })
 
         comp_dict = {
@@ -857,14 +1120,7 @@ def pagina_diario_opcoes() -> None:
         if not linhas_comp:
             st.info("Nenhuma operação encontrada com os filtros selecionados.")
         else:
-            df_comp_view = pd.DataFrame(linhas_comp)
-            altura_comp = min(1400, max(220, (len(linhas_comp) + 1) * 35 + 5))
-            st.dataframe(
-                df_comp_view.drop(columns=["ID"], errors="ignore"),
-                use_container_width=True,
-                hide_index=True,
-                height=altura_comp
-            )
+            st.markdown(_render_html_tabela_completa(linhas_comp), unsafe_allow_html=True)
 
             # Gestor individual
             if comp_dict:

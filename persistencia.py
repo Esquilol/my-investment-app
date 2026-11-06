@@ -2066,13 +2066,39 @@ def testar_conexao_api_cotacoes(provedor: str, token: str) -> tuple[bool, str]:
 
 def obter_cotacao_opcao_mercado(ticker: str) -> float | None:
     """
-    Busca a cotação oficial mais recente de uma opção da B3 via motor público de derivativos.
-    Funciona para todas as séries de opções da B3 sem necessidade de token ou custo.
+    Busca a cotação oficial mais recente de uma opção da B3 via motor oficial de derivativos da B3.
+    Funciona para todas as séries de opções da B3 (CALL e PUT) e ações de forma oficial, gratuita e em tempo real.
     """
-    import urllib.request, re, ssl
+    import urllib.request, json, ssl
     sym = (ticker or "").upper().strip()
-    if not sym:
+    if not sym or not sym.isalnum():
         return None
+
+    # 1. Motor Oficial da B3 (MDS InstrumentQuotation - Tempo Real)
+    url_b3 = f"https://cotacao.b3.com.br/mds/api/v1/InstrumentQuotation/{sym}"
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        req = urllib.request.Request(
+            url_b3,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json",
+            }
+        )
+        with urllib.request.urlopen(req, context=ctx, timeout=6) as resp:
+            dados = json.loads(resp.read().decode("utf-8"))
+            trad = dados.get("Trad", [])
+            if trad:
+                qtn = trad[0].get("scty", {}).get("SctyQtn", {})
+                p = qtn.get("curPrc") or qtn.get("clsgPric") or qtn.get("avrgPric")
+                if p is not None and float(p) > 0:
+                    return float(p)
+    except Exception:
+        pass
+
+    # 2. Fallback opcoes.net.br
     url = f"https://opcoes.net.br/{sym}"
     try:
         ctx = ssl.create_default_context()
@@ -2087,6 +2113,7 @@ def obter_cotacao_opcao_mercado(ticker: str) -> float | None:
         )
         with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
             html = resp.read().decode("utf-8", errors="ignore")
+            import re
             m = re.search(r'<tbody>\s*<tr>\s*<td>(\d{2}/\d{2}/\d{4})</td>\s*<td>([^<]+)</td>\s*<td>([^<]+)</td>\s*<td>([^<]+)</td>\s*<td>([^<]+)</td>', html)
             if m:
                 _, _, _, _, p_ult = m.groups()
@@ -2125,7 +2152,7 @@ def sincronizar_cotacoes_opcoes(conexao: sqlite3.Connection, usuario_id: int) ->
     for sym in tickers_lista:
         preco_encontrado = None
 
-        # 1. Consulta motor especializado de opções da B3 (100% gratuito e atualizado)
+        # 1. Consulta motor oficial de derivativos da B3 (100% gratuito e em tempo real)
         preco_opcao = obter_cotacao_opcao_mercado(sym)
         if preco_opcao is not None and preco_opcao > 0:
             preco_encontrado = preco_opcao
@@ -2163,14 +2190,14 @@ def sincronizar_cotacoes_opcoes(conexao: sqlite3.Connection, usuario_id: int) ->
         salvar_config_api_cotacoes(
             conexao,
             ativa=True,
-            provedor="brapi",
+            provedor="b3",
             token=token,
             status="conectado",
             ultimo_teste=agora()[:19].replace("T", " ")
         )
-        return atualizadas, f"Sucesso! {atualizadas} opção(ões) aberta(s) atualizada(s) com cotações oficiais da B3."
+        return atualizadas, f"Sucesso! {atualizadas} opção(ões) aberta(s) atualizada(s) com cotações oficiais em tempo real da B3."
 
-    return 0, "Cotações de mercado verificadas. As posições já estão com as cotações mais recentes da B3."
+    return 0, "Não foi possível obter novas cotações da B3 neste momento. Verifique a conexão com a internet."
 
 
 def atualizar_modulos_usuario(conexao: sqlite3.Connection, usuario_id: int,
