@@ -236,8 +236,10 @@ if usuario_atual is None or not usuario_atual["ativo"]:
 st.session_state["is_admin"] = bool(usuario_atual["is_admin"])
 tem_modulo_fiscal = bool(usuario_atual["modulo_fiscal"]) if "modulo_fiscal" in usuario_atual.keys() else True
 tem_modulo_opcoes = bool(usuario_atual["modulo_opcoes"]) if "modulo_opcoes" in usuario_atual.keys() else True
+permite_modo_aula = bool(usuario_atual["permite_modo_aula"]) if "permite_modo_aula" in usuario_atual.keys() else False
 st.session_state["modulo_fiscal"] = tem_modulo_fiscal
 st.session_state["modulo_opcoes"] = tem_modulo_opcoes
+st.session_state["permite_modo_aula"] = permite_modo_aula
 
 with st.sidebar:
     st.markdown(

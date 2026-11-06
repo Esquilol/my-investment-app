@@ -316,6 +316,12 @@ def _acrescentar_colunas(conexao: sqlite3.Connection) -> None:
             "origem": "TEXT",
             "modulo_fiscal": "INTEGER NOT NULL DEFAULT 1",
             "modulo_opcoes": "INTEGER NOT NULL DEFAULT 1",
+            "permite_modo_aula": "INTEGER NOT NULL DEFAULT 0",
+        },
+        "opcoes_operacoes": {
+            "sala_id": "INTEGER",
+            "autor_id": "INTEGER",
+            "autor_nome": "TEXT",
         },
         "cupons": {
             "tipo": "TEXT NOT NULL DEFAULT 'percentual'",
@@ -562,7 +568,7 @@ def garantir_esquema(conexao: sqlite3.Connection) -> sqlite3.Connection:
 
 _CAMPOS_PUBLICOS = ("id, usuario, nome, email, cpf, telefone, cidade, estado, "
                     "endereco, cep, origem, is_admin, ativo, plano_codigo, "
-                    "modulo_fiscal, modulo_opcoes, criado_em")
+                    "modulo_fiscal, modulo_opcoes, permite_modo_aula, criado_em")
 
 
 def criar_usuario(conexao: sqlite3.Connection, usuario: str, email: str,
@@ -603,7 +609,7 @@ def obter_por_login(conexao: sqlite3.Connection, login: str):
     digitos = "".join(c for c in limpo if c.isdigit())
     return conexao.execute(
         "SELECT id, usuario, nome, email, cpf, hash, is_admin, ativo, plano_codigo, "
-        "       modulo_fiscal, modulo_opcoes, criado_em "
+        "       modulo_fiscal, modulo_opcoes, permite_modo_aula, criado_em "
         "FROM usuarios WHERE usuario = ? OR email = ? OR (cpf IS NOT NULL AND cpf = ?)",
         (limpo, limpo.lower(), digitos),
     ).fetchone()
@@ -612,7 +618,7 @@ def obter_por_login(conexao: sqlite3.Connection, login: str):
 def obter_por_email(conexao: sqlite3.Connection, email: str):
     return conexao.execute(
         "SELECT id, usuario, nome, email, cpf, hash, is_admin, ativo, plano_codigo, "
-        "       modulo_fiscal, modulo_opcoes, criado_em "
+        "       modulo_fiscal, modulo_opcoes, permite_modo_aula, criado_em "
         "FROM usuarios WHERE email = ?", (email.strip().lower(),)
     ).fetchone()
 
@@ -622,7 +628,7 @@ def listar_usuarios(conexao: sqlite3.Connection) -> pd.DataFrame:
     return pd.read_sql_query(
         "SELECT u.id, u.usuario, u.nome, u.email, u.cpf, u.origem, "
         "       u.plano_codigo AS plano, p.nome AS plano_nome, "
-        "       u.is_admin, u.ativo, u.modulo_fiscal, u.modulo_opcoes, u.criado_em "
+        "       u.is_admin, u.ativo, u.modulo_fiscal, u.modulo_opcoes, u.permite_modo_aula, u.criado_em "
         "FROM usuarios u LEFT JOIN planos p ON p.codigo = u.plano_codigo "
         "ORDER BY u.id",
         conexao,
@@ -633,7 +639,7 @@ def atualizar_usuario(conexao: sqlite3.Connection, usuario_id: int, **campos) ->
     """Atualiza os campos informados de um usuário (usuario, email, hash, ativo...)."""
     permitidos = {"usuario", "email", "hash", "is_admin", "ativo", "plano_codigo",
                   "nome", "cpf", "telefone", "cidade", "estado", "endereco", "cep",
-                  "origem", "reset_token", "reset_expira", "modulo_fiscal", "modulo_opcoes"}
+                  "origem", "reset_token", "reset_expira", "modulo_fiscal", "modulo_opcoes", "permite_modo_aula"}
     itens = {k: v for k, v in campos.items() if k in permitidos}
     if not itens:
         return
@@ -3051,3 +3057,180 @@ __all__ = [
     "obter_config_api_cotacoes", "salvar_config_api_cotacoes", "testar_conexao_api_cotacoes",
     "sincronizar_cotacoes_opcoes", "obter_cotacao_opcao_mercado", "obter_radar_tendencia_ativo",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Modo Aula — Salas de Mentoria, Multi-Professores e Auditoria
+# ---------------------------------------------------------------------------
+
+def inicializar_tabelas_modo_aula(conexao: sqlite3.Connection) -> None:
+    """Cria tabelas de salas de aula, professores e auditoria se não existirem."""
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS salas_aula (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            dono_id                 INTEGER NOT NULL,
+            nome                    TEXT    NOT NULL,
+            descricao               TEXT,
+            alocacao_pct_padrao     REAL    NOT NULL DEFAULT 1.0,
+            capital_simulado_padrao REAL    NOT NULL DEFAULT 1000.0,
+            criado_em               TEXT,
+            FOREIGN KEY (dono_id) REFERENCES usuarios (id) ON DELETE CASCADE
+        );
+    """)
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS sala_professores (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            sala_id        INTEGER NOT NULL,
+            professor_id   INTEGER NOT NULL,
+            papel          TEXT    NOT NULL DEFAULT 'professor',
+            adicionado_em  TEXT,
+            FOREIGN KEY (sala_id) REFERENCES salas_aula (id) ON DELETE CASCADE,
+            FOREIGN KEY (professor_id) REFERENCES usuarios (id) ON DELETE CASCADE,
+            UNIQUE (sala_id, professor_id)
+        );
+    """)
+    conexao.execute("""
+        CREATE TABLE IF NOT EXISTS sala_operacoes_log (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            sala_id        INTEGER NOT NULL,
+            operacao_id    INTEGER,
+            autor_id       INTEGER NOT NULL,
+            autor_nome     TEXT    NOT NULL,
+            acao           TEXT    NOT NULL,
+            data_hora      TEXT    NOT NULL,
+            detalhes       TEXT,
+            FOREIGN KEY (sala_id) REFERENCES salas_aula (id) ON DELETE CASCADE
+        );
+    """)
+    conexao.commit()
+
+
+def obter_ou_criar_sala_padrao_professor(conexao: sqlite3.Connection, usuario_id: int, nome_padrao: str = "SALA NITRO") -> dict:
+    """Garante que o professor possua ao menos uma sala de aula criada (ex: SALA NITRO)."""
+    inicializar_tabelas_modo_aula(conexao)
+    cur = conexao.execute("""
+        SELECT s.*, 'dono' AS papel FROM salas_aula s WHERE s.dono_id = ?
+        UNION
+        SELECT s.*, p.papel FROM salas_aula s
+        JOIN sala_professores p ON p.sala_id = s.id
+        WHERE p.professor_id = ?
+        ORDER BY s.id ASC LIMIT 1
+    """, (int(usuario_id), int(usuario_id)))
+    row = cur.fetchone()
+    if row:
+        cols = [desc[0] for desc in cur.description]
+        return dict(zip(cols, row))
+
+    # Cria sala inicial
+    dt_agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur_ins = conexao.execute("""
+        INSERT INTO salas_aula (dono_id, nome, descricao, alocacao_pct_padrao, capital_simulado_padrao, criado_em)
+        VALUES (?, ?, 'Sala de mentoria e acompanhamento de operações ao vivo.', 1.0, 1000.0, ?)
+    """, (int(usuario_id), str(nome_padrao), dt_agora))
+    sala_id = cur_ins.lastrowid
+    conexao.execute("""
+        INSERT OR IGNORE INTO sala_professores (sala_id, professor_id, papel, adicionado_em)
+        VALUES (?, ?, 'dono', ?)
+    """, (int(sala_id), int(usuario_id), dt_agora))
+
+    # Registrar log
+    cur_user = conexao.execute("SELECT usuario, nome FROM usuarios WHERE id = ?", (int(usuario_id),))
+    u_row = cur_user.fetchone()
+    nome_u = (u_row[1] if u_row and u_row[1] else (u_row[0] if u_row else "Professor"))
+    registrar_log_sala(conexao, sala_id, usuario_id, nome_u, "Criação da Sala de Aula", detalhes=f"Sala {nome_padrao} inicializada.")
+    conexao.commit()
+
+    return {
+        "id": sala_id,
+        "dono_id": usuario_id,
+        "nome": nome_padrao,
+        "descricao": "Sala de mentoria e acompanhamento de operações ao vivo.",
+        "alocacao_pct_padrao": 1.0,
+        "capital_simulado_padrao": 1000.0,
+        "criado_em": dt_agora,
+        "papel": "dono",
+    }
+
+
+def atualizar_config_sala_aula(conexao: sqlite3.Connection, sala_id: int, nome: str,
+                              alocacao_pct: float, capital_simulado: float,
+                              autor_id: int, autor_nome: str) -> None:
+    """Atualiza as configurações didáticas da sala de aula e registra no log."""
+    conexao.execute("""
+        UPDATE salas_aula SET
+            nome = ?,
+            alocacao_pct_padrao = ?,
+            capital_simulado_padrao = ?
+        WHERE id = ?
+    """, (str(nome).strip(), float(alocacao_pct), float(capital_simulado), int(sala_id)))
+    registrar_log_sala(conexao, sala_id, autor_id, autor_nome, "Configuração da Sala",
+                       detalhes=f"Nome: {nome} | Alocação: {alocacao_pct:.1f}% | Capital: R$ {capital_simulado:.2f}")
+    conexao.commit()
+
+
+def registrar_log_sala(conexao: sqlite3.Connection, sala_id: int, autor_id: int,
+                       autor_nome: str, acao: str, operacao_id: int | None = None,
+                       detalhes: str = "") -> None:
+    """Registra evento na trilha de auditoria da sala de aula."""
+    inicializar_tabelas_modo_aula(conexao)
+    dt_agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    conexao.execute("""
+        INSERT INTO sala_operacoes_log (sala_id, operacao_id, autor_id, autor_nome, acao, data_hora, detalhes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (int(sala_id), operacao_id, int(autor_id), str(autor_nome), str(acao), dt_agora, str(detalhes)))
+    conexao.commit()
+
+
+def listar_logs_sala(conexao: sqlite3.Connection, sala_id: int, limite: int = 50) -> list[dict]:
+    """Retorna os eventos mais recentes de auditoria da sala."""
+    inicializar_tabelas_modo_aula(conexao)
+    cur = conexao.execute("""
+        SELECT * FROM sala_operacoes_log WHERE sala_id = ?
+        ORDER BY id DESC LIMIT ?
+    """, (int(sala_id), int(limite)))
+    cols = [desc[0] for desc in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def listar_professores_sala(conexao: sqlite3.Connection, sala_id: int) -> list[dict]:
+    """Lista todos os professores autorizados a lecionar/operar na sala."""
+    inicializar_tabelas_modo_aula(conexao)
+    cur = conexao.execute("""
+        SELECT p.id AS vinculo_id, p.papel, p.adicionado_em, u.id AS usuario_id,
+               u.usuario, u.nome, u.email
+        FROM sala_professores p
+        JOIN usuarios u ON u.id = p.professor_id
+        WHERE p.sala_id = ?
+        ORDER BY CASE WHEN p.papel = 'dono' THEN 1 ELSE 2 END, u.nome ASC
+    """, (int(sala_id),))
+    cols = [desc[0] for desc in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def adicionar_professor_sala(conexao: sqlite3.Connection, sala_id: int, professor_id: int,
+                             autor_id: int, autor_nome: str, papel: str = "professor") -> None:
+    """Concede acesso à sala para outro professor cadastrado."""
+    inicializar_tabelas_modo_aula(conexao)
+    dt_agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conexao.execute("""
+        INSERT OR REPLACE INTO sala_professores (sala_id, professor_id, papel, adicionado_em)
+        VALUES (?, ?, ?, ?)
+    """, (int(sala_id), int(professor_id), str(papel), dt_agora))
+    
+    cur_p = conexao.execute("SELECT usuario, nome FROM usuarios WHERE id = ?", (int(professor_id),))
+    p_row = cur_p.fetchone()
+    p_nome = (p_row[1] if p_row and p_row[1] else (p_row[0] if p_row else "Novo Professor"))
+    registrar_log_sala(conexao, sala_id, autor_id, autor_nome, "Professor Adicionado",
+                       detalhes=f"Concedeu acesso de {papel} ao professor {p_nome}.")
+    conexao.commit()
+
+
+def remover_professor_sala(conexao: sqlite3.Connection, sala_id: int, professor_id: int,
+                           autor_id: int, autor_nome: str) -> None:
+    """Remove a permissão de um professor de operar na sala."""
+    inicializar_tabelas_modo_aula(conexao)
+    conexao.execute("DELETE FROM sala_professores WHERE sala_id = ? AND professor_id = ? AND papel != 'dono'",
+                    (int(sala_id), int(professor_id)))
+    registrar_log_sala(conexao, sala_id, autor_id, autor_nome, "Professor Removido",
+                       detalhes=f"Acesso do professor ID #{professor_id} revogado.")
+    conexao.commit()

@@ -150,8 +150,8 @@ def pagina_contas() -> None:
                              format_func=lambda c: nomes.get(c, c),
                              key=f"plano_{escolhido}")
 
-    st.markdown("**Módulos Habilitados para a Conta**")
-    mcol1, mcol2 = st.columns(2)
+    st.markdown("**Módulos e Recursos Habilitados para a Conta**")
+    mcol1, mcol2, mcol3 = st.columns(3)
     with mcol1:
         mod_fiscal = st.toggle(
             "🟢 Módulo Fiscal Trade",
@@ -165,6 +165,13 @@ def pagina_contas() -> None:
             value=bool(linha["modulo_opcoes"]) if "modulo_opcoes" in linha else True,
             key=f"mod_opc_{escolhido}",
             help="Diário de Operações de Opções, Alertas de Rolagem, Preservação de Capital e Importação.",
+        )
+    with mcol3:
+        permite_aula = st.toggle(
+            "🎓 Modo Aula (Professor)",
+            value=bool(linha["permite_modo_aula"]) if "permite_modo_aula" in linha else False,
+            key=f"mod_aula_{escolhido}",
+            help="Habilita o Modo Aula para este usuário (apresentação para alunos sem valores/quantidades, simulação e salas compartilhadas).",
         )
 
     eu_mesmo = escolhido == st.session_state.get("usuario_id")
@@ -181,6 +188,7 @@ def pagina_contas() -> None:
                 plano_codigo=plano,
                 modulo_fiscal=int(mod_fiscal),
                 modulo_opcoes=int(mod_opcoes),
+                permite_modo_aula=int(permite_aula),
             )
             if eu_mesmo:
                 st.session_state["modulo_fiscal"] = mod_fiscal

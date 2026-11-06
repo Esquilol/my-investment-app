@@ -358,6 +358,134 @@ def _render_html_tabela_completa(linhas: list[dict], ocultar: bool = False) -> s
 # Modais de Ações do Diário
 # ---------------------------------------------------------------------------
 
+
+
+def _render_html_tabela_abertas_modo_aula(linhas: list[dict]) -> str:
+    """Renderiza a tabela de posições abertas no Modo Aula (sem quantidades e sem capital alocado)."""
+    parts = [_render_css_tabela(), '<div class="ft-tab-container"><table class="ft-tab">']
+    parts.append(
+        "<thead><tr>"
+        "<th>Opção / Ativo</th>"
+        "<th>Início / Prazo</th>"
+        '<th class="col-r">Cotação</th>'
+        '<th class="col-r">Performance (%)</th>'
+        '<th class="col-c">Radar Tendência</th>'
+        '<th class="col-c">Alerta Rolagem</th>'
+        "</tr></thead><tbody>"
+    )
+    for row in linhas:
+        rend_pct = row["rend_pct"]
+        atingiu = row["atingiu"]
+        badge_gatilho = (
+            f'<span class="ft-badge-rolar">🎯 ROLAR (+{rend_pct:.0f}%)</span>'
+            if atingiu
+            else '<span class="ft-val-neu">Normal</span>'
+        )
+        badge_radar = row.get("badge_radar", '<span class="ft-radar-ind">⚪ Em Análise</span>')
+        rot_pr = "Rec:" if "VENDA" in str(row.get("estrutura", "")).upper() else "Pago:"
+
+        destaque = row.get("destaque_dia")
+        tr_style = ""
+        tag_destaque = ""
+        if destaque == "verde":
+            tr_style = ' style="background-color: #ecfdf5 !important; border-left: 4px solid #10b981;"'
+            tag_destaque = ' <span style="background: #dcfce7; color: #15803d; border: 1px solid #86efac; padding: 1px 5px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; text-transform: uppercase;">🟢 Nova</span>'
+
+        parts.append(
+            f"<tr{tr_style}>"
+            f'<td><div><span class="ft-ticker">{row["codigo"]}</span>{tag_destaque}</div>'
+            f'<div class="ft-sub">{_badge_est(row["estrutura"])} <span>{row["ativo"]}</span></div></td>'
+            f'<td><div>{row["inicio"]}</div>'
+            f'<div class="ft-sub">{row["dias"]} dias</div></td>'
+            f'<td class="col-r"><div>{rot_pr} R$ {row["pago"]:,.2f}</div>'
+            f'<div class="ft-sub-r">Atual: <strong>R$ {row["atual"]:,.2f}</strong></div></td>'
+            f'<td class="col-r"><div style="font-size: 0.95rem; font-weight: 700;">{_fmt_pct(rend_pct)}</div></td>'
+            f'<td class="col-c">{badge_radar}</td>'
+            f'<td class="col-c">{badge_gatilho}</td>'
+            "</tr>"
+        )
+    parts.append("</tbody></table></div>")
+    return "".join(parts)
+
+
+def _render_html_planilha_sala_nitro(nome_sala: str, data_hora_aula: str, linhas: list[dict]) -> str:
+    """Renderiza a planilha idêntica ao modelo de apresentação do professor (ex: SALA NITRO)."""
+    css_nitro = """
+    <style>
+    .nitro-box { width: 100%; border: 2px solid #1e293b; border-radius: 8px; overflow: hidden; background: #ffffff; margin: 15px 0 25px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.08); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .nitro-header { background: #000000; color: #22c55e; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #22c55e; }
+    .nitro-title { font-size: 1.6rem; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: #22c55e; text-shadow: 0 0 10px rgba(34,197,94,0.4); }
+    .nitro-sub { font-size: 0.85rem; color: #94a3b8; font-weight: 600; }
+    .nitro-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .nitro-table th { background: #f8fafc; color: #0f172a; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; padding: 8px 10px; border: 1px solid #cbd5e1; text-align: center; }
+    .nitro-table td { padding: 6px 10px; border: 1px solid #cbd5e1; vertical-align: middle; }
+    .nitro-table td.col-r { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .nitro-table td.col-c { text-align: center; }
+    .nitro-row-verde { background-color: #dcfce7 !important; color: #14532d; font-weight: 600; }
+    .nitro-row-vermelho { background-color: #fecaca !important; color: #7f1d1d; font-weight: 600; }
+    .nitro-row-roxa { background-color: #ede9fe !important; color: #4c1d95; font-weight: 600; }
+    </style>
+    """
+    parts = [css_nitro, '<div class="nitro-box">']
+    parts.append(f"""
+    <div class="nitro-header">
+        <div class="nitro-title">{nome_sala}</div>
+        <div class="nitro-sub">📅 {data_hora_aula} • 🟢 AULA AO VIVO</div>
+    </div>
+    <div style="overflow-x: auto;">
+    <table class="nitro-table">
+        <thead>
+            <tr>
+                <th>CÓDIGO</th>
+                <th>ESTRUTURA</th>
+                <th>DATA INÍCIO</th>
+                <th>DATA FINAL</th>
+                <th>DIAS</th>
+                <th>RECEBIDO</th>
+                <th>PAGO</th>
+                <th>RESULTADO</th>
+                <th>SUCESSO</th>
+                <th>STATUS</th>
+            </tr>
+        </thead>
+        <tbody>
+    """)
+
+    for row in linhas:
+        destaque = row.get("destaque_dia")
+        st_lower = str(row.get("status", "")).lower()
+        cls_tr = ""
+        if destaque == "verde" or (st_lower == "aberta" and destaque == "verde"):
+            cls_tr = ' class="nitro-row-verde"'
+        elif destaque == "vermelho" or (st_lower != "aberta" and destaque == "vermelho"):
+            cls_tr = ' class="nitro-row-vermelho"'
+
+        fim_str = row.get("fim") or "—"
+        if fim_str in ("—", "None", "") and st_lower == "aberta":
+            fim_str = ""
+
+        p_rec_str = f"R$ {float(row.get('recebido') or 0.0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        p_pago_str = f"R$ {float(row.get('pago') or 0.0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        res_str = f"{float(row.get('res_pct') or 0.0):+.2f}%"
+        suc_str = "S" if (row.get("sucesso") == "s" or float(row.get("res_pct") or 0.0) > 0) else ""
+
+        parts.append(f"""
+            <tr{cls_tr}>
+                <td style="font-weight: 700;">{row['codigo']}</td>
+                <td>{row.get('estrutura', '—')}</td>
+                <td class="col-c">{row['inicio']}</td>
+                <td class="col-c">{fim_str}</td>
+                <td class="col-c">{row.get('dias', 0)}</td>
+                <td class="col-r">{p_rec_str}</td>
+                <td class="col-r">{p_pago_str}</td>
+                <td class="col-r" style="font-weight: 700;">{res_str}</td>
+                <td class="col-c">{suc_str}</td>
+                <td class="col-c" style="font-weight: 700;">{str(row.get('status', '')).capitalize()}</td>
+            </tr>
+        """)
+
+    parts.append("</tbody></table></div></div>")
+    return "".join(parts)
 @st.dialog("🔄 Rolar Opção com Preservação de Capital")
 def modal_rolar_opcao(op: dict) -> None:
     conexao = paginas.obter_conexao()
@@ -499,7 +627,7 @@ def modal_virar_tendencia(op: dict) -> None:
         estrutura_sugerida = "COMPRA DE CALL"
 
     st.markdown(f"### Virada de Tendência da Opção **{codigo}**")
-    st.caption(f"Posição atual: **{estrutura_atual}** | Alocado: **{_moeda(alocado)}**")
+    st.caption(f"Posição atual: **{estrutura_atual}** | Alocado: **{_moeda(alocado)}** | Quantidade: **{int(quantidade):,} un**")
     st.info(
         "🔄 **Virada de Tendência**: O ativo reverteu a tendência. Encerre a perna atual "
         "e abra imediatamente a nova perna na direção oposta para acompanhar o novo movimento do mercado."
@@ -598,31 +726,15 @@ def modal_encerrar_opcao(op: dict) -> None:
             key="modal_enc_preco_saida"
         )
 
-    st.markdown("##### Quantidade a Encerrar")
-    col_q1, col_q2 = st.columns([2, 2])
-    with col_q1:
-        qtd_encerrar = st.number_input(
-            "Quantidade de Contratos",
-            min_value=1.0,
-            max_value=float(quantidade),
-            value=float(quantidade),
-            step=100.0,
-            help=f"Deixe {quantidade:,.0f} para encerrar tudo, ou reduza para realizar lucro parcial (diminuir mão).",
-            key="modal_enc_qtd"
-        )
-    with col_q2:
-        st.write("")
-        st.write("")
-        cp1, cp2, cp3 = st.columns(3)
-        if cp1.button("25%", key="btn_q25", use_container_width=True):
-            st.session_state["modal_enc_qtd"] = max(1.0, round(quantidade * 0.25))
-            st.rerun()
-        if cp2.button("50%", key="btn_q50", use_container_width=True):
-            st.session_state["modal_enc_qtd"] = max(1.0, round(quantidade * 0.50))
-            st.rerun()
-        if cp3.button("100%", key="btn_q100", use_container_width=True):
-            st.session_state["modal_enc_qtd"] = float(quantidade)
-            st.rerun()
+    qtd_encerrar = st.number_input(
+        "Quantidade de Contratos a Encerrar",
+        min_value=1.0,
+        max_value=float(quantidade),
+        value=float(quantidade),
+        step=100.0,
+        help=f"Deixe {quantidade:,.0f} para encerrar tudo, ou informe manualmente para realização parcial (diminuição de mão).",
+        key="modal_enc_qtd"
+    )
 
     is_parcial = qtd_encerrar < quantidade
     alocado_fechado = qtd_encerrar * preco_pago
@@ -906,6 +1018,350 @@ def modal_atualizar_cotacao(op: dict) -> None:
 # Página Principal do Diário de Opções
 # ---------------------------------------------------------------------------
 
+
+
+def _secao_ambiente_modo_aula(conexao, usuario_id: int, sala: dict, ops: list[dict],
+                              abertas: list[dict], encerradas: list[dict],
+                              data_mais_recente_carteira: str | None,
+                              gatilho_global: float) -> None:
+    """
+    Renderiza o Ambiente Didático / Mentoria (Modo Aula) para apresentação aos alunos.
+    - Oculta quantidades de contratos e valores financeiros em R$.
+    - Permite configurar o nome da sala (ex: SALA NITRO) e horário da aula ao vivo.
+    - Oferece visão em formato planilha para tirar prints e enviar aos alunos.
+    - Inclui simulador didático do capital do aluno com alocação percentual (ex: 1% por opção).
+    - Permite múltiplos professores na mesma sala com trilha de auditoria transparente.
+    """
+    dt_hoje_str = date.today().strftime("%d/%m/%Y")
+    hora_atual_str = datetime.now().strftime("%H:%M")
+
+    # Banner de Apresentação da Sala de Aula
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #090d16 0%, #064e3b 100%); border-radius: 12px; padding: 18px 24px; margin-bottom: 20px; border: 1.5px solid #059669; box-shadow: 0 4px 16px rgba(5,150,105,0.15);">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div>
+                <div style="font-size: 0.72rem; color: #34d399; font-weight: 800; letter-spacing: 1px; text-transform: uppercase;">🎓 AMBIENTE DE MENTORIA & AULA AO VIVO</div>
+                <div style="font-size: clamp(1.6rem, 3vw, 2.2rem); font-weight: 900; color: #ffffff; letter-spacing: 1px; margin: 2px 0;">{sala['nome']}</div>
+                <div style="font-size: 0.85rem; color: #cbd5e1;">Acompanhamento didático da carteira em tempo real para os alunos.</div>
+            </div>
+            <div style="text-align: right; background: rgba(0,0,0,0.3); padding: 10px 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                <div style="font-size: 0.75rem; color: #a7f3d0; font-weight: 700;">🟢 AULA AO VIVO</div>
+                <div style="font-size: 1.05rem; font-weight: 800; color: #ffffff;">{dt_hoje_str} &bull; {hora_atual_str}</div>
+                <div style="font-size: 0.72rem; color: #94a3b8;">Papel: <strong>{str(sala.get('papel', 'professor')).upper()}</strong></div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Configuração da Sala e Gestão de Professores
+    with st.expander("⚙️ Configurações da Sala, Metodologia e Professores"):
+        c_cf1, c_cf2, c_cf3 = st.columns([2, 1.2, 1.2])
+        with c_cf1:
+            nome_sala_in = st.text_input("Nome da Sala / Aula", value=str(sala.get("nome", "SALA NITRO")), key="cfg_sala_nome").strip()
+        with c_cf2:
+            aloc_padrao_in = st.number_input("Risco por Opção (%)", min_value=0.1, max_value=20.0, value=float(sala.get("alocacao_pct_padrao", 1.0)), step=0.5, key="cfg_sala_aloc")
+        with c_cf3:
+            cap_sim_in = st.number_input("Capital Simulado Padrão (R$)", min_value=100.0, max_value=1_000_000.0, value=float(sala.get("capital_simulado_padrao", 1000.0)), step=500.0, key="cfg_sala_cap")
+
+        cur_u = conexao.execute("SELECT usuario, nome FROM usuarios WHERE id = ?", (int(usuario_id),))
+        u_row = cur_u.fetchone()
+        prof_nome = (u_row[1] if u_row and u_row[1] else (u_row[0] if u_row else "Professor"))
+
+        if st.button("Salvar Configurações da Sala", type="primary", icon=":material/save:"):
+            bd.atualizar_config_sala_aula(conexao, sala["id"], nome_sala_in, aloc_padrao_in, cap_sim_in, usuario_id, prof_nome)
+            st.success("Configurações da sala salvas com sucesso!")
+            st.rerun()
+
+    # Abas do Modo Aula
+    aba_aula_abertas, aba_aula_print, aba_aula_simulador, aba_aula_equipe = st.tabs([
+        f"🟢 Posições da Turma ({len(abertas)})",
+        "📸 Print para Alunos (Visão Planilha)",
+        "🧮 Simulador de Capital (Regra 1%)",
+        "👥 Professores & Auditoria",
+    ])
+
+    # 1. ABA: POSIÇÕES DA TURMA (VISUAL LIMPO SEM QUANTIDADES E SEM R$)
+    with aba_aula_abertas:
+        if not abertas:
+            st.info("Nenhuma posição aberta no momento.")
+        else:
+            col_cfg1, col_cfg2, col_cfg3 = st.columns([1.5, 1.5, 1.5])
+            with col_cfg1:
+                ativos_ab = ["Todos"] + sorted(list({str(x.get("ativo_subjacente") or x["codigo"][:4]) for x in abertas}))
+                filtro_ab_ativo = st.selectbox("Filtrar por Ativo", ativos_ab, key="fil_aula_ab_ativo")
+            with col_cfg2:
+                est_ab = ["Todas"] + sorted(list({str(x.get("estrutura")) for x in abertas if x.get("estrutura")}))
+                filtro_ab_est = st.selectbox("Filtrar por Estrutura", est_ab, key="fil_aula_ab_est")
+            with col_cfg3:
+                opcoes_ordem = [
+                    "🔤 Ordem Alfabética (A-Z)",
+                    "📅 Início: Mais Recente Primeiro",
+                    "⏳ Início: Mais Antiga Primeiro",
+                    "📈 Maior Rentabilidade (%)",
+                    "📉 Menor Rentabilidade (%)",
+                    "⏱️ Mais Dias em Aberto",
+                ]
+                ordem_sel = st.selectbox("Ordenar Posições por:", opcoes_ordem, index=0, key="sel_ordem_aula_abertas")
+
+            abertas_filtradas = abertas
+            if filtro_ab_ativo != "Todos":
+                abertas_filtradas = [o for o in abertas_filtradas if (o.get("ativo_subjacente") or o["codigo"][:4]) == filtro_ab_ativo]
+            if filtro_ab_est != "Todas":
+                abertas_filtradas = [o for o in abertas_filtradas if o.get("estrutura") == filtro_ab_est]
+
+            if ordem_sel == "🔤 Ordem Alfabética (A-Z)":
+                abertas_filtradas.sort(key=lambda x: (str(x.get("codigo", "")).upper(), x.get("id", 0)))
+            elif ordem_sel == "📅 Início: Mais Recente Primeiro":
+                abertas_filtradas.sort(key=lambda x: (_extrair_iso_data(x.get("data_inicio")) or "", str(x.get("codigo", "")).upper()), reverse=True)
+            elif ordem_sel == "⏳ Início: Mais Antiga Primeiro":
+                abertas_filtradas.sort(key=lambda x: (_extrair_iso_data(x.get("data_inicio")) or "", str(x.get("codigo", "")).upper()))
+            elif ordem_sel == "📈 Maior Rentabilidade (%)":
+                abertas_filtradas.sort(key=lambda x: (_calc_rend_op(x), str(x.get("codigo", "")).upper()), reverse=True)
+            elif ordem_sel == "📉 Menor Rentabilidade (%)":
+                abertas_filtradas.sort(key=lambda x: (_calc_rend_op(x), str(x.get("codigo", "")).upper()))
+            elif ordem_sel == "⏱️ Mais Dias em Aberto":
+                abertas_filtradas.sort(key=lambda x: (int(x.get("dias") or bd._calcular_dias_operacao(x.get("data_inicio"))), str(x.get("codigo", "")).upper()), reverse=True)
+
+            # Radar de tendência
+            ativos_sub_unicos = {str(x.get("ativo_subjacente") or x["codigo"][:4]) for x in abertas_filtradas}
+            radares_map = {at: bd.obter_radar_tendencia_ativo(at) for at in ativos_sub_unicos}
+
+            linhas_abertas_aula = []
+            for op in abertas_filtradas:
+                p_pago = float(op["preco_pago"])
+                p_atual = float(op.get("preco_atual") or p_pago)
+                qtd_op = float(op["quantidade"])
+                if "VENDA" in str(op.get("estrutura", "")).upper():
+                    p_rec = float(op.get("preco_recebido") or p_pago)
+                    rend_pct = ((p_rec - p_atual) / p_rec * 100) if p_rec > 0 else 0.0
+                else:
+                    rend_pct = ((p_atual - p_pago) / p_pago * 100) if p_pago > 0 else 0.0
+
+                atingiu = rend_pct >= gatilho_global
+                dias_op = op.get("dias") or bd._calcular_dias_operacao(op["data_inicio"])
+                ativo_nome = str(op.get("ativo_subjacente") or op["codigo"][:4])
+                dados_radar = radares_map.get(ativo_nome, {})
+                sinal_radar = _avaliar_sinal_radar(dados_radar, op.get("estrutura", ""))
+
+                d_op_ini = _extrair_iso_data(op.get("data_inicio"))
+                destaque_dia = "verde" if (d_op_ini and d_op_ini == data_mais_recente_carteira) else None
+
+                linhas_abertas_aula.append({
+                    "id": op["id"],
+                    "codigo": op["codigo"],
+                    "ativo": ativo_nome,
+                    "estrutura": op.get("estrutura", "—"),
+                    "inicio": _p_data(op["data_inicio"]),
+                    "dias": int(dias_op),
+                    "pago": p_pago,
+                    "atual": p_atual,
+                    "rend_pct": rend_pct,
+                    "atingiu": atingiu,
+                    "badge_radar": sinal_radar["badge_html"],
+                    "destaque_dia": destaque_dia,
+                })
+
+            st.caption(f"Exibindo {len(linhas_abertas_aula)} de {len(abertas)} opções em aberto para a turma.")
+            _exibir_html(_render_html_tabela_abertas_modo_aula(linhas_abertas_aula))
+
+            # Ações Rápidas do Professor na Aula
+            opcoes_aula_dict = {o["id"]: f"{o['codigo']} ({o.get('estrutura')}) — Entrada: R$ {float(o['preco_pago']):.2f} | Atual: R$ {float(o.get('preco_atual') or o['preco_pago']):.2f}" for o in abertas_filtradas}
+            if opcoes_aula_dict:
+                st.markdown("##### ⚡ Gestão da Posição em Aula")
+                col_sel, col_act1, col_act2, col_act3, col_act4, col_act5 = st.columns([2.5, 1.0, 1.0, 1.1, 1.1, 1.0])
+                with col_sel:
+                    op_sel_id = st.selectbox("Selecionar Opção:", options=list(opcoes_aula_dict.keys()), format_func=lambda i: opcoes_aula_dict[i], key="sel_op_aula_act")
+                op_alvo = next((o for o in abertas_filtradas if o["id"] == op_sel_id), None)
+                if op_alvo:
+                    with col_act1:
+                        if st.button("🔄 Rolar", type="primary", use_container_width=True, key="btn_aula_rol"):
+                            modal_rolar_opcao(op_alvo)
+                    with col_act2:
+                        if st.button("🔄 Virar", type="secondary", use_container_width=True, key="btn_aula_vir"):
+                            modal_virar_tendencia(op_alvo)
+                    with col_act3:
+                        if st.button("➕ Mão", use_container_width=True, key="btn_aula_mao"):
+                            modal_aumentar_posicao(op_alvo)
+                    with col_act4:
+                        if st.button("🏁 Saída", use_container_width=True, key="btn_aula_sai"):
+                            modal_encerrar_opcao(op_alvo)
+                    with col_act5:
+                        if st.button("✏️ Editar", use_container_width=True, key="btn_aula_edt"):
+                            modal_editar_operacao(op_alvo)
+
+    # 2. ABA: PRINT PARA ALUNOS (VISÃO PLANILHA SALA NITRO)
+    with aba_aula_print:
+        st.markdown(f"#### 📸 Visão Planilha de Apresentação — {sala['nome']}")
+        st.caption("Visão idêntica à planilha oficial para apresentação em tela e envio de prints aos alunos:")
+
+        linhas_planilha = []
+        for o in ops:
+            st_op = str(o.get("status", "aberta")).lower()
+            p_pago = float(o.get("preco_pago") or 0.0)
+            p_rec = float(o.get("preco_recebido") or 0.0)
+            p_atual = float(o.get("preco_atual") or p_pago)
+            dias_op = o.get("dias") or bd._calcular_dias_operacao(o.get("data_inicio"), o.get("data_fim"))
+
+            if st_op == "aberta":
+                res_pct = ((p_atual - p_pago) / p_pago * 100) if p_pago > 0 else 0.0
+                d_ini = _extrair_iso_data(o.get("data_inicio"))
+                destaque = "verde" if (d_ini and d_ini == data_mais_recente_carteira) else None
+            else:
+                res_pct = float(o.get("resultado_pct") or 0.0)
+                d_fim = _extrair_iso_data(o.get("data_fim"))
+                destaque = "vermelho" if (d_fim and d_fim == data_mais_recente_carteira) else None
+
+            linhas_planilha.append({
+                "codigo": o["codigo"],
+                "estrutura": o.get("estrutura", "—"),
+                "inicio": _p_data(o.get("data_inicio")),
+                "fim": _p_data(o.get("data_fim")),
+                "dias": int(dias_op),
+                "pago": p_pago,
+                "recebido": p_rec if st_op != "aberta" else p_atual,
+                "res_pct": res_pct,
+                "sucesso": o.get("sucesso", "s" if res_pct > 0 else "n"),
+                "status": st_op,
+                "destaque_dia": destaque,
+            })
+
+        _exibir_html(_render_html_planilha_sala_nitro(sala["nome"], f"{dt_hoje_str} às {hora_atual_str}", linhas_planilha))
+
+        # Texto pronto para copiar para o grupo de alunos
+        with st.expander("📋 Texto Pronto para Copiar p/ Alunos (Telegram / WhatsApp)"):
+            tot_ab = len(abertas)
+            vitoriosas_enc = len([o for o in encerradas if o.get("sucesso") == "s"])
+            win_rate_calc = (vitoriosas_enc / len(encerradas) * 100) if encerradas else 100.0
+
+            resumo_zap = f"""🚀 *AULA AO VIVO — {sala['nome']}*
+📅 *Data:* {dt_hoje_str} às {hora_atual_str}
+
+📊 *STATUS DA CARTEIRA DIDÁTICA:*
+• Posições Abertas Ativas: {tot_ab} opções
+• Operações Encerradas no Método: {len(encerradas)} trades
+• Taxa de Acerto (Win Rate): {win_rate_calc:.1f}%
+
+🎯 *REGRAS DA METODOLOGIA:*
+1. Alocação disciplinada de {sala.get('alocacao_pct_padrao', 1.0):.1f}% do capital por opção.
+2. Rolagem de preservação com 50% de lucro garantido no bolso.
+3. Virada de tendência quando o radar quantitativo sinalizar inversão."""
+            st.code(resumo_zap, language="text")
+
+    # 3. ABA: SIMULADOR DE CAPITAL DO ALUNO (COMPOSTAGEM DIDÁTICA 1%)
+    with aba_aula_simulador:
+        st.markdown("#### 🧮 Simulador de Crescimento de Carteira do Aluno")
+        st.info(
+            f"💡 **Demonstração Prática da Regra dos {sala.get('alocacao_pct_padrao', 1.0):.1f}%**: "
+            "Mostre aos seus alunos em aula como um aluno com qualquer capital inicial (ex: R$ 1.000 ou R$ 5.000) "
+            f"teria crescido a carteira aplicando rigorosamente o limite de risco de **{sala.get('alocacao_pct_padrao', 1.0):.1f}% por opção** "
+            "ao longo de todas as operações fechadas do método."
+        )
+
+        scol1, scol2 = st.columns(2)
+        with scol1:
+            sim_cap_inicial = st.number_input(
+                "Capital Inicial do Aluno (R$)",
+                min_value=100.0,
+                max_value=10_000_000.0,
+                value=float(sala.get("capital_simulado_padrao", 1000.0)),
+                step=500.0,
+                format="%.2f",
+                key="sim_aluno_cap_ini"
+            )
+        with scol2:
+            sim_pct_risco = st.number_input(
+                "Risco / Alocação por Opção (%)",
+                min_value=0.1,
+                max_value=20.0,
+                value=float(sala.get("alocacao_pct_padrao", 1.0)),
+                step=0.5,
+                format="%.1f",
+                key="sim_aluno_pct_risco"
+            )
+
+        if not encerradas:
+            st.warning("O simulador precisa de operações encerradas no diário para calcular o histórico acumulado.")
+        else:
+            # Ordenação cronológica das operações fechadas (do início ao fim)
+            enc_cron = list(encerradas)
+            enc_cron.sort(key=lambda x: (_extrair_iso_data(x.get("data_fim")) or _extrair_iso_data(x.get("data_inicio")) or "", x.get("id", 0)))
+
+            saldo_corrente = sim_cap_inicial
+            tabela_simulada = []
+            historico_saldos = [{"Trade": 0, "Saldo": sim_cap_inicial, "Data": "Início"}]
+
+            for i, op in enumerate(enc_cron, 1):
+                aloc_neste_trade = saldo_corrente * (sim_pct_risco / 100.0)
+                res_pct = float(op.get("resultado_pct") or 0.0)
+                lucro_trade = aloc_neste_trade * (res_pct / 100.0)
+                saldo_corrente += lucro_trade
+
+                tabela_simulada.append({
+                    "#": i,
+                    "Opção": op["codigo"],
+                    "Estrutura": op.get("estrutura", "—"),
+                    "Data Saída": _p_data(op.get("data_fim")),
+                    "Resultado (%)": f"{res_pct:+.1f}%",
+                    "Capital Alocado": f"R$ {aloc_neste_trade:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                    "Lucro do Aluno": f"{'+' if lucro_trade >= 0 else '-'}R$ {abs(lucro_trade):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                    "Saldo da Carteira": f"R$ {saldo_corrente:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                })
+                historico_saldos.append({
+                    "Trade": i,
+                    "Saldo": saldo_corrente,
+                    "Data": _p_data(op.get("data_fim")),
+                })
+
+            lucro_total_sim = saldo_corrente - sim_cap_inicial
+            pct_total_sim = (lucro_total_sim / sim_cap_inicial * 100) if sim_cap_inicial > 0 else 0.0
+
+            # Cartões de resultado simulado
+            kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
+            with kpi_col1:
+                st.metric("Capital Inicial", f"R$ {sim_cap_inicial:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            with kpi_col2:
+                st.metric("Saldo Atual Simulado", f"R$ {saldo_corrente:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+            with kpi_col3:
+                st.metric("Lucro Líquido", f"R$ {lucro_total_sim:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta=f"{pct_total_sim:+.1f}%")
+            with kpi_col4:
+                st.metric("Operações Fechadas", f"{len(enc_cron)} trades")
+
+            st.caption(f"📈 Demonstração didática: Começando com **R$ {sim_cap_inicial:,.2f}** e alocando **{sim_pct_risco:.1f}%** por opção, o aluno acumularia **R$ {saldo_corrente:,.2f}** ({pct_total_sim:+.1f}% de lucro real).")
+
+            # Tabela de evolução didática
+            tema.tabela(pd.DataFrame(tabela_simulada))
+
+    # 4. ABA: PROFESSORES & AUDITORIA
+    with aba_aula_equipe:
+        st.markdown(f"#### 👥 Equipe de Professores da {sala['nome']}")
+        st.caption("Salas de aula podem ser compartilhadas entre múltiplos professores com registro transparente de quem alterou o quê.")
+
+        professores = bd.listar_professores_sala(conexao, sala["id"])
+        st.dataframe(pd.DataFrame(professores)[["usuario_id", "nome", "usuario", "email", "papel", "adicionado_em"]], use_container_width=True, hide_index=True)
+
+        if sala.get("papel") == "dono":
+            with st.expander("➕ Adicionar Novo Professor à Sala"):
+                todos_usuarios = bd.listar_usuarios(conexao)
+                ids_existentes = {p["usuario_id"] for p in professores}
+                candidatos = todos_usuarios[~todos_usuarios["id"].isin(ids_existentes)]
+                if candidatos.empty:
+                    st.info("Todos os usuários cadastrados já têm acesso a esta sala.")
+                else:
+                    cand_opts = {int(r["id"]): f"{r['nome'] or r['usuario']} ({r['email']})" for _, r in candidatos.iterrows()}
+                    prof_sel_id = st.selectbox("Selecione o professor para adicionar:", options=list(cand_opts.keys()), format_func=lambda i: cand_opts[i], key="sel_novo_prof_sala")
+                    if st.button("Conceder Acesso de Professor", type="primary", icon=":material/person_add:"):
+                        bd.adicionar_professor_sala(conexao, sala["id"], prof_sel_id, usuario_id, prof_nome, papel="professor")
+                        st.success("Professor adicionado à sala com sucesso!")
+                        st.rerun()
+
+        st.markdown("##### 📋 Trilha de Auditoria da Sala (Quem Alterou o Quê)")
+        logs = bd.listar_logs_sala(conexao, sala["id"], limite=40)
+        if not logs:
+            st.info("Nenhuma alteração registrada ainda nesta sala.")
+        else:
+            tema.tabela(pd.DataFrame(logs)[["data_hora", "autor_nome", "acao", "detalhes"]])
+
+
 def pagina_diario_opcoes() -> None:
     tema.cabecalho(
         "Gestão e Diário de Opções",
@@ -979,6 +1435,43 @@ def pagina_diario_opcoes() -> None:
         st.session_state["meta_alerta_rolagem"] = 100.0
 
     gatilho_global = float(st.session_state["meta_alerta_rolagem"])
+
+    # Modo Aula (Acesso Especial de Professor / Educador configurado pelo Admin)
+    permite_modo_aula = bool(st.session_state.get("permite_modo_aula", False))
+    if "modo_aula_ativo" not in st.session_state:
+        st.session_state["modo_aula_ativo"] = False
+
+    if permite_modo_aula:
+        c_mode1, c_mode2 = st.columns([3, 1.2])
+        with c_mode1:
+            st.markdown(
+                "<div style='display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(13,148,136,0.08);border-left:4px solid #0d9488;border-radius:6px;font-size:13px;color:#0f766e;font-weight:600;margin-bottom:12px;'>"
+                "🎓 <span>Painel do Professor habilitado: alterne entre sua carteira pessoal e o <b>Modo Aula</b> para seus alunos.</span>"
+                "</div>",
+                unsafe_allow_html=True
+            )
+        with c_mode2:
+            modo_aula_ativo = st.toggle(
+                "🎓 Ativar Modo Aula",
+                value=st.session_state["modo_aula_ativo"],
+                key="toggle_modo_aula_switch",
+                help="Ativa a visualização didática sem quantidades e sem R$ alocado, com Visão Planilha Sala Nitro e Simulador de 1%."
+            )
+            st.session_state["modo_aula_ativo"] = modo_aula_ativo
+
+        if st.session_state["modo_aula_ativo"]:
+            sala = bd.obter_ou_criar_sala_padrao_professor(conexao, usuario_id, "SALA NITRO")
+            _secao_ambiente_modo_aula(
+                conexao,
+                usuario_id,
+                sala,
+                ops,
+                abertas,
+                encerradas,
+                data_mais_recente_carteira,
+                gatilho_global
+            )
+            return
 
     # Barra Superior de Controles: Capital Inicial | Patrimônio Realizado | Modo Print
     if ocultar_moeda:
