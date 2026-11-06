@@ -68,6 +68,16 @@ st.set_page_config(
 
 tema.aplicar()
 
+# Interceptador de Link Temporário da Aula para Alunos (Válido por 20 horas sem login)
+token_aula = st.query_params.get("token")
+view_param = st.query_params.get("view")
+if view_param == "print_aula" and token_aula:
+    import modulo_opcoes
+    conexao = paginas.obter_conexao()
+    modulo_opcoes.pagina_publica_print_aula(conexao, str(token_aula))
+    st.stop()
+
+
 
 # ---------------------------------------------------------------------------
 # Autenticação

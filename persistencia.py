@@ -28,8 +28,9 @@ Uso:
 from __future__ import annotations
 
 import hashlib
+import secrets
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -2613,14 +2614,14 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
         if not val or pd.isna(val):
             return ""
         s = str(val).strip()
-        if not s or s.lower() in ("-", "—", "nan", "none", "trava") or len(s) < 8:
+        if not s or s.lower() in ("-", "—", "nan", "none", "trava"):
             return ""
-        m = re.search(r"(\d{2}/\d{2}/\d{4})", s)
+        m = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", s)
         if m:
-            return m.group(1)
+            return _padronizar_data_str(m.group(1))
         if hasattr(val, "strftime"):
-            return val.strftime("%d/%m/%Y")
-        return s[:10]
+            return _padronizar_data_str(val.strftime("%d/%m/%Y"))
+        return _padronizar_data_str(s[:10])
 
     df_dados = None
 
@@ -2759,10 +2760,24 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
             sucesso = "s" if res_fin > 0 else ("n" if not is_aberta else "")
             obs = "Importado via Nelogica Profit"
 
-            existente = conexao.execute(
-                "SELECT id FROM opcoes_operacoes WHERE usuario_id = ? AND codigo = ? AND data_inicio = ?",
-                (int(usuario_id), codigo, dt_inicio)
-            ).fetchone()
+            # Busca inteligente anti-duplicação: confere código normalizado e data normalizada ou posição aberta
+            codigo_norm = codigo.strip().upper()
+            dt_ini_padrao = _padronizar_data_str(dt_inicio)
+            cur_ops = conexao.execute(
+                "SELECT id, status, data_inicio FROM opcoes_operacoes WHERE usuario_id = ? AND UPPER(TRIM(codigo)) = ?",
+                (int(usuario_id), codigo_norm)
+            ).fetchall()
+            existente_id = None
+            for r in cur_ops:
+                if dt_ini_padrao and _padronizar_data_str(r[2]) == dt_ini_padrao:
+                    existente_id = r[0]
+                    break
+            if not existente_id:
+                for r in cur_ops:
+                    if str(r[1]).lower() == "aberta":
+                        existente_id = r[0]
+                        break
+            existente = (existente_id,) if existente_id else None
 
             if existente:
                 conexao.execute("""
@@ -2914,10 +2929,24 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
             if obs.lower() in ("nan", "none"):
                 obs = ""
 
-            existente = conexao.execute(
-                "SELECT id FROM opcoes_operacoes WHERE usuario_id = ? AND codigo = ? AND data_inicio = ?",
-                (int(usuario_id), codigo, dt_inicio)
-            ).fetchone()
+            # Busca inteligente anti-duplicação: confere código normalizado e data normalizada ou posição aberta
+            codigo_norm = codigo.strip().upper()
+            dt_ini_padrao = _padronizar_data_str(dt_inicio)
+            cur_ops = conexao.execute(
+                "SELECT id, status, data_inicio FROM opcoes_operacoes WHERE usuario_id = ? AND UPPER(TRIM(codigo)) = ?",
+                (int(usuario_id), codigo_norm)
+            ).fetchall()
+            existente_id = None
+            for r in cur_ops:
+                if dt_ini_padrao and _padronizar_data_str(r[2]) == dt_ini_padrao:
+                    existente_id = r[0]
+                    break
+            if not existente_id:
+                for r in cur_ops:
+                    if str(r[1]).lower() == "aberta":
+                        existente_id = r[0]
+                        break
+            existente = (existente_id,) if existente_id else None
 
             if existente:
                 conexao.execute("""
@@ -3090,6 +3119,18 @@ def inicializar_tabelas_modo_aula(conexao: sqlite3.Connection) -> None:
         );
     """)
     conexao.execute("""
+        CREATE TABLE IF NOT EXISTS links_temporarios_aula (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT NOT NULL UNIQUE,
+            sala_id INTEGER NOT NULL,
+            usuario_id INTEGER NOT NULL,
+            criado_em TEXT NOT NULL,
+            expira_em TEXT NOT NULL,
+            ativo INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY (sala_id) REFERENCES salas_aula(id) ON DELETE CASCADE
+        );
+    """)
+    conexao.execute("""
         CREATE TABLE IF NOT EXISTS sala_operacoes_log (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             sala_id        INTEGER NOT NULL,
@@ -3234,3 +3275,181 @@ def remover_professor_sala(conexao: sqlite3.Connection, sala_id: int, professor_
     registrar_log_sala(conexao, sala_id, autor_id, autor_nome, "Professor Removido",
                        detalhes=f"Acesso do professor ID #{professor_id} revogado.")
     conexao.commit()
+
+
+# ---------------------------------------------------------------------------
+# Funções de Links Temporários, Busca de Professores e Exportação do Diário
+# ---------------------------------------------------------------------------
+
+def criar_link_temporario_aula(conexao: sqlite3.Connection, sala_id: int, usuario_id: int, horas_validade: int = 20) -> str:
+    """Gera um token seguro e registra o link temporário da sala de aula válido por N horas."""
+    inicializar_tabelas_modo_aula(conexao)
+    token = secrets.token_urlsafe(16)
+    agora_dt = datetime.now()
+    expira_dt = agora_dt + timedelta(hours=horas_validade)
+    conexao.execute("""
+        INSERT INTO links_temporarios_aula (token, sala_id, usuario_id, criado_em, expira_em, ativo)
+        VALUES (?, ?, ?, ?, ?, 1)
+    """, (token, int(sala_id), int(usuario_id), agora_dt.isoformat(timespec="seconds"), expira_dt.isoformat(timespec="seconds")))
+    conexao.commit()
+    return token
+
+
+def validar_link_temporario_aula(conexao: sqlite3.Connection, token: str) -> dict | None:
+    """Verifica se o token temporário da aula existe e ainda não expirou."""
+    inicializar_tabelas_modo_aula(conexao)
+    cur = conexao.execute("""
+        SELECT l.*, s.nome AS sala_nome, s.dono_id AS dono_usuario_id, s.alocacao_pct_padrao, s.capital_simulado_padrao
+        FROM links_temporarios_aula l
+        JOIN salas_aula s ON s.id = l.sala_id
+        WHERE l.token = ? AND l.ativo = 1
+    """, (str(token).strip(),))
+    row = cur.fetchone()
+    if not row:
+        return None
+    cols = [d[0] for d in cur.description]
+    dados = dict(zip(cols, row))
+    expira_iso = dados.get("expira_em")
+    if expira_iso:
+        try:
+            exp_dt = datetime.fromisoformat(expira_iso)
+            if datetime.now() > exp_dt:
+                return None
+        except Exception:
+            pass
+    return dados
+
+
+def buscar_usuario_por_email_cpf(conexao: sqlite3.Connection, email: str, cpf: str) -> dict | None:
+    """Busca um usuário no banco comparando e-mail e CPF normalizado (apenas dígitos)."""
+    email_limpo = (email or "").strip().lower()
+    cpf_digitos = "".join(c for c in (cpf or "") if c.isdigit())
+    if not email_limpo or not cpf_digitos:
+        return None
+
+    cur = conexao.execute("SELECT * FROM usuarios WHERE LOWER(TRIM(email)) = ?", (email_limpo,))
+    rows = cur.fetchall()
+    cols = [d[0] for d in cur.description]
+    for r in rows:
+        u = dict(zip(cols, r))
+        u_cpf_digitos = "".join(c for c in str(u.get("cpf") or "") if c.isdigit())
+        if u_cpf_digitos == cpf_digitos:
+            return u
+    return None
+
+
+def exportar_diario_opcoes_excel(ops: list[dict]) -> bytes:
+    """Gera uma planilha Excel (.xlsx) formatada com todas as operações do diário."""
+    linhas_export = []
+    for o in ops:
+        p_pago = float(o.get("preco_pago") or 0.0)
+        p_rec = float(o.get("preco_recebido") or 0.0)
+        p_atual = float(o.get("preco_atual") or p_pago)
+        aloc = float(o.get("valor_alocado") or 0.0)
+        v_fin = float(o.get("valor_final") or 0.0)
+        res_pct = float(o.get("resultado_pct") or 0.0)
+        res_fin = float(o.get("resultado_financeiro") or 0.0)
+        dias_op = o.get("dias") or _calcular_dias_operacao(o.get("data_inicio"), o.get("data_fim"))
+
+        linhas_export.append({
+            "ID": o.get("id"),
+            "CÓDIGO": o.get("codigo"),
+            "ESTRUTURA": o.get("estrutura", "—"),
+            "ATIVO OBJETO": o.get("ativo_subjacente") or (o.get("codigo")[:4] if o.get("codigo") else ""),
+            "TIPO": o.get("tipo", "—"),
+            "DATA INÍCIO": o.get("data_inicio"),
+            "DATA FINAL": o.get("data_fim") or "",
+            "DIAS": dias_op,
+            "QUANTIDADE": o.get("quantidade", 0),
+            "PREÇO PAGO (R$)": p_pago,
+            "PREÇO RECEBIDO (R$)": p_rec,
+            "PREÇO ATUAL (R$)": p_atual,
+            "VALOR ALOCADO (R$)": aloc,
+            "VALOR FINAL (R$)": v_fin,
+            "RESULTADO (%)": res_pct,
+            "LUCRO/PREJUÍZO (R$)": res_fin,
+            "STATUS": str(o.get("status", "")).upper(),
+            "SUCESSO": str(o.get("sucesso", "")).upper(),
+            "OBSERVAÇÕES": o.get("observacoes") or "",
+        })
+
+    df = pd.DataFrame(linhas_export)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Diario_Opcoes")
+    return buf.getvalue()
+
+
+def exportar_diario_opcoes_csv(ops: list[dict]) -> str:
+    """Gera um arquivo CSV separado por ponto-e-vírgula com todas as operações do diário."""
+    linhas_export = []
+    for o in ops:
+        p_pago = float(o.get("preco_pago") or 0.0)
+        p_rec = float(o.get("preco_recebido") or 0.0)
+        p_atual = float(o.get("preco_atual") or p_pago)
+        aloc = float(o.get("valor_alocado") or 0.0)
+        v_fin = float(o.get("valor_final") or 0.0)
+        res_pct = float(o.get("resultado_pct") or 0.0)
+        res_fin = float(o.get("resultado_financeiro") or 0.0)
+        dias_op = o.get("dias") or _calcular_dias_operacao(o.get("data_inicio"), o.get("data_fim"))
+
+        linhas_export.append({
+            "ID": o.get("id"),
+            "CÓDIGO": o.get("codigo"),
+            "ESTRUTURA": o.get("estrutura", "—"),
+            "ATIVO OBJETO": o.get("ativo_subjacente") or (o.get("codigo")[:4] if o.get("codigo") else ""),
+            "TIPO": o.get("tipo", "—"),
+            "DATA INÍCIO": o.get("data_inicio"),
+            "DATA FINAL": o.get("data_fim") or "",
+            "DIAS": dias_op,
+            "QUANTIDADE": o.get("quantidade", 0),
+            "PREÇO PAGO": f"{p_pago:.2f}".replace(".", ","),
+            "PREÇO RECEBIDO": f"{p_rec:.2f}".replace(".", ","),
+            "PREÇO ATUAL": f"{p_atual:.2f}".replace(".", ","),
+            "VALOR ALOCADO": f"{aloc:.2f}".replace(".", ","),
+            "VALOR FINAL": f"{v_fin:.2f}".replace(".", ","),
+            "RESULTADO %": f"{res_pct:.2f}".replace(".", ","),
+            "LUCRO/PREJUÍZO": f"{res_fin:.2f}".replace(".", ","),
+            "STATUS": str(o.get("status", "")).upper(),
+            "SUCESSO": str(o.get("sucesso", "")).upper(),
+            "OBSERVAÇÕES": o.get("observacoes") or "",
+        })
+
+    df = pd.DataFrame(linhas_export)
+    return df.to_csv(index=False, sep=";")
+
+
+def limpar_dados_opcoes(conexao: sqlite3.Connection, usuario_id: int) -> int:
+    """Apaga todas as operações de opções do usuário para permitir uma importação limpa."""
+    cur = conexao.execute("SELECT count(*) FROM opcoes_operacoes WHERE usuario_id = ?", (int(usuario_id),))
+    total = int(cur.fetchone()[0])
+    conexao.execute("DELETE FROM opcoes_operacoes WHERE usuario_id = ?", (int(usuario_id),))
+    conexao.commit()
+    return total
+
+
+def sanitizar_duplicatas_opcoes(conexao: sqlite3.Connection, usuario_id: int) -> int:
+    """Remove operações duplicadas mantendo apenas uma por código e data de início."""
+    cur = conexao.execute(
+        "SELECT id, codigo, data_inicio, status FROM opcoes_operacoes WHERE usuario_id = ? ORDER BY id ASC",
+        (int(usuario_id),)
+    )
+    rows = cur.fetchall()
+    vistos = {}
+    duplicados_ids = []
+
+    for r in rows:
+        r_id = r[0]
+        cod = str(r[1]).strip().upper()
+        dt = _padronizar_data_str(r[2])
+        st = str(r[3]).strip().lower()
+        chave = (cod, dt) if dt else (cod, st)
+        if chave in vistos:
+            duplicados_ids.append(r_id)
+        else:
+            vistos[chave] = r_id
+
+    for d_id in duplicados_ids:
+        conexao.execute("DELETE FROM opcoes_operacoes WHERE id = ?", (int(d_id),))
+    conexao.commit()
+    return len(duplicados_ids)
