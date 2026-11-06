@@ -1588,6 +1588,7 @@ def identificar_opcao(codigo: str) -> dict:
         "MGLU": "MGLU3", "CMIN": "CMIN3", "BBAS": "BBAS3", "BBDC": "BBDC4",
         "ITUB": "ITUB4", "ITSA": "ITSA4", "SUZB": "SUZB3", "JBSS": "JBSS3",
         "RAIZ": "RAIZ4", "ELET": "ELET3", "EQTL": "EQTL3", "HAPV": "HAPV3",
+        "CSAN": "CSAN3", "MRVE": "MRVE3",
     }
     m = re.match(r"^([A-Z]{3,5})([A-X])(.*)$", cod)
     if m:
@@ -2446,8 +2447,9 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
                             conteudo_bytes: bytes, nome_arquivo: str) -> dict:
     """
     Importa operações de opções a partir de arquivo Excel (.xlsx, .xls) ou CSV anexado pelo usuário.
+    Suporta tanto a planilha modelo padrão / Nitro quanto a exportação nativa do Nelogica Profit.
     """
-    import io, unicodedata
+    import io, re, unicodedata
     import pandas as pd
 
     def _norm(s) -> str:
@@ -2455,87 +2457,14 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
             return ""
         return unicodedata.normalize('NFKD', str(s)).encode('ASCII', 'ignore').decode('utf-8').lower().strip()
 
-    if nome_arquivo.lower().endswith(('.xlsx', '.xls')):
-        df = pd.read_excel(io.BytesIO(conteudo_bytes), header=None)
-    else:
-        lido = False
-        for enc in ("utf-8", "latin1", "cp1252"):
-            for sep in (";", ",", "\t"):
-                try:
-                    df = pd.read_csv(io.BytesIO(conteudo_bytes), sep=sep, header=None, encoding=enc, engine="python")
-                    if df.shape[1] >= 2 and len(df) >= 1:
-                        lido = True
-                        break
-                except Exception:
-                    continue
-            if lido:
-                break
-        if not lido:
-            raise ValueError("Não foi possível ler o arquivo. Certifique-se de que é um Excel (.xlsx) ou CSV válido.")
-
-    # Detectar linha de cabeçalho
-    header_idx = None
-    for idx in range(min(15, len(df))):
-        vals = [_norm(x) for x in df.iloc[idx].values if pd.notna(x)]
-        if any(k in x for x in vals for k in ["digo", "ticker", "opcao", "estrutura", "pago", "recebido"]):
-            header_idx = idx
-            break
-
-    if header_idx is not None:
-        headers = [str(x).strip() for x in df.iloc[header_idx].values]
-        df_dados = df.iloc[header_idx + 1:].copy()
-        df_dados.columns = headers
-    else:
-        df_dados = df.copy()
-
-    # Mapear colunas semanticamente
-    col_map = {}
-    colunas_lista = list(df_dados.columns)
-    for idx, col in enumerate(colunas_lista):
-        nc = _norm(col)
-        if any(k in nc for k in ["digo", "cod", "ticker", "opcao"]) and "codigo" not in col_map:
-            col_map["codigo"] = col
-        elif any(k in nc for k in ["estru", "estrat"]) and "estrutura" not in col_map:
-            col_map["estrutura"] = col
-        elif any(k in nc for k in ["inicio", "abert", "data ent"]) and "data_inicio" not in col_map:
-            col_map["data_inicio"] = col
-        elif any(k in nc for k in ["final", "fech", "fim", "saida", "data sai"]) and "data_fim" not in col_map:
-            col_map["data_fim"] = col
-        elif "dias" in nc and "dias" not in col_map:
-            col_map["dias"] = col
-        elif any(k in nc for k in ["receb", "saida", "venda"]) and "preco_recebido" not in col_map:
-            col_map["preco_recebido"] = col
-        elif any(k in nc for k in ["pago", "compra", "entrada"]) and "preco_pago" not in col_map:
-            col_map["preco_pago"] = col
-        elif "sucesso" in nc and "sucesso" not in col_map:
-            col_map["sucesso"] = col
-        elif "status" in nc and "status" not in col_map:
-            col_map["status"] = col
-        elif any(k in nc for k in ["aloc", "invest"]) and "valor_alocado" not in col_map:
-            col_map["valor_alocado"] = col
-        elif any(k in nc for k in ["fina", "total final", "resgate"]) and "valor_final" not in col_map:
-            col_map["valor_final"] = col
-        elif any(k in nc for k in ["obs", "coluna 1", "nota"]) and "observacoes" not in col_map:
-            col_map["observacoes"] = col
-
-    # Segundo passo: identificar resultado_pct e resultado_financeiro com precisão
-    for idx, col in enumerate(colunas_lista):
-        nc = _norm(col)
-        if any(k in nc for k in ["resultado", "lucro", "preju", "rentab", "%"]):
-            if "%" in nc or "rentab" in nc:
-                col_map["resultado_pct"] = col
-            elif "r$" in nc or "financeiro" in nc or "lucro" in nc:
-                col_map["resultado_financeiro"] = col
-            elif idx <= 8 and "resultado_pct" not in col_map:
-                col_map["resultado_pct"] = col
-            else:
-                col_map["resultado_financeiro"] = col
-
-    def _pnum(v):
+    def _pnum(v, is_qtd: bool = False) -> float:
         if v is None or pd.isna(v):
             return 0.0
         if isinstance(v, (int, float)):
-            return float(v)
+            val = float(v)
+            if is_qtd and val < 50 and val != int(val):
+                val = round(val * 1000)
+            return val
         s = str(v).replace("R$", "").replace("%", "").replace(" ", "").strip()
         if not s or s.lower() in ("nan", "none", "-", "—"):
             return 0.0
@@ -2543,138 +2472,365 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
             s = s.replace(".", "").replace(",", ".")
         elif "," in s:
             s = s.replace(",", ".")
+        elif "." in s:
+            parts = s.split(".")
+            if len(parts) == 2 and len(parts[1]) == 3 and (is_qtd or int(parts[1]) == 0 or len(parts[0]) <= 3):
+                s = s.replace(".", "")
         try:
-            return float(s)
+            val = float(s)
+            if is_qtd and val < 50 and val != int(val):
+                val = round(val * 1000)
+            return val
         except Exception:
             return 0.0
 
-    def _pdata(v):
-        if v is None or pd.isna(v):
+    def _extrair_data(val) -> str:
+        if not val or pd.isna(val):
             return ""
-        s = str(v).strip()
-        if not s or s.lower() in ("nan", "none", "trava"):
+        s = str(val).strip()
+        if not s or s.lower() in ("-", "—", "nan", "none", "trava") or len(s) < 8:
             return ""
-        if hasattr(v, "strftime"):
-            return v.strftime("%d/%m/%Y")
-        return s
+        m = re.search(r"(\d{2}/\d{2}/\d{4})", s)
+        if m:
+            return m.group(1)
+        if hasattr(val, "strftime"):
+            return val.strftime("%d/%m/%Y")
+        return s[:10]
+
+    df_dados = None
+
+    # 1. Leitura e detecção do arquivo (Excel ou CSV)
+    if nome_arquivo.lower().endswith(('.xlsx', '.xls')):
+        df_raw = pd.read_excel(io.BytesIO(conteudo_bytes), header=None, dtype=str)
+        header_idx = None
+        for idx in range(min(25, len(df_raw))):
+            vals = [_norm(x) for x in df_raw.iloc[idx].values if pd.notna(x)]
+            if any(k in x for x in vals for k in ["ativo", "codigo", "ticker", "abertura", "estrutura", "pago"]):
+                header_idx = idx
+                break
+        if header_idx is not None:
+            headers = [str(x).strip() for x in df_raw.iloc[header_idx].values]
+            df_dados = df_raw.iloc[header_idx + 1:].copy()
+            df_dados.columns = headers
+        else:
+            df_dados = df_raw.copy()
+    else:
+        # CSV: decodifica com múltiplos encodings e ignora eventuais linhas de metadados do Profit (ex: Conta:, Titular:)
+        texto_csv = None
+        for enc in ("utf-8-sig", "utf-8", "latin1", "cp1252"):
+            try:
+                texto_csv = conteudo_bytes.decode(enc)
+                break
+            except Exception:
+                continue
+
+        if not texto_csv:
+            raise ValueError("Não foi possível decodificar o arquivo CSV. Certifique-se de que é um arquivo de texto válido.")
+
+        linhas = texto_csv.splitlines()
+        start_line = 0
+        delimitador = ";"
+        for i, linha in enumerate(linhas[:30]):
+            ln = _norm(linha)
+            if any(k in ln for k in ["ativo;", "ativo,", "codigo;", "codigo,", "ticker;", "ticker,"]):
+                start_line = i
+                delimitador = ";" if ";" in linha else ("," if "," in linha else "\t")
+                break
+            elif ("abertura" in ln and "fechamento" in ln) or ("pago" in ln and "recebido" in ln):
+                start_line = i
+                delimitador = ";" if ";" in linha else ("," if "," in linha else "\t")
+                break
+
+        texto_limpo = "\n".join(linhas[start_line:])
+        df_dados = pd.read_csv(io.StringIO(texto_limpo), sep=delimitador, dtype=str, engine="python")
+
+    if df_dados is None or df_dados.empty:
+        raise ValueError("O arquivo não contém registros válidos para importação.")
+
+    # 2. Identifica se é exportação nativa do Nelogica Profit
+    col_map_profit = {}
+    for col in df_dados.columns:
+        nc = _norm(col)
+        if nc == "ativo" or "ativo" in nc:
+            col_map_profit["codigo"] = col
+        elif "abertura" in nc:
+            col_map_profit["abertura"] = col
+        elif "fechamento" in nc:
+            col_map_profit["fechamento"] = col
+        elif nc == "lado" or "lado" in nc:
+            col_map_profit["lado"] = col
+        elif "qtd" in nc and "compra" in nc:
+            col_map_profit["qtd_compra"] = col
+        elif "qtd" in nc and "venda" in nc:
+            col_map_profit["qtd_venda"] = col
+        elif ("compra" in nc) and ("qtd" not in nc):
+            col_map_profit["preco_compra"] = col
+        elif ("venda" in nc) and ("qtd" not in nc):
+            col_map_profit["preco_venda"] = col
+        elif "mercado" in nc:
+            col_map_profit["preco_mercado"] = col
+        elif "oper" in nc and "%" in nc:
+            col_map_profit["res_pct"] = col
+        elif "oper" in nc and "%" not in nc:
+            col_map_profit["res_fin"] = col
+
+    is_profit = ("abertura" in col_map_profit and "fechamento" in col_map_profit and "codigo" in col_map_profit)
 
     importadas = 0
     atualizadas = 0
 
-    for _, row in df_dados.iterrows():
-        cod_val = row.get(col_map.get("codigo", ""), "")
-        if pd.isna(cod_val) or not str(cod_val).strip() or "total" in str(cod_val).lower():
-            continue
-        codigo = str(cod_val).strip().upper()
-        if len(codigo) < 4:
-            continue
+    if is_profit:
+        # --- PARSER ESPECÍFICO DO NELOGICA PROFIT ---
+        for _, row in df_dados.iterrows():
+            cod_val = row.get(col_map_profit.get("codigo", ""), "")
+            if pd.isna(cod_val) or not str(cod_val).strip() or "total" in str(cod_val).lower():
+                continue
+            codigo = str(cod_val).strip().upper()
+            if len(codigo) < 4:
+                continue
 
-        estrutura = str(row.get(col_map.get("estrutura", ""), "COMPRA DE CALL")).strip().upper()
-        if not estrutura or estrutura == "NAN":
-            estrutura = "COMPRA DE CALL"
+            info = identificar_opcao(codigo)
+            tipo_opcao = info["tipo_opcao"]  # CALL ou PUT
+            lado = str(row.get(col_map_profit.get("lado", ""), "C")).strip().upper()
+            is_venda = (lado == "V")
+            estrutura = f"VENDA DE {tipo_opcao}" if is_venda else f"COMPRA DE {tipo_opcao}"
 
-        dt_inicio = _pdata(row.get(col_map.get("data_inicio", ""))) or agora()[:10]
-        dt_fim = _pdata(row.get(col_map.get("data_fim", "")))
+            dt_inicio = _extrair_data(row.get(col_map_profit.get("abertura", ""))) or agora()[:10]
+            raw_fech = row.get(col_map_profit.get("fechamento", ""))
+            dt_fim = _extrair_data(raw_fech)
+            is_aberta = (not dt_fim)
+            status = "aberta" if is_aberta else "encerrada"
 
-        dias_val = row.get(col_map.get("dias", ""), "")
-        dias = int(_pnum(dias_val)) if dias_val and str(dias_val).strip().isdigit() else _calcular_dias_operacao(dt_inicio, dt_fim)
+            qtd_c = _pnum(row.get(col_map_profit.get("qtd_compra", 0)), is_qtd=True)
+            qtd_v = _pnum(row.get(col_map_profit.get("qtd_venda", 0)), is_qtd=True)
+            qtd = qtd_v if is_venda else qtd_c
+            if qtd <= 0:
+                qtd = max(qtd_c, qtd_v, 100.0)
 
-        recebido = _pnum(row.get(col_map.get("preco_recebido", ""), 0))
-        pago = _pnum(row.get(col_map.get("preco_pago", ""), 0))
-        raw_pct = row.get(col_map.get("resultado_pct", ""), 0)
-        res_pct = _pnum(raw_pct)
-        if raw_pct is not None and not str(raw_pct).strip().endswith("%"):
-            if abs(res_pct) > 0 and abs(res_pct) <= 30.0:
-                res_pct = round(res_pct * 100, 1)
+            p_compra = _pnum(row.get(col_map_profit.get("preco_compra", 0)))
+            p_venda = _pnum(row.get(col_map_profit.get("preco_venda", 0)))
+            p_mercado = _pnum(row.get(col_map_profit.get("preco_mercado", 0)))
 
-        status_raw = str(row.get(col_map.get("status", ""), "")).strip().lower()
-        if "abert" in status_raw:
-            status = "aberta"
-        elif "encerr" in status_raw or "fechad" in status_raw or "rolad" in status_raw or "virad" in status_raw:
-            status = "encerrada"
-        elif dt_fim and dt_fim.lower() not in ("", "nan", "none", "trava"):
-            status = "encerrada"
-        else:
-            status = "aberta"
+            if is_venda:
+                preco_pago = p_venda
+                preco_recebido = p_compra if not is_aberta else 0.0
+                preco_atual = p_mercado if is_aberta else p_compra
+                alocado = round(qtd * p_venda, 2)
+                final = round(qtd * p_compra, 2) if not is_aberta else 0.0
+            else:
+                preco_pago = p_compra
+                preco_recebido = p_venda if not is_aberta else 0.0
+                preco_atual = p_mercado if is_aberta else p_venda
+                alocado = round(qtd * p_compra, 2)
+                final = round(qtd * p_venda, 2) if not is_aberta else 0.0
 
-        aloc_raw = row.get(col_map.get("valor_alocado", ""))
-        final_raw = row.get(col_map.get("valor_final", ""))
-        res_fin_raw = row.get(col_map.get("resultado_financeiro", ""))
+            raw_res_fin = row.get(col_map_profit.get("res_fin", 0))
+            raw_res_pct = row.get(col_map_profit.get("res_pct", 0))
 
-        alocado = _pnum(aloc_raw) if aloc_raw is not None and not pd.isna(aloc_raw) and str(aloc_raw).strip() != "" else 0.0
-        final = _pnum(final_raw) if final_raw is not None and not pd.isna(final_raw) and str(final_raw).strip() != "" else 0.0
-        
-        tem_res_fin = res_fin_raw is not None and not pd.isna(res_fin_raw) and str(res_fin_raw).strip() != ""
-        res_fin = _pnum(res_fin_raw) if tem_res_fin else 0.0
+            res_fin = _pnum(raw_res_fin) if not is_aberta else 0.0
+            res_pct = _pnum(raw_res_pct) if not is_aberta else 0.0
 
-        qtd = 100.0
-        if alocado > 0 and pago > 0:
-            qtd = round(alocado / pago)
-        elif pago > 0:
+            dias = _calcular_dias_operacao(dt_inicio, dt_fim if not is_aberta else None)
+            sucesso = "s" if res_fin > 0 else ("n" if not is_aberta else "")
+            obs = "Importado via Nelogica Profit"
+
+            existente = conexao.execute(
+                "SELECT id FROM opcoes_operacoes WHERE usuario_id = ? AND codigo = ? AND data_inicio = ?",
+                (int(usuario_id), codigo, dt_inicio)
+            ).fetchone()
+
+            if existente:
+                conexao.execute("""
+                    UPDATE opcoes_operacoes SET
+                        estrutura = ?, data_fim = ?, dias = ?, quantidade = ?,
+                        preco_pago = ?, preco_recebido = ?, preco_atual = ?, valor_alocado = ?,
+                        valor_final = ?, resultado_financeiro = ?, resultado_pct = ?,
+                        sucesso = ?, status = ?, observacoes = ?
+                    WHERE id = ?
+                """, (
+                    estrutura, dt_fim, dias, qtd, preco_pago, preco_recebido, preco_atual, alocado,
+                    final, res_fin, res_pct, sucesso, status, obs, int(existente[0])
+                ))
+                atualizadas += 1
+            else:
+                salvar_opcao_operacao(conexao, usuario_id, {
+                    "codigo": codigo,
+                    "ativo_subjacente": info["ativo_subjacente"],
+                    "estrutura": estrutura,
+                    "data_inicio": dt_inicio,
+                    "data_fim": dt_fim,
+                    "dias": dias,
+                    "quantidade": qtd,
+                    "preco_pago": preco_pago,
+                    "preco_recebido": preco_recebido,
+                    "preco_atual": preco_atual,
+                    "valor_alocado": alocado,
+                    "valor_final": final,
+                    "resultado_financeiro": res_fin,
+                    "resultado_pct": res_pct,
+                    "sucesso": sucesso,
+                    "status": status,
+                    "observacoes": obs,
+                })
+                importadas += 1
+    else:
+        # --- PARSER PLANILHA MODELO PADRÃO / NITRO ---
+        col_map = {}
+        colunas_lista = list(df_dados.columns)
+        for idx, col in enumerate(colunas_lista):
+            nc = _norm(col)
+            if any(k in nc for k in ["digo", "cod", "ticker", "opcao"]) and "codigo" not in col_map:
+                col_map["codigo"] = col
+            elif any(k in nc for k in ["estru", "estrat"]) and "estrutura" not in col_map:
+                col_map["estrutura"] = col
+            elif any(k in nc for k in ["inicio", "abert", "data ent"]) and "data_inicio" not in col_map:
+                col_map["data_inicio"] = col
+            elif any(k in nc for k in ["final", "fech", "fim", "saida", "data sai"]) and "data_fim" not in col_map:
+                col_map["data_fim"] = col
+            elif "dias" in nc and "dias" not in col_map:
+                col_map["dias"] = col
+            elif any(k in nc for k in ["receb", "saida", "venda"]) and "preco_recebido" not in col_map:
+                col_map["preco_recebido"] = col
+            elif any(k in nc for k in ["pago", "compra", "entrada"]) and "preco_pago" not in col_map:
+                col_map["preco_pago"] = col
+            elif "sucesso" in nc and "sucesso" not in col_map:
+                col_map["sucesso"] = col
+            elif "status" in nc and "status" not in col_map:
+                col_map["status"] = col
+            elif any(k in nc for k in ["aloc", "invest"]) and "valor_alocado" not in col_map:
+                col_map["valor_alocado"] = col
+            elif any(k in nc for k in ["fina", "total final", "resgate"]) and "valor_final" not in col_map:
+                col_map["valor_final"] = col
+            elif any(k in nc for k in ["obs", "coluna 1", "nota"]) and "observacoes" not in col_map:
+                col_map["observacoes"] = col
+
+        for idx, col in enumerate(colunas_lista):
+            nc = _norm(col)
+            if any(k in nc for k in ["resultado", "lucro", "preju", "rentab", "%"]):
+                if "%" in nc or "rentab" in nc:
+                    col_map["resultado_pct"] = col
+                elif "r$" in nc or "financeiro" in nc or "lucro" in nc:
+                    col_map["resultado_financeiro"] = col
+                elif idx <= 8 and "resultado_pct" not in col_map:
+                    col_map["resultado_pct"] = col
+                else:
+                    col_map["resultado_financeiro"] = col
+
+        for _, row in df_dados.iterrows():
+            cod_val = row.get(col_map.get("codigo", ""), "")
+            if pd.isna(cod_val) or not str(cod_val).strip() or "total" in str(cod_val).lower():
+                continue
+            codigo = str(cod_val).strip().upper()
+            if len(codigo) < 4:
+                continue
+
+            info = identificar_opcao(codigo)
+            estrutura = str(row.get(col_map.get("estrutura", ""), f"COMPRA DE {info['tipo_opcao']}")).strip().upper()
+            if not estrutura or estrutura == "NAN":
+                estrutura = f"COMPRA DE {info['tipo_opcao']}"
+
+            dt_inicio = _extrair_data(row.get(col_map.get("data_inicio", ""))) or agora()[:10]
+            dt_fim = _extrair_data(row.get(col_map.get("data_fim", "")))
+
+            dias_val = row.get(col_map.get("dias", ""), "")
+            dias = int(_pnum(dias_val)) if dias_val and str(dias_val).strip().isdigit() else _calcular_dias_operacao(dt_inicio, dt_fim)
+
+            recebido = _pnum(row.get(col_map.get("preco_recebido", ""), 0))
+            pago = _pnum(row.get(col_map.get("preco_pago", ""), 0))
+            raw_pct = row.get(col_map.get("resultado_pct", ""), 0)
+            res_pct = _pnum(raw_pct)
+            if raw_pct is not None and not str(raw_pct).strip().endswith("%"):
+                if abs(res_pct) > 0 and abs(res_pct) <= 30.0:
+                    res_pct = round(res_pct * 100, 1)
+
+            status_raw = str(row.get(col_map.get("status", ""), "")).strip().lower()
+            if "abert" in status_raw:
+                status = "aberta"
+            elif "encerr" in status_raw or "fechad" in status_raw or "rolad" in status_raw or "virad" in status_raw:
+                status = "encerrada"
+            elif dt_fim and dt_fim.lower() not in ("", "nan", "none", "trava"):
+                status = "encerrada"
+            else:
+                status = "aberta"
+
+            aloc_raw = row.get(col_map.get("valor_alocado", ""))
+            final_raw = row.get(col_map.get("valor_final", ""))
+            res_fin_raw = row.get(col_map.get("resultado_financeiro", ""))
+
+            alocado = _pnum(aloc_raw) if aloc_raw is not None and not pd.isna(aloc_raw) and str(aloc_raw).strip() != "" else 0.0
+            final = _pnum(final_raw) if final_raw is not None and not pd.isna(final_raw) and str(final_raw).strip() != "" else 0.0
+            
+            tem_res_fin = res_fin_raw is not None and not pd.isna(res_fin_raw) and str(res_fin_raw).strip() != ""
+            res_fin = _pnum(res_fin_raw) if tem_res_fin else 0.0
+
             qtd = 100.0
-            alocado = round(qtd * pago, 2)
+            if alocado > 0 and pago > 0:
+                qtd = round(alocado / pago)
+            elif pago > 0:
+                qtd = 100.0
+                alocado = round(qtd * pago, 2)
 
-        # Autocompletar métricas faltantes apenas se a planilha não forneceu a coluna/valor
-        if status == "encerrada":
-            if res_pct == 0.0 and pago > 0 and recebido > 0:
-                res_pct = round(((recebido - pago) / pago) * 100, 1)
-            if final == 0.0 and qtd > 0 and recebido > 0:
-                final = round(qtd * recebido, 2)
-            if not tem_res_fin and final > 0 and alocado > 0:
-                res_fin = round(final - alocado, 2)
-        elif not tem_res_fin:
-            res_fin = 0.0
-            final = 0.0
+            if status == "encerrada":
+                if res_pct == 0.0 and pago > 0 and recebido > 0:
+                    res_pct = round(((recebido - pago) / pago) * 100, 1)
+                if final == 0.0 and qtd > 0 and recebido > 0:
+                    final = round(qtd * recebido, 2)
+                if not tem_res_fin and final > 0 and alocado > 0:
+                    res_fin = round(final - alocado, 2)
+            elif not tem_res_fin:
+                res_fin = 0.0
+                final = 0.0
 
-        sucesso = str(row.get(col_map.get("sucesso", ""), "")).strip().lower()
-        if not sucesso or sucesso not in ("s", "n"):
-            sucesso = "s" if (res_fin > 0 or res_pct > 0) else ("n" if status != "aberta" else "")
+            sucesso = str(row.get(col_map.get("sucesso", ""), "")).strip().lower()
+            if not sucesso or sucesso not in ("s", "n"):
+                sucesso = "s" if (res_fin > 0 or res_pct > 0) else ("n" if status != "aberta" else "")
 
-        obs = str(row.get(col_map.get("observacoes", ""), "")).strip()
-        if obs.lower() in ("nan", "none"):
-            obs = ""
+            obs = str(row.get(col_map.get("observacoes", ""), "")).strip()
+            if obs.lower() in ("nan", "none"):
+                obs = ""
 
-        existente = conexao.execute(
-            "SELECT id FROM opcoes_operacoes WHERE usuario_id = ? AND codigo = ? AND data_inicio = ?",
-            (int(usuario_id), codigo, dt_inicio)
-        ).fetchone()
+            existente = conexao.execute(
+                "SELECT id FROM opcoes_operacoes WHERE usuario_id = ? AND codigo = ? AND data_inicio = ?",
+                (int(usuario_id), codigo, dt_inicio)
+            ).fetchone()
 
-        if existente:
-            conexao.execute("""
-                UPDATE opcoes_operacoes SET
-                    estrutura = ?, data_fim = ?, dias = ?, quantidade = ?,
-                    preco_pago = ?, preco_recebido = ?, valor_alocado = ?,
-                    valor_final = ?, resultado_financeiro = ?, resultado_pct = ?,
-                    sucesso = ?, status = ?, observacoes = ?
-                WHERE id = ?
-            """, (
-                estrutura, dt_fim, dias, qtd, pago, recebido, alocado,
-                final, res_fin, res_pct, sucesso, status, obs, int(existente[0])
-            ))
-            atualizadas += 1
-        else:
-            salvar_opcao_operacao(conexao, usuario_id, {
-                "codigo": codigo,
-                "estrutura": estrutura,
-                "data_inicio": dt_inicio,
-                "data_fim": dt_fim,
-                "dias": dias,
-                "quantidade": qtd,
-                "preco_pago": pago,
-                "preco_recebido": recebido,
-                "preco_atual": pago if status == "aberta" else 0.0,
-                "valor_alocado": alocado,
-                "valor_final": final,
-                "resultado_financeiro": res_fin,
-                "resultado_pct": res_pct,
-                "sucesso": sucesso,
-                "status": status,
-                "observacoes": obs,
-            })
-            importadas += 1
+            if existente:
+                conexao.execute("""
+                    UPDATE opcoes_operacoes SET
+                        estrutura = ?, data_fim = ?, dias = ?, quantidade = ?,
+                        preco_pago = ?, preco_recebido = ?, valor_alocado = ?,
+                        valor_final = ?, resultado_financeiro = ?, resultado_pct = ?,
+                        sucesso = ?, status = ?, observacoes = ?
+                    WHERE id = ?
+                """, (
+                    estrutura, dt_fim, dias, qtd, pago, recebido, alocado,
+                    final, res_fin, res_pct, sucesso, status, obs, int(existente[0])
+                ))
+                atualizadas += 1
+            else:
+                salvar_opcao_operacao(conexao, usuario_id, {
+                    "codigo": codigo,
+                    "ativo_subjacente": info["ativo_subjacente"],
+                    "estrutura": estrutura,
+                    "data_inicio": dt_inicio,
+                    "data_fim": dt_fim,
+                    "dias": dias,
+                    "quantidade": qtd,
+                    "preco_pago": pago,
+                    "preco_recebido": recebido,
+                    "preco_atual": pago if status == "aberta" else 0.0,
+                    "valor_alocado": alocado,
+                    "valor_final": final,
+                    "resultado_financeiro": res_fin,
+                    "resultado_pct": res_pct,
+                    "sucesso": sucesso,
+                    "status": status,
+                    "observacoes": obs,
+                })
+                importadas += 1
 
     conexao.commit()
-    return {"importadas": importadas, "atualizadas": atualizadas, "total": importadas + atualizadas}
+    return {"importadas": importadas, "atualizadas": atualizadas, "is_profit": is_profit, "total": importadas + atualizadas}
 
 
 def gerar_modelo_planilha_opcoes() -> bytes:

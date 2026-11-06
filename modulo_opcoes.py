@@ -1202,24 +1202,24 @@ def pagina_diario_opcoes() -> None:
 
     # --- ABA 5: IMPORTAR PLANILHA ---
     with aba_importar:
-        st.markdown("#### Importar Planilha de Operações (Excel ou CSV)")
+        st.markdown("#### Importar Operações (Nelogica Profit ou Planilha Modelo)")
         st.write(
-            "Anexe sua planilha Nitro ou arquivo de controle. O sistema mapeia automaticamente "
-            "as colunas de **Código**, **Estrutura**, **Datas**, **Preço Pago**, **Preço Recebido**, "
-            "**Quantidade** e **Status**, e calcula automaticamente dias e resultados ausentes."
+            "Anexe a **exportação direta do Nelogica Profit** (CSV ou Excel) ou sua **planilha de controle/Nitro**. "
+            "O sistema detecta o formato automaticamente, mapeia as pernas de **CALL** e **PUT**, "
+            "separa posições abertas e encerradas e calcula os rendimentos de cada trade."
         )
 
         col_up, col_mod = st.columns([2, 1.2])
         with col_up:
             arquivo_subido = st.file_uploader(
-                "Arraste ou selecione sua planilha",
+                "Arraste ou selecione seu arquivo",
                 type=["xlsx", "xls", "csv"],
                 key="upload_planilha_opcoes",
-                help="Suporta planilhas padrão com colunas: Código, Estrutura, Data Início, Pago, Recebido, etc."
+                help="Suporta exportação do Profit (Relatório de Performance > Operações) e planilha modelo padrão (.xlsx/.csv)"
             )
         with col_mod:
             st.markdown("**Modelo padrão:**")
-            st.caption("Baixe nossa planilha modelo pré-configurada para preencher seus trades:")
+            st.caption("Baixe nossa planilha modelo pré-configurada se preferir preencher manualmente:")
             st.download_button(
                 "⬇️ Baixar Modelo Excel (.xlsx)",
                 data=bd.gerar_modelo_planilha_opcoes(),
@@ -1230,14 +1230,15 @@ def pagina_diario_opcoes() -> None:
             )
 
         if arquivo_subido is not None:
-            if st.button("🚀 Processar e Importar Planilha", type="primary", use_container_width=True, icon=":material/upload_file:"):
+            if st.button("🚀 Processar e Importar Operações", type="primary", use_container_width=True, icon=":material/upload_file:"):
                 try:
                     with st.spinner("Processando e cadastrando operações..."):
                         bytes_arquivo = arquivo_subido.getvalue()
                         res = bd.importar_opcoes_arquivo(conexao, usuario_id, bytes_arquivo, arquivo_subido.name)
+                        origem_txt = "do Nelogica Profit" if res.get("is_profit") else "da planilha modelo"
                         st.success(
-                            f"Importação concluída com sucesso! **{res['importadas']}** nova(s) operação(ões) inserida(s) "
-                            f"e **{res['atualizadas']}** atualizada(s). Dias e resultados faltantes foram calculados automaticamente."
+                            f"✅ Importação {origem_txt} concluída com sucesso! **{res['importadas']}** nova(s) operação(ões) inserida(s) "
+                            f"e **{res['atualizadas']}** atualizada(s). Posições abertas e encerradas organizadas automaticamente."
                         )
                         st.rerun()
                 except Exception as e:
