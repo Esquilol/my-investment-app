@@ -1741,6 +1741,125 @@ def encerrar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operac
     conexao.commit()
 
 
+def realizar_parcial_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_id: int,
+                                   quantidade_encerrar: float, preco_saida: float, data_fim: str,
+                                   observacoes: str = "") -> None:
+    """
+    Realiza encerramento parcial de uma operação de opções (diminuição de mão / resgate de lucro).
+    - Atualiza a operação original aberta com a quantidade remanescente e valor alocado proporcional.
+    - Insere um novo registro com status 'encerrada' contendo os contratos realizados, lucro apurado e histórico.
+    """
+    cur = conexao.execute("SELECT * FROM opcoes_operacoes WHERE id = ? AND usuario_id = ?",
+                          (int(operacao_id), int(usuario_id)))
+    op = cur.fetchone()
+    if not op:
+        raise ValueError("Operação não encontrada.")
+    colunas = [desc[0] for desc in cur.description]
+    item = dict(zip(colunas, op))
+
+    qtd_total = float(item["quantidade"])
+    if quantidade_encerrar >= qtd_total:
+        encerrar_opcao_operacao(conexao, usuario_id, operacao_id, data_fim, preco_saida, observacoes)
+        return
+
+    qtd_restante = qtd_total - quantidade_encerrar
+    preco_pago = float(item["preco_pago"])
+    estrutura = item.get("estrutura", "COMPRA DE CALL")
+    dt_fim = _padronizar_data_str(data_fim)
+    dias = _calcular_dias_operacao(item["data_inicio"], dt_fim)
+
+    # 1. Perna realizada (encerrada)
+    alocado_encerrado = quantidade_encerrar * preco_pago
+    valor_final_encerrado = quantidade_encerrar * preco_saida
+
+    if "VENDA" in str(estrutura).upper():
+        res_fin = alocado_encerrado - valor_final_encerrado
+        p_base = float(item.get("preco_recebido") or preco_pago)
+        res_pct = ((p_base - preco_saida) / p_base * 100) if p_base > 0 else 0.0
+    else:
+        res_fin = valor_final_encerrado - alocado_encerrado
+        res_pct = ((preco_saida - preco_pago) / preco_pago * 100) if preco_pago > 0 else 0.0
+
+    sucesso = "s" if res_fin > 0 else "n"
+    obs_enc = f"Realização parcial de {int(quantidade_encerrar):,} un ({res_pct:+.1f}%). Restam {int(qtd_restante):,} un abertas."
+    if observacoes:
+        obs_enc = f"{obs_enc} | {observacoes}"
+
+    dados_novo = dict(item)
+    dados_novo.pop("id", None)
+    dados_novo.update({
+        "quantidade": quantidade_encerrar,
+        "preco_recebido": preco_saida,
+        "valor_alocado": alocado_encerrado,
+        "valor_final": valor_final_encerrado,
+        "resultado_financeiro": res_fin,
+        "resultado_pct": res_pct,
+        "sucesso": sucesso,
+        "status": "encerrada",
+        "data_fim": dt_fim,
+        "dias": dias,
+        "observacoes": obs_enc,
+    })
+    salvar_opcao_operacao(conexao, usuario_id, dados_novo)
+
+    # 2. Perna remanescente (permanece aberta)
+    novo_alocado_aberto = qtd_restante * preco_pago
+    obs_orig = (item["observacoes"] or "").strip()
+    obs_parcial_info = f"Realização parcial de {int(quantidade_encerrar):,} un em {dt_fim} a R$ {preco_saida:.2f}."
+    obs_orig = f"{obs_orig} | {obs_parcial_info}".strip(" |")
+
+    conexao.execute("""
+        UPDATE opcoes_operacoes SET
+            quantidade = ?,
+            valor_alocado = ?,
+            observacoes = ?
+        WHERE id = ? AND usuario_id = ?
+    """, (qtd_restante, novo_alocado_aberto, obs_orig, int(operacao_id), int(usuario_id)))
+    conexao.commit()
+
+
+def aumentar_posicao_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_id: int,
+                                    quantidade_adicional: float, preco_adicional: float,
+                                    data_compra: str = "", observacoes: str = "") -> None:
+    """
+    Aumenta a posição em aberto (aumento de mão / compra de mais cotas).
+    Recalcula a quantidade total, o novo preço médio ponderado e o novo capital alocado.
+    """
+    cur = conexao.execute("SELECT * FROM opcoes_operacoes WHERE id = ? AND usuario_id = ?",
+                          (int(operacao_id), int(usuario_id)))
+    op = cur.fetchone()
+    if not op:
+        raise ValueError("Operação não encontrada.")
+    colunas = [desc[0] for desc in cur.description]
+    item = dict(zip(colunas, op))
+
+    qtd_antiga = float(item["quantidade"])
+    preco_antigo = float(item["preco_pago"])
+    alocado_antigo = float(item["valor_alocado"])
+
+    alocado_novo_aporte = quantidade_adicional * preco_adicional
+    qtd_total = qtd_antiga + quantidade_adicional
+    alocado_total = alocado_antigo + alocado_novo_aporte
+    novo_pm = alocado_total / qtd_total if qtd_total > 0 else preco_antigo
+
+    dt_str = _padronizar_data_str(data_compra) if data_compra else date.today().strftime("%d/%m/%Y")
+    obs = (item["observacoes"] or "").strip()
+    obs_adic = f"Aumento de mão: +{int(quantidade_adicional):,} un a R$ {preco_adicional:.2f} em {dt_str} (novo PM: R$ {novo_pm:.2f})."
+    if observacoes:
+        obs_adic = f"{obs_adic} | {observacoes}"
+    obs = f"{obs} | {obs_adic}".strip(" |")
+
+    conexao.execute("""
+        UPDATE opcoes_operacoes SET
+            quantidade = ?,
+            preco_pago = ?,
+            valor_alocado = ?,
+            observacoes = ?
+        WHERE id = ? AND usuario_id = ?
+    """, (qtd_total, novo_pm, alocado_total, obs, int(operacao_id), int(usuario_id)))
+    conexao.commit()
+
+
 def rolar_opcao_operacao(conexao: sqlite3.Connection, usuario_id: int, operacao_id: int,
                         data_rolagem: str, preco_fechamento: float, novo_codigo: str,
                         novo_preco_pago: float, nova_quantidade: float, nova_estrutura: str | None = None,

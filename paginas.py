@@ -1185,10 +1185,11 @@ def _secao_assistente_fechamento_mes() -> None:
 
     c_cab1, c_cab2 = st.columns([3, 1])
     with c_cab1:
-        st.caption("O scanner vasculha suas 27 posições abertas e aponta onde vale a pena fechar hoje para economizar ou isentar imposto.")
+        st.caption("O scanner vasculha suas posições em custódia em tempo real e aponta onde vale a pena fechar para economizar ou isentar imposto.")
     with c_cab2:
-        if st.button("🔄 Escanear Carteira", key="btn_rescan_tax", type="secondary", use_container_width=True):
+        if st.button("🔍 Escanear Carteira & Atualizar", key="btn_rescan_tax", type="primary", use_container_width=True):
             st.toast("Varredura fiscal da carteira atualizada com sucesso!", icon="🔍")
+            st.rerun()
 
     # Varredura inteligente das posições em custódia
     detalhes = detalhar_posicoes_custodia(posicao) if posicao is not None and not posicao.empty else pd.DataFrame()
@@ -1815,13 +1816,6 @@ def pagina_otimizacao() -> None:
     if not tem_dados or tabela_ir.empty:
         tema.vazio("Sem dados apurados. Importe suas notas de corretagem na página **Upload de Notas**.")
         return
-
-    c_top1, c_top2 = st.columns([3, 1])
-    with c_top1:
-        st.caption("Varredura em tempo real da carteira para aproveitar isenções fiscais legais e abater o DARF devido.")
-    with c_top2:
-        if st.button("🔄 Atualizar Análise", key="btn_atualizar_scanner_pg", type="primary", use_container_width=True):
-            st.rerun()
 
     # 1. Scanner de Fechamento de Posições
     _secao_assistente_fechamento_mes()

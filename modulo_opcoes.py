@@ -37,6 +37,32 @@ def _p_data(val: str | None) -> str:
         return str(val)
 
 
+def _extrair_iso_data(val: str | None) -> str | None:
+    """Extrai string ISO YYYY-MM-DD para comparação precisa de datas."""
+    if not val:
+        return None
+    s = str(val).strip()
+    if "-" in s and len(s) >= 10:
+        return s[:10]
+    if "/" in s:
+        partes = s.split("/")
+        if len(partes) == 3:
+            d, m, y = partes[0].zfill(2), partes[1].zfill(2), partes[2]
+            if len(y) == 4:
+                return f"{y}-{m}-{d}"
+    return None
+
+
+def _calc_rend_op(op: dict) -> float:
+    """Calcula rendimento percentual de uma operação para ordenação."""
+    p_pago = float(op.get("preco_pago") or 0.0)
+    p_atual = float(op.get("preco_atual") or p_pago)
+    if "VENDA" in str(op.get("estrutura", "")).upper():
+        p_rec = float(op.get("preco_recebido") or p_pago)
+        return ((p_rec - p_atual) / p_rec * 100) if p_rec > 0 else 0.0
+    return ((p_atual - p_pago) / p_pago * 100) if p_pago > 0 else 0.0
+
+
 # ---------------------------------------------------------------------------
 # Estilos e Renderizadores de Tabelas Web Nativas (Layout Slim com Rolagem Fluida)
 # ---------------------------------------------------------------------------
@@ -198,9 +224,17 @@ def _render_html_tabela_abertas(linhas: list[dict], ocultar: bool = False) -> st
         )
         badge_radar = row.get("badge_radar", '<span class="ft-radar-ind">⚪ Em Análise</span>')
         rot_pr = "Rec:" if "VENDA" in str(row.get("estrutura", "")).upper() else "Pago:"
+
+        destaque = row.get("destaque_dia")
+        tr_style = ""
+        tag_destaque = ""
+        if destaque == "verde":
+            tr_style = ' style="background-color: #ecfdf5 !important; border-left: 4px solid #10b981;"'
+            tag_destaque = ' <span style="background: #dcfce7; color: #15803d; border: 1px solid #86efac; padding: 1px 5px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; text-transform: uppercase;">🟢 Nova</span>'
+
         parts.append(
-            "<tr>"
-            f'<td><div><span class="ft-ticker">{row["codigo"]}</span></div>'
+            f"<tr{tr_style}>"
+            f'<td><div><span class="ft-ticker">{row["codigo"]}</span>{tag_destaque}</div>'
             f'<div class="ft-sub">{_badge_est(row["estrutura"])} <span>{row["ativo"]}</span></div></td>'
             f'<td><div>{row["inicio"]}</div>'
             f'<div class="ft-sub">{row["dias"]} dias &bull; {row["qtd"]:,} un</div></td>'
@@ -236,9 +270,17 @@ def _render_html_tabela_encerradas(linhas: list[dict], ocultar: bool = False) ->
         st_badge = f'<span class="ft-status-{row["status"].lower()}">{row["status"].capitalize()}</span>'
         rot_e = "Rec:" if "VENDA" in str(row.get("estrutura", "")).upper() else "Pago:"
         rot_s = "Recompra:" if "VENDA" in str(row.get("estrutura", "")).upper() else "Saída:"
+
+        destaque = row.get("destaque_dia")
+        tr_style = ""
+        tag_destaque = ""
+        if destaque == "vermelho":
+            tr_style = ' style="background-color: #fef2f2 !important; border-left: 4px solid #ef4444;"'
+            tag_destaque = ' <span style="background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; padding: 1px 5px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; text-transform: uppercase;">🔴 Recente</span>'
+
         parts.append(
-            "<tr>"
-            f'<td><div><span class="ft-ticker">{row["codigo"]}</span></div>'
+            f"<tr{tr_style}>"
+            f'<td><div><span class="ft-ticker">{row["codigo"]}</span>{tag_destaque}</div>'
             f'<div class="ft-sub">{_badge_est(row["estrutura"])} <span>{row["ativo"]}</span></div></td>'
             f'<td><div>{row["inicio"]} &rarr; {row["fim"]}</div>'
             f'<div class="ft-sub">{row["dias"]} dias &bull; {row["qtd"]:,} un</div></td>'
@@ -283,9 +325,19 @@ def _render_html_tabela_completa(linhas: list[dict], ocultar: bool = False) -> s
             final_str = _moeda_priv(row["final"], ocultar)
             lucro_str = _fmt_moeda_delta_priv(lucro_val, ocultar)
 
+        destaque = row.get("destaque_dia")
+        tr_style = ""
+        tag_destaque = ""
+        if destaque == "verde":
+            tr_style = ' style="background-color: #ecfdf5 !important; border-left: 4px solid #10b981;"'
+            tag_destaque = ' <span style="background: #dcfce7; color: #15803d; border: 1px solid #86efac; padding: 1px 5px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; text-transform: uppercase;">🟢 Nova</span>'
+        elif destaque == "vermelho":
+            tr_style = ' style="background-color: #fef2f2 !important; border-left: 4px solid #ef4444;"'
+            tag_destaque = ' <span style="background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; padding: 1px 5px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; text-transform: uppercase;">🔴 Recente</span>'
+
         parts.append(
-            "<tr>"
-            f'<td><div><span class="ft-ticker">{row["codigo"]}</span></div>'
+            f"<tr{tr_style}>"
+            f'<td><div><span class="ft-ticker">{row["codigo"]}</span>{tag_destaque}</div>'
             f'<div class="ft-sub">{_badge_est(row["estrutura"])} <span>{row["ativo"]}</span></div></td>'
             f'<td><div>{row["inicio"]} &rarr; {fim_txt}</div>'
             f'<div class="ft-sub">{row["dias"]} dias &bull; {row["qtd"]:,} un</div></td>'
@@ -319,9 +371,9 @@ def modal_rolar_opcao(op: dict) -> None:
 
     st.markdown(f"### Rolagem da Opção **{codigo}** ({op.get('estrutura', 'COMPRA')})")
     st.info(
-        "💡 **Critério de Rolagem**: Ao bater a meta de lucro (ex: +100%), o operador "
-        "guarda **~50% do valor final no bolso** (lucro garantido) e reinveste os outros **50% "
-        "na nova opção**, buscando **boa liquidez** e preço de exercício **mais próximo da linha do dinheiro (ATM)**."
+        "💡 **Critério de Rolagem**: O operador realiza o lucro da posição atual, reinveste "
+        "parte na nova opção (buscando opções líquidas próximas do dinheiro ATM) e preserva "
+        "o restante garantido no bolso."
     )
 
     c1, c2 = st.columns(2)
@@ -340,39 +392,15 @@ def modal_rolar_opcao(op: dict) -> None:
         )
 
     valor_final = quantidade * preco_saida
-    if "VENDA" in op.get("estrutura", ""):
+    if "VENDA" in str(op.get("estrutura", "")).upper():
         lucro_r = alocado - valor_final
-        lucro_pct = ((op["preco_recebido"] - preco_saida) / op["preco_recebido"] * 100) if op.get("preco_recebido", 0) > 0 else 0.0
+        p_base = float(op.get("preco_recebido") or preco_pago)
+        lucro_pct = ((p_base - preco_saida) / p_base * 100) if p_base > 0 else 0.0
     else:
         lucro_r = valor_final - alocado
         lucro_pct = ((preco_saida - preco_pago) / preco_pago * 100) if preco_pago > 0 else 0.0
 
-    metade_bolso = valor_final * 0.50
-    metade_reinvestir = valor_final * 0.50
-
-    # Cartões de resumo responsivos (sem truncamento por ellipsis)
-    st.markdown(f"""
-    <div style="display: flex; gap: 10px; margin: 15px 0;">
-        <div style="flex: 1; min-width: 0; background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 12px; text-align: center;">
-            <div style="font-size: 0.72rem; color: #64748b; font-weight: 700; text-transform: uppercase;">Total Obtido</div>
-            <div style="font-size: clamp(0.95rem, 2vw, 1.2rem); font-weight: 700; color: #0f172a; margin: 4px 0; white-space: nowrap;">{_moeda(valor_final)}</div>
-            <div style="font-size: 0.75rem; color: #16a34a; font-weight: 700;">{lucro_pct:+.1f}%</div>
-        </div>
-        <div style="flex: 1; min-width: 0; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; padding: 12px; text-align: center;">
-            <div style="font-size: 0.72rem; color: #15803d; font-weight: 700; text-transform: uppercase;">💰 50% no Bolso</div>
-            <div style="font-size: clamp(0.95rem, 2vw, 1.2rem); font-weight: 700; color: #166534; margin: 4px 0; white-space: nowrap;">{_moeda(metade_bolso)}</div>
-            <div style="font-size: 0.75rem; color: #15803d; font-weight: 600;">Lucro Garantido</div>
-        </div>
-        <div style="flex: 1; min-width: 0; background: #eff6ff; border: 1.5px solid #93c5fd; border-radius: 8px; padding: 12px; text-align: center;">
-            <div style="font-size: 0.72rem; color: #1d4ed8; font-weight: 700; text-transform: uppercase;">🚀 50% Reinvestir</div>
-            <div style="font-size: clamp(0.95rem, 2vw, 1.2rem); font-weight: 700; color: #1e40af; margin: 4px 0; white-space: nowrap;">{_moeda(metade_reinvestir)}</div>
-            <div style="font-size: 0.75rem; color: #1d4ed8; font-weight: 600;">Nova Perna</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("#### Nova Opção (Perna Futura)")
-
+    st.markdown("#### Configurar Nova Opção (Perna Futura)")
     nc1, nc2, nc3 = st.columns(3)
     with nc1:
         novo_codigo = st.text_input(
@@ -392,20 +420,46 @@ def modal_rolar_opcao(op: dict) -> None:
             key="modal_rol_novo_preco"
         )
     with nc3:
-        sugestao_qtd = max(100.0, round((metade_reinvestir / novo_preco) / 100) * 100) if novo_preco > 0 else 100.0
+        alvo_sugerido_50 = valor_final * 0.50
+        sugestao_qtd = max(100.0, round((alvo_sugerido_50 / novo_preco) / 100) * 100) if novo_preco > 0 else 100.0
         nova_qtd = st.number_input(
             "Quantidade",
             min_value=1.0,
             value=float(sugestao_qtd),
             step=100.0,
-            help=f"Calculado para aproximar do alvo de {_moeda(metade_reinvestir)}",
             key="modal_rol_nova_qtd"
         )
 
+    # Recálculo dinâmico e realista da proporção bolso vs reinvestido
     novo_alocado_calc = nova_qtd * novo_preco
-    st.caption(f"Valor a alocar na nova opção: **{_moeda(novo_alocado_calc)}**")
+    bolso_real = max(0.0, valor_final - novo_alocado_calc)
+    pct_reinvestido = (novo_alocado_calc / valor_final * 100) if valor_final > 0 else 0.0
+    pct_bolso = (bolso_real / valor_final * 100) if valor_final > 0 else 0.0
 
-    obs = st.text_input("Observações", value="Rolagem com preservação de 50% de lucro.", key="modal_rol_obs")
+    st.markdown(f"""
+    <div style="display: flex; gap: 10px; margin: 15px 0;">
+        <div style="flex: 1; min-width: 0; background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 12px; text-align: center;">
+            <div style="font-size: 0.72rem; color: #64748b; font-weight: 700; text-transform: uppercase;">Total Obtido da Saída</div>
+            <div style="font-size: clamp(0.95rem, 2vw, 1.2rem); font-weight: 700; color: #0f172a; margin: 4px 0; white-space: nowrap;">{_moeda(valor_final)}</div>
+            <div style="font-size: 0.75rem; color: {'#16a34a' if lucro_r >= 0 else '#dc2626'}; font-weight: 700;">{lucro_pct:+.1f}% ({_moeda(lucro_r)})</div>
+        </div>
+        <div style="flex: 1; min-width: 0; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; padding: 12px; text-align: center;">
+            <div style="font-size: 0.72rem; color: #15803d; font-weight: 700; text-transform: uppercase;">💰 {pct_bolso:.1f}% no Bolso</div>
+            <div style="font-size: clamp(0.95rem, 2vw, 1.2rem); font-weight: 700; color: #166534; margin: 4px 0; white-space: nowrap;">{_moeda(bolso_real)}</div>
+            <div style="font-size: 0.75rem; color: #15803d; font-weight: 600;">Caixa Livre Garantido</div>
+        </div>
+        <div style="flex: 1; min-width: 0; background: #eff6ff; border: 1.5px solid #93c5fd; border-radius: 8px; padding: 12px; text-align: center;">
+            <div style="font-size: 0.72rem; color: #1d4ed8; font-weight: 700; text-transform: uppercase;">🚀 {pct_reinvestido:.1f}% Reinvestido</div>
+            <div style="font-size: clamp(0.95rem, 2vw, 1.2rem); font-weight: 700; color: #1e40af; margin: 4px 0; white-space: nowrap;">{_moeda(novo_alocado_calc)}</div>
+            <div style="font-size: 0.75rem; color: #1d4ed8; font-weight: 600;">Nova Opção ({nova_qtd:,.0f} un)</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if novo_alocado_calc > valor_final:
+        st.warning(f"⚠️ O capital reinvestido ({_moeda(novo_alocado_calc)}) é maior que o valor total obtido na saída ({_moeda(valor_final)}). Será necessário um aporte de {_moeda(novo_alocado_calc - valor_final)}.")
+
+    obs = st.text_input("Observações", value=f"Rolagem: {_moeda(bolso_real)} no bolso ({pct_bolso:.1f}%) e {_moeda(novo_alocado_calc)} reinvestido ({pct_reinvestido:.1f}%).", key="modal_rol_obs")
 
     if st.button("Confirmar Rolagem", type="primary", use_container_width=True, icon=":material/sync:"):
         if not novo_codigo:
@@ -422,7 +476,6 @@ def modal_rolar_opcao(op: dict) -> None:
             )
             st.success(f"Rolagem executada com sucesso! {codigo} encerrada e {novo_codigo} aberta.")
             st.rerun()
-
 
 @st.dialog("🔄 Virada de Tendência (CALL ⇄ PUT)")
 def modal_virar_tendencia(op: dict) -> None:
@@ -517,7 +570,7 @@ def modal_virar_tendencia(op: dict) -> None:
             st.rerun()
 
 
-@st.dialog("🏁 Encerrar Operação")
+@st.dialog("🏁 Encerrar Operação (Total ou Parcial / Diminuir Mão)")
 def modal_encerrar_opcao(op: dict) -> None:
     conexao = paginas.obter_conexao()
     usuario_id = int(st.session_state["usuario_id"])
@@ -528,7 +581,9 @@ def modal_encerrar_opcao(op: dict) -> None:
     quantidade = float(op["quantidade"])
     alocado = float(op["valor_alocado"])
 
-    st.markdown(f"### Encerrar Operação **{codigo}**")
+    st.markdown(f"### Encerrar Operação **{codigo}** ({op.get('estrutura', 'COMPRA')})")
+    st.caption(f"Posição atual: **{quantidade:,.0f} un** a **R$ {preco_pago:.2f}** | Cotação Atual: **R$ {preco_atual:.2f}**")
+
     c1, c2 = st.columns(2)
     with c1:
         dt_fim = st.date_input("Data de Encerramento", value=date.today(), key="modal_enc_dt")
@@ -543,30 +598,172 @@ def modal_encerrar_opcao(op: dict) -> None:
             key="modal_enc_preco_saida"
         )
 
-    valor_final = quantidade * preco_saida
-    if "VENDA" in op.get("estrutura", ""):
-        res_fin = alocado - valor_final
-        res_pct = ((op["preco_recebido"] - preco_saida) / op["preco_recebido"] * 100) if op.get("preco_recebido", 0) > 0 else 0.0
+    st.markdown("##### Quantidade a Encerrar")
+    col_q1, col_q2 = st.columns([2, 2])
+    with col_q1:
+        qtd_encerrar = st.number_input(
+            "Quantidade de Contratos",
+            min_value=1.0,
+            max_value=float(quantidade),
+            value=float(quantidade),
+            step=100.0,
+            help=f"Deixe {quantidade:,.0f} para encerrar tudo, ou reduza para realizar lucro parcial (diminuir mão).",
+            key="modal_enc_qtd"
+        )
+    with col_q2:
+        st.write("")
+        st.write("")
+        cp1, cp2, cp3 = st.columns(3)
+        if cp1.button("25%", key="btn_q25", use_container_width=True):
+            st.session_state["modal_enc_qtd"] = max(1.0, round(quantidade * 0.25))
+            st.rerun()
+        if cp2.button("50%", key="btn_q50", use_container_width=True):
+            st.session_state["modal_enc_qtd"] = max(1.0, round(quantidade * 0.50))
+            st.rerun()
+        if cp3.button("100%", key="btn_q100", use_container_width=True):
+            st.session_state["modal_enc_qtd"] = float(quantidade)
+            st.rerun()
+
+    is_parcial = qtd_encerrar < quantidade
+    alocado_fechado = qtd_encerrar * preco_pago
+    valor_final = qtd_encerrar * preco_saida
+
+    if "VENDA" in str(op.get("estrutura", "")).upper():
+        p_base = float(op.get("preco_recebido") or preco_pago)
+        res_fin = alocado_fechado - valor_final
+        res_pct = ((p_base - preco_saida) / p_base * 100) if p_base > 0 else 0.0
     else:
-        res_fin = valor_final - alocado
+        res_fin = valor_final - alocado_fechado
         res_pct = ((preco_saida - preco_pago) / preco_pago * 100) if preco_pago > 0 else 0.0
 
-    st.markdown(
-        f"**Resultado:** `{_moeda(res_fin)}` (`{res_pct:+.1f}%`) | "
-        f"**Valor Final:** `{_moeda(valor_final)}`"
-    )
+    if is_parcial:
+        qtd_reman = quantidade - qtd_encerrar
+        aloc_reman = qtd_reman * preco_pago
+        st.markdown(f"""
+        <div style="background: #eff6ff; border: 1.5px solid #93c5fd; border-radius: 8px; padding: 12px; margin: 12px 0;">
+            <div style="font-weight: 700; color: #1e40af; margin-bottom: 6px;">
+                ⚡ Realização Parcial de Lucro (Diminuição de Mão)
+            </div>
+            <div style="font-size: 0.88rem; color: #1e293b; line-height: 1.5;">
+                • <strong>{qtd_encerrar:,.0f} un</strong> serão encerradas com lucro de <strong style="color: {'#16a34a' if res_fin >= 0 else '#dc2626'};">{_moeda(res_fin)} ({res_pct:+.1f}%)</strong> (vai para o Histórico de Encerradas).<br>
+                • <strong>{qtd_reman:,.0f} un</strong> continuarão ativas em Posições Abertas (capital alocado restante: <strong>{_moeda(aloc_reman)}</strong>).
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style="background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; margin: 10px 0; display: flex; justify-content: space-between;">
+            <span>Resultado: <strong style="color: {'#16a34a' if res_fin >= 0 else '#dc2626'};">{_moeda(res_fin)} ({res_pct:+.1f}%)</strong></span>
+            <span>Valor Final Resgatado: <strong>{_moeda(valor_final)}</strong></span>
+        </div>
+        """, unsafe_allow_html=True)
+
     obs = st.text_input("Observações de Fechamento", value="", key="modal_enc_obs")
 
-    if st.button("Confirmar Encerramento", type="primary", use_container_width=True, icon=":material/check:"):
-        bd.encerrar_opcao_operacao(
-            conexao, usuario_id, op["id"],
-            data_fim=data_str,
-            preco_recebido=preco_saida,
-            observacoes=obs,
-        )
-        st.success(f"Operação {codigo} encerrada!")
+    btn_label = "Confirmar Realização Parcial" if is_parcial else "Confirmar Encerramento Total"
+    if st.button(btn_label, type="primary", use_container_width=True, icon=":material/check:"):
+        if is_parcial:
+            bd.realizar_parcial_opcao_operacao(
+                conexao, usuario_id, op["id"],
+                quantidade_encerrar=qtd_encerrar,
+                preco_saida=preco_saida,
+                data_fim=data_str,
+                observacoes=obs,
+            )
+            st.success(f"Realização parcial de {qtd_encerrar:,.0f} un concluída! Restam {quantidade - qtd_encerrar:,.0f} un abertas.")
+        else:
+            bd.encerrar_opcao_operacao(
+                conexao, usuario_id, op["id"],
+                data_fim=data_str,
+                preco_recebido=preco_saida,
+                observacoes=obs,
+            )
+            st.success(f"Operação {codigo} encerrada com sucesso!")
         st.rerun()
 
+
+@st.dialog("➕ Aumentar Posição / Comprar Mais")
+def modal_aumentar_posicao(op: dict) -> None:
+    conexao = paginas.obter_conexao()
+    usuario_id = int(st.session_state["usuario_id"])
+
+    codigo = op["codigo"]
+    preco_pago = float(op["preco_pago"])
+    preco_atual = float(op.get("preco_atual") or preco_pago)
+    quantidade = float(op["quantidade"])
+    alocado = float(op["valor_alocado"])
+
+    st.markdown(f"### Aumentar Mão na Opção **{codigo}** ({op.get('estrutura', 'COMPRA')})")
+    st.info(
+        "💡 **Aumento de Mão (Comprar Mais)**: Adiciona mais contratos a esta posição aberta. "
+        "O sistema recalcula automaticamente a quantidade total, o novo capital alocado e o "
+        "**novo preço médio ponderado (PM)** da operação."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        dt_compra = st.date_input("Data da Nova Compra", value=date.today(), key="modal_aum_dt")
+        data_str = dt_compra.strftime("%d/%m/%Y")
+    with c2:
+        qtd_adicional = st.number_input(
+            "Quantidade a Comprar",
+            min_value=1.0,
+            value=100.0,
+            step=100.0,
+            key="modal_aum_qtd"
+        )
+    with c3:
+        preco_adicional = st.number_input(
+            "Preço da Nova Compra (R$)",
+            min_value=0.01,
+            value=float(preco_atual if preco_atual > 0 else preco_pago),
+            step=0.01,
+            format="%.2f",
+            key="modal_aum_preco"
+        )
+
+    novo_aporte = qtd_adicional * preco_adicional
+    nova_qtd_total = quantidade + qtd_adicional
+    novo_alocado_total = alocado + novo_aporte
+    novo_pm = novo_alocado_total / nova_qtd_total if nova_qtd_total > 0 else preco_pago
+
+    st.markdown(f"""
+    <div style="background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; padding: 12px; margin: 12px 0;">
+        <div style="font-weight: 700; color: #166534; margin-bottom: 6px;">
+            📊 Recálculo da Posição Ponderada
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; text-align: center; margin-top: 8px;">
+            <div style="background: white; padding: 8px; border-radius: 6px; border: 1px solid #bbf7d0;">
+                <div style="font-size: 0.72rem; color: #64748b; font-weight: 600;">NOVA QUANTIDADE</div>
+                <div style="font-size: 1.05rem; font-weight: 700; color: #0f172a;">{nova_qtd_total:,.0f} un</div>
+                <div style="font-size: 0.72rem; color: #16a34a;">+{qtd_adicional:,.0f} adicionadas</div>
+            </div>
+            <div style="background: white; padding: 8px; border-radius: 6px; border: 1px solid #bbf7d0;">
+                <div style="font-size: 0.72rem; color: #64748b; font-weight: 600;">NOVO PREÇO MÉDIO (PM)</div>
+                <div style="font-size: 1.05rem; font-weight: 700; color: #0f172a;">{_moeda(novo_pm)}</div>
+                <div style="font-size: 0.72rem; color: #64748b;">Antes: {_moeda(preco_pago)}</div>
+            </div>
+            <div style="background: white; padding: 8px; border-radius: 6px; border: 1px solid #bbf7d0;">
+                <div style="font-size: 0.72rem; color: #64748b; font-weight: 600;">NOVO CAPITAL ALOCADO</div>
+                <div style="font-size: 1.05rem; font-weight: 700; color: #0f172a;">{_moeda(novo_alocado_total)}</div>
+                <div style="font-size: 0.72rem; color: #16a34a;">+{_moeda(novo_aporte)} novo aporte</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    obs = st.text_input("Observações", value=f"Aumento de mão: +{qtd_adicional:,.0f} un a R$ {preco_adicional:.2f}.", key="modal_aum_obs")
+
+    if st.button("Confirmar Aumento de Posição", type="primary", use_container_width=True, icon=":material/add:"):
+        bd.aumentar_posicao_opcao_operacao(
+            conexao, usuario_id, op["id"],
+            quantidade_adicional=qtd_adicional,
+            preco_adicional=preco_adicional,
+            data_compra=data_str,
+            observacoes=obs,
+        )
+        st.success(f"Posição de {codigo} aumentada para {nova_qtd_total:,.0f} un com novo PM de {_moeda(novo_pm)}!")
+        st.rerun()
 
 @st.dialog("✏️ Editar / Corrigir Operação")
 def modal_editar_operacao(op: dict) -> None:
@@ -733,7 +930,18 @@ def pagina_diario_opcoes() -> None:
     encerradas = [o for o in ops if o["status"] in ("encerrada", "rolada", "virada")]
     abertas = [o for o in ops if o["status"] == "aberta"]
 
-    # Ordenação das Posições Abertas: Ordem Alfabética por Código
+    # Identificar a data mais recente com movimentação na carteira para destaque dinâmico
+    datas_todas_ops = []
+    for o in ops:
+        d_ini = _extrair_iso_data(o.get("data_inicio"))
+        if d_ini:
+            datas_todas_ops.append(d_ini)
+        d_fim = _extrair_iso_data(o.get("data_fim"))
+        if d_fim:
+            datas_todas_ops.append(d_fim)
+    data_mais_recente_carteira = max(datas_todas_ops) if datas_todas_ops else None
+
+    # Ordenação inicial padrão das Posições Abertas: Ordem Alfabética por Código
     abertas.sort(key=lambda x: (str(x.get("codigo", "")).upper(), x.get("id", 0)))
 
     # Ordenação do Histórico de Encerradas: Fechamento mais recente para o mais antigo
@@ -907,13 +1115,13 @@ def pagina_diario_opcoes() -> None:
                     unsafe_allow_html=True
                 )
 
-            # Barra de Configuração e Filtros
-            col_cfg1, col_cfg2, col_cfg3 = st.columns([1.5, 1.5, 1.5])
+            # Barra de Configuração, Filtros e Ordenação
+            col_cfg1, col_cfg2, col_cfg3, col_cfg4 = st.columns([1.2, 1.2, 1.2, 1.6])
             with col_cfg1:
                 alerta_opcoes = [80.0, 100.0, 120.0, 150.0]
                 idx_sel = alerta_opcoes.index(gatilho_global) if gatilho_global in alerta_opcoes else 1
                 novo_gatilho = st.selectbox(
-                    "🎯 Alerta de Rolagem em %",
+                    "🎯 Alerta Rolagem",
                     alerta_opcoes,
                     index=idx_sel,
                     format_func=lambda x: f"Gatilho ≥ {x:.0f}%",
@@ -925,11 +1133,23 @@ def pagina_diario_opcoes() -> None:
 
             with col_cfg2:
                 ativos_ab = ["Todos"] + sorted(list({str(x.get("ativo_subjacente") or x["codigo"][:4]) for x in abertas}))
-                filtro_ab_ativo = st.selectbox("Filtrar por Ativo", ativos_ab, key="fil_ab_ativo")
+                filtro_ab_ativo = st.selectbox("Filtrar Ativo", ativos_ab, key="fil_ab_ativo")
 
             with col_cfg3:
                 est_ab = ["Todas"] + sorted(list({str(x.get("estrutura")) for x in abertas if x.get("estrutura")}))
-                filtro_ab_est = st.selectbox("Filtrar por Estrutura", est_ab, key="fil_ab_est")
+                filtro_ab_est = st.selectbox("Filtrar Estrutura", est_ab, key="fil_ab_est")
+
+            with col_cfg4:
+                opcoes_ordem = [
+                    "🔤 Ordem Alfabética (A-Z)",
+                    "📅 Início: Mais Recente Primeiro",
+                    "⏳ Início: Mais Antiga Primeiro",
+                    "💰 Maior Capital Alocado",
+                    "📈 Maior Rentabilidade (%)",
+                    "📉 Menor Rentabilidade (%)",
+                    "⏱️ Mais Dias em Aberto",
+                ]
+                ordem_sel = st.selectbox("Ordenar Posições por:", opcoes_ordem, index=0, key="sel_ordem_abertas")
 
             abertas_filtradas = abertas
             if filtro_ab_ativo != "Todos":
@@ -937,7 +1157,21 @@ def pagina_diario_opcoes() -> None:
             if filtro_ab_est != "Todas":
                 abertas_filtradas = [o for o in abertas_filtradas if o.get("estrutura") == filtro_ab_est]
 
-            abertas_filtradas.sort(key=lambda x: (str(x.get("codigo", "")).upper(), x.get("id", 0)))
+            # Ordenação dinâmica selecionada pelo usuário
+            if ordem_sel == "🔤 Ordem Alfabética (A-Z)":
+                abertas_filtradas.sort(key=lambda x: (str(x.get("codigo", "")).upper(), x.get("id", 0)))
+            elif ordem_sel == "📅 Início: Mais Recente Primeiro":
+                abertas_filtradas.sort(key=lambda x: (_extrair_iso_data(x.get("data_inicio")) or "", str(x.get("codigo", "")).upper()), reverse=True)
+            elif ordem_sel == "⏳ Início: Mais Antiga Primeiro":
+                abertas_filtradas.sort(key=lambda x: (_extrair_iso_data(x.get("data_inicio")) or "", str(x.get("codigo", "")).upper()))
+            elif ordem_sel == "💰 Maior Capital Alocado":
+                abertas_filtradas.sort(key=lambda x: (float(x.get("valor_alocado") or 0.0), str(x.get("codigo", "")).upper()), reverse=True)
+            elif ordem_sel == "📈 Maior Rentabilidade (%)":
+                abertas_filtradas.sort(key=lambda x: (_calc_rend_op(x), str(x.get("codigo", "")).upper()), reverse=True)
+            elif ordem_sel == "📉 Menor Rentabilidade (%)":
+                abertas_filtradas.sort(key=lambda x: (_calc_rend_op(x), str(x.get("codigo", "")).upper()))
+            elif ordem_sel == "⏱️ Mais Dias em Aberto":
+                abertas_filtradas.sort(key=lambda x: (int(x.get("dias") or bd._calcular_dias_operacao(x.get("data_inicio"))), str(x.get("codigo", "")).upper()), reverse=True)
 
             st.caption(f"Exibindo {len(abertas_filtradas)} de {len(abertas)} opções abertas.")
 
@@ -967,6 +1201,9 @@ def pagina_diario_opcoes() -> None:
                 dados_radar = radares_map.get(ativo_nome, {})
                 sinal_radar = _avaliar_sinal_radar(dados_radar, op.get("estrutura", ""))
 
+                d_op_ini = _extrair_iso_data(op.get("data_inicio"))
+                destaque_dia = "verde" if (d_op_ini and d_op_ini == data_mais_recente_carteira) else None
+
                 linhas_abertas.append({
                     "id": op["id"],
                     "codigo": op["codigo"],
@@ -982,6 +1219,7 @@ def pagina_diario_opcoes() -> None:
                     "alocado": alocado_op,
                     "atingiu": atingiu,
                     "badge_radar": sinal_radar["badge_html"],
+                    "destaque_dia": destaque_dia,
                 })
 
             opcoes_dict = {
@@ -997,7 +1235,7 @@ def pagina_diario_opcoes() -> None:
                 # Barra de Ações Rápidas por Opção
                 if opcoes_dict:
                     st.markdown("##### ⚡ Ações Rápidas por Ativo")
-                    col_sel, col_act1, col_act2, col_act3, col_act4, col_act5 = st.columns([2.5, 1.2, 1.3, 1.2, 1.2, 1.1])
+                    col_sel, col_act1, col_act2, col_act3, col_act4, col_act5, col_act6 = st.columns([2.2, 1.0, 1.0, 1.1, 1.1, 1.0, 1.0])
                     with col_sel:
                         op_escolhida_id = st.selectbox(
                             "Selecione uma opção:",
@@ -1009,18 +1247,21 @@ def pagina_diario_opcoes() -> None:
                     op_alvo = next((o for o in abertas_filtradas if o["id"] == op_escolhida_id), None)
                     if op_alvo:
                         with col_act1:
-                            if st.button("🔄 Rolar", type="primary", use_container_width=True, help="Rolar com 50% de lucro no bolso"):
+                            if st.button("🔄 Rolar", type="primary", use_container_width=True, help="Rolar com preservação de capital"):
                                 modal_rolar_opcao(op_alvo)
                         with col_act2:
                             if st.button("🔄 Virar", type="secondary", use_container_width=True, help="Virada de tendência (CALL ⇄ PUT)"):
                                 modal_virar_tendencia(op_alvo)
                         with col_act3:
-                            if st.button("✏️ Editar", use_container_width=True, help="Editar e corrigir qualquer dado"):
-                                modal_editar_operacao(op_alvo)
+                            if st.button("➕ Mão", use_container_width=True, help="Aumentar posição / comprar mais cotas"):
+                                modal_aumentar_posicao(op_alvo)
                         with col_act4:
-                            if st.button("🏁 Encerrar", use_container_width=True, help="Encerrar posição"):
+                            if st.button("🏁 Saída", use_container_width=True, help="Encerrar posição (total ou parcial / diminuir mão)"):
                                 modal_encerrar_opcao(op_alvo)
                         with col_act5:
+                            if st.button("✏️ Editar", use_container_width=True, help="Editar e corrigir qualquer dado"):
+                                modal_editar_operacao(op_alvo)
+                        with col_act6:
                             if st.button("🗑️ Excluir", use_container_width=True, help="Remover do diário"):
                                 modal_excluir_operacao(op_alvo)
 
@@ -1090,6 +1331,9 @@ def pagina_diario_opcoes() -> None:
                 dias_op = o.get("dias") or bd._calcular_dias_operacao(o["data_inicio"], o.get("data_fim"))
                 qtd_op = float(o.get("quantidade") or 0.0)
 
+                d_op_fim = _extrair_iso_data(o.get("data_fim"))
+                destaque_dia = "vermelho" if (d_op_fim and d_op_fim == data_mais_recente_carteira) else None
+
                 linhas_enc.append({
                     "id": o["id"],
                     "codigo": o["codigo"],
@@ -1106,7 +1350,8 @@ def pagina_diario_opcoes() -> None:
                     "alocado": aloc,
                     "final": v_fin,
                     "status": str(o.get("status", "encerrada")),
-                    "obs": o.get("observacoes") or ""
+                    "obs": o.get("observacoes") or "",
+                    "destaque_dia": destaque_dia,
                 })
 
             enc_dict = {
@@ -1196,6 +1441,16 @@ def pagina_diario_opcoes() -> None:
 
             dias_op = o.get("dias") or bd._calcular_dias_operacao(o["data_inicio"], o.get("data_fim"))
 
+            destaque_comp = None
+            if st_op == "aberta":
+                d_ini = _extrair_iso_data(o.get("data_inicio"))
+                if d_ini and d_ini == data_mais_recente_carteira:
+                    destaque_comp = "verde"
+            else:
+                d_fim = _extrair_iso_data(o.get("data_fim"))
+                if d_fim and d_fim == data_mais_recente_carteira:
+                    destaque_comp = "vermelho"
+
             linhas_comp.append({
                 "id": o["id"],
                 "codigo": o["codigo"],
@@ -1213,7 +1468,8 @@ def pagina_diario_opcoes() -> None:
                 "alocado": aloc,
                 "final": v_fin,
                 "status": st_op,
-                "obs": o.get("observacoes") or ""
+                "obs": o.get("observacoes") or "",
+                "destaque_dia": destaque_comp,
             })
 
         comp_dict = {
