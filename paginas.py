@@ -1577,24 +1577,13 @@ def _secao_donut_alocacao_patrimonio(posicao_df: pd.DataFrame) -> None:
         st.altair_chart(donut, use_container_width=True)
 
     with col_table:
-        # Tabela verde escura com as colunas Ativo | Valor Atual | % Total
+        # Tabela de alocação de ativos no padrão premium FiscoTrade Slim
         tabela_visao = pd.DataFrame({
             "Ativo": comprados["Ativo"],
             "Valor Atual": comprados["Total Atual"].map(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
             "% Total": comprados["% Total"].map(lambda p: f"{p:.2f} %"),
         })
-
-        st.dataframe(
-            tabela_visao,
-            use_container_width=True,
-            hide_index=True,
-            height=360,
-            column_config={
-                "Ativo": st.column_config.TextColumn("Ativo", disabled=True),
-                "Valor Atual": st.column_config.TextColumn("Valor Atual", disabled=True),
-                "% Total": st.column_config.TextColumn("% Total", disabled=True),
-            },
-        )
+        tema.tabela(tabela_visao, max_altura=360)
 
 
 # ---------------------------------------------------------------------------
@@ -1637,13 +1626,7 @@ def _secao_posicao_detalhada_custodia(posicao_df: pd.DataFrame) -> None:
     df_exib["% Ganho"] = df_exib["Ganho (%)"].map(lambda p: f"{p:.2f} %")
 
     colunas_finais = ["Ativo", "Qtd", "Preço Médio", "Notional", "Strike", "Opção", "Vencimento", "Total Investido", "Preço Atual", "Total Atual", "Ganho", "% Ganho"]
-
-    st.dataframe(
-        df_exib[colunas_finais],
-        use_container_width=True,
-        hide_index=True,
-        column_config={col: st.column_config.Column(disabled=True) for col in colunas_finais},
-    )
+    tema.tabela(df_exib[colunas_finais], max_altura=460)
 
     # Gráfico de barras horizontais do resultado por ativo
     st.caption("Rentabilidade percentual das posições em aberto:")
@@ -1748,13 +1731,7 @@ def _secao_evolucao_carteira_meses() -> None:
         {"Data": "Out-2026", "% Mensal": "10,35 %", "% Acumulada": "6,00 %", "Patrimônio": "R$ 3.029,00", "Compras": "R$ 13.191,50", "Vendas": "R$ 16.424,74", "Op. Finalizadas": "R$ 4.798,55", "Proventos": "R$ 0,00"},
         {"Data": "Nov-2026", "% Mensal": "-3,83 %", "% Acumulada": "1,94 %", "Patrimônio": "R$ 2.913,00", "Compras": "R$ 0,00", "Vendas": "R$ 0,00", "Op. Finalizadas": "R$ 0,00", "Proventos": "R$ 0,00"},
     ])
-
-    st.dataframe(
-        tabela_evol,
-        use_container_width=True,
-        hide_index=True,
-        column_config={col: st.column_config.Column(disabled=True) for col in tabela_evol.columns},
-    )
+    tema.tabela(tabela_evol)
 
 
 def pagina_visao() -> None:
@@ -1979,21 +1956,7 @@ def pagina_extrato() -> None:
                     "Resultado Líquido": res_filtrados["resultado"].map(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")),
                     "Rentabilidade (%)": pct_rent,
                 })
-
-                st.dataframe(
-                    df_res_visao,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Ativo": st.column_config.Column(disabled=True),
-                        "Competência": st.column_config.Column(disabled=True),
-                        "Categoria": st.column_config.Column(disabled=True),
-                        "Mercado": st.column_config.Column(disabled=True),
-                        "Volume de Vendas": st.column_config.Column(disabled=True),
-                        "Resultado Líquido": st.column_config.Column(disabled=True),
-                        "Rentabilidade (%)": st.column_config.Column(disabled=True),
-                    },
-                )
+                tema.tabela(df_res_visao, max_altura=460)
 
     with aba2:
         tema.kpis([
@@ -2004,16 +1967,7 @@ def pagina_extrato() -> None:
 
         colunas = ["data", "tipo", "ticker", "grupo", "mercado", "quantidade", "preco", "valor_total", "taxas", "nota", "corretora"]
         colunas_moeda = ["preco", "valor_total", "taxas"]
-        df_ordens = _colorir(_tabela_moeda(filtro_ops[colunas], colunas_moeda), colunas_moeda)
-
-        st.dataframe(
-            df_ordens,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                c: st.column_config.Column(disabled=True) for c in colunas
-            },
-        )
+        tema.tabela(_tabela_moeda(filtro_ops[colunas], colunas_moeda), max_altura=500)
 
         st.download_button(
             "Baixar livro de ordens (CSV)",
@@ -2087,10 +2041,7 @@ Na ficha de **Bens e Direitos** do programa da Receita Federal, informe **SEMPRE
     df_irpf = pd.DataFrame(linhas_irpf)
 
     with st.expander("📋 Ver Tabela de Bens e Direitos & Textos Prontos para Copiar", expanded=True):
-        st.dataframe(
-            df_irpf[["Ticker", "Grupo RFB", "Código RFB", "Quantidade", "Custo Total (Situação em 31/12)"]],
-            width="stretch", hide_index=True,
-        )
+        tema.tabela(df_irpf[["Ticker", "Grupo RFB", "Código RFB", "Quantidade", "Custo Total (Situação em 31/12)"]])
 
         st.caption("Selecione o ativo abaixo para visualizar e copiar a discriminação formatada para a Receita Federal:")
         ticker_sel = st.selectbox(
@@ -2133,10 +2084,7 @@ def pagina_patrimonio() -> None:
              "icone": "\U0001F5C3\uFE0F"},
         ])
 
-        st.dataframe(
-            _tabela_moeda(posicao, ["Preço Médio", "Custo Total"]),
-            width="stretch", hide_index=True,
-        )
+        tema.tabela(_tabela_moeda(posicao, ["Preço Médio", "Custo Total"]))
 
         tema.secao("Custo por grupo de ativos")
         st.bar_chart(posicao.groupby("Grupo")["Custo Total"].sum(), height=320)
@@ -2232,7 +2180,7 @@ def pagina_ir() -> None:
                 visao = visao.drop(columns=coluna)
         coloriveis = [c for c in visao.columns if c not in ("Mês", "Situação")]
         visao = _tabela_moeda(visao, coloriveis)
-        st.dataframe(_colorir(visao, coloriveis), width="stretch", hide_index=True)
+        tema.tabela(visao)
 
         tema.secao("Resultados por mercado")
         detalhe = tabela_ir[["mes"] + DETALHE_MERCADO].copy()
@@ -2245,10 +2193,7 @@ def pagina_ir() -> None:
         else:
             rotulos = [ROTULO_DETALHE[c] for c in ativos]
             visao_mercado = detalhe[["Mês"] + ativos].rename(columns=ROTULO_DETALHE)
-            st.dataframe(
-                _colorir(_tabela_moeda(visao_mercado, rotulos), rotulos),
-                width="stretch", hide_index=True,
-            )
+            tema.tabela(_tabela_moeda(visao_mercado, rotulos))
 
         st.caption(
             f"Day Trade: {float(PARAMETROS['aliquota_day_trade']):.0%} sem isenção. "
@@ -2556,7 +2501,7 @@ def pagina_proventos() -> None:
         irrf_jcp(valor) if tipo == "JCP" else 0.0
         for tipo, valor in zip(por_tipo["tipo"], por_tipo["Valor"])
     ]
-    st.dataframe(por_tipo.rename(columns=ROTULOS_PROVENTO), width="stretch", hide_index=True)
+    tema.tabela(por_tipo.rename(columns=ROTULOS_PROVENTO))
 
     tema.secao("Proventos por mês")
     por_mes_prov = proventos.copy()
@@ -2564,8 +2509,7 @@ def pagina_proventos() -> None:
     st.bar_chart(por_mes_prov.groupby("mes")["valor"].sum(), height=320)
 
     tema.secao("Detalhamento")
-    st.dataframe(detalhe.drop(columns=["id"]).rename(columns=ROTULOS_PROVENTO),
-                 width="stretch", hide_index=True)
+    tema.tabela(detalhe.drop(columns=["id"]).rename(columns=ROTULOS_PROVENTO))
 
     with st.expander(":material/delete: Remover lançamento"):
         remover = st.selectbox(
@@ -2646,10 +2590,10 @@ def pagina_relatorios() -> None:
         if tabela_ir.empty:
             st.caption("Sem apuração no período.")
         else:
-            st.dataframe(tabela_ir, width="stretch", hide_index=True)
+            tema.tabela(tabela_ir)
 
         tema.secao("Prévia — Operações")
-        st.dataframe(operacoes[colunas_extrato], width="stretch", hide_index=True)
+        tema.tabela(operacoes[colunas_extrato])
 
 
 # ---------------------------------------------------------------------------

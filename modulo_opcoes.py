@@ -889,7 +889,7 @@ def pagina_diario_opcoes() -> None:
             st.info("Nenhuma posição aberta no momento.")
         else:
             # Sincronização de Cotações com a B3
-            col_sync1, _ = st.columns([2.2, 2.8])
+            col_sync1, col_sync2 = st.columns([2.0, 3.0])
             with col_sync1:
                 if st.button("⚡ Atualizar Cotações em Tempo Real", type="primary", use_container_width=True, icon=":material/sync:"):
                     with st.spinner("Atualizando cotações das opções com a B3..."):
@@ -899,6 +899,13 @@ def pagina_diario_opcoes() -> None:
                             st.rerun()
                         else:
                             st.info(msg_api)
+            with col_sync2:
+                st.markdown(
+                    "<div style='padding-top: 8px; font-size: 0.85rem; color: #888;'>"
+                    "📡 <strong>Fonte oficial:</strong> B3 Market Data (MDS em Tempo Real) &bull; Derivativos B3"
+                    "</div>",
+                    unsafe_allow_html=True
+                )
 
             # Barra de Configuração e Filtros
             col_cfg1, col_cfg2, col_cfg3 = st.columns([1.5, 1.5, 1.5])
@@ -1294,6 +1301,11 @@ def pagina_diario_opcoes() -> None:
             "Anexe a **exportação direta do Nelogica Profit** (CSV ou Excel) ou sua **planilha de controle/Nitro**. "
             "O sistema detecta o formato automaticamente, mapeia as pernas de **CALL** e **PUT**, "
             "separa posições abertas e encerradas e calcula os rendimentos de cada trade."
+        )
+        st.info(
+            "🛡️ **Filtro Inteligente Anti-Duplicidade:** Pode subir novos relatórios do Profit a qualquer momento com total segurança! "
+            "O sistema identifica cada trade pelo **código da opção** e **data de entrada**: "
+            "ele **atualiza** operações que foram encerradas ou mudaram de status e **inclui apenas as novas**, sem nunca duplicar seus registros."
         )
 
         col_up, col_mod = st.columns([2, 1.2])

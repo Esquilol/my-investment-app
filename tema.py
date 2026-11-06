@@ -239,6 +239,51 @@ h1, h2, h3, h4, h5 {{
 }}
 [data-testid="stAlert"] {{ border-radius: 12px; }}
 
+/* ---------------- Tabela Padrão Premium FiscoTrade Slim ---------------- */
+.ft-tab-container {{
+  width: 100%; max-width: 100%; overflow-x: auto; background: var(--mp-superficie, #ffffff);
+  border: 1px solid var(--mp-borda, #e2e8f0); border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04); margin: 8px 0 16px 0;
+}}
+.ft-tab {{
+  width: 100%; border-collapse: collapse;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 0.84rem; color: #1e293b; text-align: left;
+}}
+.ft-tab th {{
+  background-color: #f8fafc; color: #475569; font-weight: 700;
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 9px 12px; border-bottom: 2px solid #e2e8f0; white-space: nowrap;
+  position: sticky; top: 0; z-index: 10;
+}}
+.ft-tab th.col-r {{ text-align: right; }}
+.ft-tab th.col-c {{ text-align: center; }}
+.ft-tab td {{
+  padding: 8px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: middle;
+}}
+.ft-tab tr:hover {{ background-color: #f8fafc; transition: background-color 0.12s ease; }}
+.ft-tab tr:last-child td {{ border-bottom: none; }}
+.ft-tab td.col-r {{
+  text-align: right; font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.84rem;
+}}
+.ft-tab td.col-c {{ text-align: center; }}
+.ft-sub {{ font-size: 0.73rem; color: #64748b; margin-top: 2px; display: flex; align-items: center; gap: 5px; }}
+.ft-sub-r {{ font-size: 0.73rem; color: #64748b; margin-top: 2px; display: flex; justify-content: flex-end; align-items: center; gap: 5px; }}
+.ft-ticker {{ font-weight: 700; color: #0f172a; letter-spacing: 0.2px; font-size: 0.88rem; }}
+.ft-badge-call {{ background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; padding: 1px 5px; border-radius: 4px; font-weight: 700; font-size: 0.65rem; text-transform: uppercase; }}
+.ft-badge-put {{ background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; padding: 1px 5px; border-radius: 4px; font-weight: 700; font-size: 0.65rem; text-transform: uppercase; }}
+.ft-badge-darf {{ background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; padding: 2px 7px; border-radius: 5px; font-weight: 700; font-size: 0.72rem; display: inline-block; white-space: nowrap; }}
+.ft-badge-isento {{ background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; padding: 2px 7px; border-radius: 5px; font-weight: 700; font-size: 0.72rem; display: inline-block; white-space: nowrap; }}
+.ft-badge-acumular {{ background: #fefce8; color: #a16207; border: 1px solid #fde047; padding: 2px 7px; border-radius: 5px; font-weight: 700; font-size: 0.72rem; display: inline-block; white-space: nowrap; }}
+.ft-status-aberta {{ background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 0.70rem; }}
+.ft-status-encerrada {{ background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 0.70rem; }}
+.ft-val-pos {{ color: #16a34a; font-weight: 700; }}
+.ft-val-neg {{ color: #dc2626; font-weight: 700; }}
+.ft-val-neu {{ color: #64748b; font-weight: 500; }}
+
+
 /* ---------------- Tela de acesso ---------------- */
 .mp-marca {{ text-align: center; margin-bottom: .6rem; }}
 .mp-marca .logo {{ font-size: 2.6rem; line-height: 1; }}
@@ -338,3 +383,154 @@ def vazio(mensagem: str, icone: str = "\U0001F4ED") -> None:
         f'<div class="mp-vazio"><span class="ico">{icone}</span>{_esc(mensagem)}</div>',
         unsafe_allow_html=True,
     )
+
+
+def tabela(
+    dados,
+    colunas_direita: list[str] | None = None,
+    colunas_centro: list[str] | None = None,
+    ocultar_moeda: bool = False,
+    max_altura: int | None = 520,
+) -> None:
+    """
+    Renderiza tabela HTML nativa e responsiva no padrão premium FiscoTrade Slim.
+    Aplica tipografia monospace tabular em valores numéricos/monetários, badges de status,
+    tickers estilizados e realce de cores (verde para positivo, vermelho para negativo).
+    """
+    import html as _html
+    import re as _re
+    import pandas as pd
+
+    if isinstance(dados, pd.DataFrame):
+        df = dados.copy()
+    elif hasattr(dados, "data") and isinstance(getattr(dados, "data"), pd.DataFrame):
+        df = dados.data.copy()
+    elif isinstance(dados, list):
+        df = pd.DataFrame(dados)
+    else:
+        try:
+            df = pd.DataFrame(dados)
+        except Exception:
+            st.dataframe(dados, use_container_width=True, hide_index=True)
+            return
+
+    if df.empty:
+        st.info("Nenhum registro para exibir.")
+        return
+
+    col_r_set = set(colunas_direita or [])
+    col_c_set = set(colunas_centro or [])
+    cols = list(df.columns)
+
+    align_map = {}
+    for c in cols:
+        clow = str(c).lower().strip()
+        if c in col_r_set:
+            align_map[c] = "col-r"
+        elif c in col_c_set:
+            align_map[c] = "col-c"
+        elif any(k in clow for k in [
+            "valor", "preço", "preco", "custo", "total", "aloc", "notional",
+            "strike", "ganho", "resultado", "lucro", "prej", "venda", "compra",
+            "taxa", "ir", "darf", "base", "%", "rentab", "rend", "pago",
+            "receb", "qtd", "quant", "dias", "contrat", "saldo", "patrimonio",
+            "compras", "vendas", "proventos"
+        ]):
+            align_map[c] = "col-r"
+        elif any(k in clow for k in [
+            "situa", "status", "tipo", "grupo rfb", "código rfb", "codigo rfb",
+            "vencimento", "alerta", "radar", "lado"
+        ]):
+            align_map[c] = "col-c"
+        else:
+            align_map[c] = ""
+
+    style_container = f"max-height: {max_altura}px; overflow-y: auto;" if max_altura else ""
+    parts = [f'<div class="ft-tab-container" style="{style_container}"><table class="ft-tab">']
+    parts.append("<thead><tr>")
+    for c in cols:
+        cls = align_map[c]
+        parts.append(f'<th class="{cls}">{_html.escape(str(c))}</th>')
+    parts.append("</tr></thead><tbody>")
+
+    for _, row in df.iterrows():
+        parts.append("<tr>")
+        for c in cols:
+            val = row[c]
+            cls = align_map[c]
+            if pd.isna(val) or val is None:
+                val_str = "—"
+            elif isinstance(val, (float, int)) and not isinstance(val, bool):
+                clow = str(c).lower().strip()
+                if "%" in clow or "rentab" in clow:
+                    if val > 0:
+                        val_str = f"+{val:.2f} %"
+                    elif val < 0:
+                        val_str = f"-{abs(val):.2f} %"
+                    else:
+                        val_str = f"{val:.2f} %"
+                elif any(k in clow for k in ["ganho", "resultado", "lucro", "prej"]):
+                    if val > 0:
+                        val_str = f"+R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    elif val < 0:
+                        val_str = f"-R$ {abs(val):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    else:
+                        val_str = "R$ 0,00"
+                elif any(k in clow for k in ["valor", "preço", "preco", "custo", "total", "aloc", "notional", "strike", "venda", "compra", "taxa", "ir", "darf", "base", "saldo", "patrimonio", "compras", "vendas", "proventos", "pago", "receb"]):
+                    if val < 0:
+                        val_str = f"-R$ {abs(val):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    else:
+                        val_str = f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                elif any(k in clow for k in ["qtd", "quant", "lancamentos", "ordens"]):
+                    val_str = f"{int(val):,}".replace(",", ".")
+                else:
+                    val_str = str(val)
+            else:
+                val_str = str(val).strip()
+
+            if ocultar_moeda and "R$" in val_str:
+                val_str = _re.sub(r'R\$\s*[\d\.,-]+', 'R$ *****', val_str)
+
+            # Badges inteligentes
+            if val_str == "DARF a pagar":
+                cel_html = '<span class="ft-badge-darf">🚨 DARF a pagar</span>'
+            elif val_str == "Isento":
+                cel_html = '<span class="ft-badge-isento">🟢 Isento</span>'
+            elif val_str == "Acumular":
+                cel_html = '<span class="ft-badge-acumular">🟡 Acumular</span>'
+            elif val_str in ("C", "COMPRA", "CALL"):
+                cel_html = f'<span class="ft-badge-call">{_html.escape(val_str)}</span>'
+            elif val_str in ("V", "VENDA", "PUT"):
+                cel_html = f'<span class="ft-badge-put">{_html.escape(val_str)}</span>'
+            elif c in ("Ativo", "Ticker", "Código", "Opção") and _re.match(r'^[A-Za-z0-9]{4,8}$', val_str):
+                cel_html = f'<span class="ft-ticker">{_html.escape(val_str)}</span>'
+            else:
+                is_neg = False
+                if val_str.startswith("-") and any(ch.isdigit() for ch in val_str) and not _re.match(r'^\d{4}-\d{2}', val_str):
+                    is_neg = True
+                elif "R$ -" in val_str or "-R$" in val_str:
+                    is_neg = True
+
+                is_pos = False
+                if (val_str.startswith("+") or (any(k in str(c).lower() for k in ["resultado", "lucro", "ganho", "rentab", "%", "desempenho"]) and not is_neg)):
+                    if val_str not in ("0,00 %", "R$ 0,00", "0.0%", "—", "0 %", "0,00", "0.00", "0"):
+                        is_pos = True
+
+                if is_neg:
+                    cel_html = f'<span class="ft-val-neg">{_html.escape(val_str)}</span>'
+                elif is_pos:
+                    cel_html = f'<span class="ft-val-pos">{_html.escape(val_str)}</span>'
+                elif any(k in str(c).lower() for k in ["resultado", "lucro", "ganho", "rentab", "%", "desempenho"]) and val_str in ("0,00 %", "R$ 0,00", "0.0%", "—", "0 %", "0,00", "0.00", "0"):
+                    cel_html = f'<span class="ft-val-neu">{_html.escape(val_str)}</span>'
+                else:
+                    cel_html = _html.escape(val_str)
+
+            parts.append(f'<td class="{cls}">{cel_html}</td>')
+        parts.append("</tr>")
+    parts.append("</tbody></table></div>")
+
+    html_final = "".join(parts)
+    if hasattr(st, "html"):
+        st.html(html_final)
+    else:
+        st.markdown(html_final, unsafe_allow_html=True)
