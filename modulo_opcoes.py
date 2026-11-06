@@ -750,7 +750,7 @@ def pagina_diario_opcoes() -> None:
 
     # Nova métrica: % acumulada (soma das % de ganho das operações encerradas)
     pct_acumulada = sum(float(o.get("resultado_pct") or 0.0) for o in encerradas)
-    # Nova métrica: % retorno sobre capital alocado nas encerradas
+    # Nova métrica: % retorno sobre capital inicial nas encerradas
     retorno_sobre_capital = (lucro_total / capital_encerrado * 100) if capital_encerrado > 0 else 0.0
 
     # Configuração dinâmica do alerta de rolagem (80%, 100%, 120%, 150%)
@@ -776,7 +776,7 @@ def pagina_diario_opcoes() -> None:
         {"rotulo": "Taxa de Acerto (Win Rate)", "valor": f"{win_rate:.1f}%", "icone": "🎯"},
         {"rotulo": "Lucro Realizado Total", "valor": _moeda_priv(lucro_total, ocultar_moeda), "icone": "💰"},
         {"rotulo": "Rentabilidade Acumulada (%)", "valor": f"{pct_acumulada:+.1f}%", "icone": "📈"},
-        {"rotulo": "Retorno s/ Capital Alocado", "valor": f"{retorno_sobre_capital:+.1f}%", "icone": "🚀"},
+        {"rotulo": "Retorno S/ Capital Inicial", "valor": f"{retorno_sobre_capital:+.1f}%", "icone": "🚀"},
     ])
     tema.kpis([
         {"rotulo": "Capital Alocado em Aberto", "valor": _moeda_priv(capital_aberto, ocultar_moeda), "icone": "🛡️"},
