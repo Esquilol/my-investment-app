@@ -67,6 +67,12 @@ def _render_css_tabela() -> str:
         ".ft-val-pos{color:#16a34a;font-weight:700;}"
         ".ft-val-neg{color:#dc2626;font-weight:700;}"
         ".ft-val-neu{color:#64748b;font-weight:500;}"
+        ".ft-radar-favor{background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;padding:2px 8px;border-radius:12px;font-weight:700;font-size:0.68rem;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;}"
+        ".ft-radar-contra{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;padding:2px 8px;border-radius:12px;font-weight:700;font-size:0.68rem;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;}"
+        ".ft-radar-atencao{background:#fefce8;color:#ca8a04;border:1px solid #fef08a;padding:2px 8px;border-radius:12px;font-weight:700;font-size:0.68rem;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;}"
+        ".ft-radar-virada{background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;padding:2px 8px;border-radius:12px;font-weight:700;font-size:0.68rem;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;}"
+        ".ft-radar-virada-alerta{background:#fff1f2;color:#e11d48;border:1px solid #fecdd3;padding:2px 8px;border-radius:12px;font-weight:700;font-size:0.68rem;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;}"
+        ".ft-radar-ind{background:#f8fafc;color:#64748b;border:1px solid #cbd5e1;padding:2px 8px;border-radius:12px;font-weight:600;font-size:0.68rem;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;}"
         "</style>"
     )
 
@@ -87,6 +93,22 @@ def _fmt_moeda_delta(val: float) -> str:
     return f'<span class="ft-val-neu">{_moeda(0.0)} &mdash;</span>'
 
 
+def _moeda_priv(valor: float, ocultar: bool = False) -> str:
+    if ocultar:
+        return "R$ *****"
+    return _moeda(valor)
+
+
+def _fmt_moeda_delta_priv(val: float, ocultar: bool = False) -> str:
+    if ocultar:
+        if val > 0.01:
+            return '<span class="ft-val-pos">+R$ ***** &utrif;</span>'
+        elif val < -0.01:
+            return '<span class="ft-val-neg">-R$ ***** &dtrif;</span>'
+        return '<span class="ft-val-neu">R$ ***** &mdash;</span>'
+    return _fmt_moeda_delta(val)
+
+
 def _badge_est(est: str | None) -> str:
     est_u = (est or "").upper()
     if "PUT" in est_u:
@@ -94,6 +116,54 @@ def _badge_est(est: str | None) -> str:
     elif "CALL" in est_u:
         return '<span class="ft-badge-call">CALL</span>'
     return f'<span class="ft-badge-call">{est or "—"}</span>'
+
+
+def _avaliar_sinal_radar(radar: dict, estrutura: str) -> dict:
+    """
+    Motor quantitativo proprietário de inteligência de mercado.
+    Mapeia a direção do ativo em relação à estrutura da opção sem expor indicadores subjacentes.
+    """
+    if not radar or radar.get("status") != "ok":
+        return {
+            "badge_html": '<span class="ft-radar-ind" title="Aguardando dados de mercado do ativo">⚪ Em Análise</span>',
+            "status_radar": "indisponivel",
+        }
+
+    tend = radar.get("tendencia")  # 'alta' ou 'baixa'
+    virada_recente = radar.get("virada_recente", False)
+    possivel_virada = radar.get("possivel_virada", False)
+
+    est_u = (estrutura or "").upper()
+    is_put = "PUT" in est_u
+    if "VENDA" in est_u:
+        quer_alta = is_put
+    else:
+        quer_alta = not is_put
+
+    a_favor = (tend == "alta" and quer_alta) or (tend == "baixa" and not quer_alta)
+
+    if virada_recente:
+        if a_favor:
+            badge = '<span class="ft-radar-virada" title="Tendência confirmou virada a favor da operação">🔄 Virada Confirmada</span>'
+            status = "virada_favor"
+        else:
+            badge = '<span class="ft-radar-virada-alerta" title="Alerta: ativo confirmou virada contra a operação">🔄 Virada Detectada</span>'
+            status = "virada_contra"
+    elif possivel_virada:
+        badge = '<span class="ft-radar-atencao" title="Ativo testando faixa chave de suporte/resistência">🟡 Possível Virada</span>'
+        status = "possivel_virada"
+    elif a_favor:
+        badge = '<span class="ft-radar-favor" title="Ativo em tendência favorável à operação">🟢 A Favor</span>'
+        status = "a_favor"
+    else:
+        badge = '<span class="ft-radar-contra" title="Ativo em tendência oposta à operação">🔴 Contra Tendência</span>'
+        status = "contra"
+
+    return {
+        "badge_html": badge,
+        "status_radar": status,
+        "tendencia": tend,
+    }
 
 
 def _exibir_html(html_str: str) -> None:
@@ -104,17 +174,17 @@ def _exibir_html(html_str: str) -> None:
         st.markdown(html_str, unsafe_allow_html=True)
 
 
-def _render_html_tabela_abertas(linhas: list[dict]) -> str:
+def _render_html_tabela_abertas(linhas: list[dict], ocultar: bool = False) -> str:
     parts = [_render_css_tabela(), '<div class="ft-tab-container"><table class="ft-tab">']
     parts.append(
         "<thead><tr>"
         "<th>Opção / Ativo</th>"
         "<th>Início / Prazo</th>"
-        "<th class=\"col-r\">Cotação (Pago ➔ Atual)</th>"
-        "<th class=\"col-r\">Alocado</th>"
-        "<th class=\"col-r\">Rendimento %</th>"
-        "<th class=\"col-r\">Lucro / Prej (R$)</th>"
-        "<th class=\"col-c\">Alerta Rolagem</th>"
+        '<th class="col-r">Cotação</th>'
+        '<th class="col-r">Performance</th>'
+        '<th class="col-c">Radar Tendência</th>'
+        '<th class="col-r">Alocado</th>'
+        '<th class="col-c">Alerta Rolagem</th>'
         "</tr></thead><tbody>"
     )
     for row in linhas:
@@ -126,17 +196,19 @@ def _render_html_tabela_abertas(linhas: list[dict]) -> str:
             if atingiu
             else '<span class="ft-val-neu">Normal</span>'
         )
+        badge_radar = row.get("badge_radar", '<span class="ft-radar-ind">⚪ Em Análise</span>')
         parts.append(
             "<tr>"
             f'<td><div><span class="ft-ticker">{row["codigo"]}</span></div>'
             f'<div class="ft-sub">{_badge_est(row["estrutura"])} <span>{row["ativo"]}</span></div></td>'
             f'<td><div>{row["inicio"]}</div>'
             f'<div class="ft-sub">{row["dias"]} dias &bull; {row["qtd"]:,} un</div></td>'
-            f'<td class="col-r"><div>Pago: {_moeda(row["pago"])}</div>'
-            f'<div class="ft-sub-r">Atual: <strong>{_moeda(row["atual"])}</strong></div></td>'
-            f'<td class="col-r">{_moeda(row["alocado"])}</td>'
-            f'<td class="col-r">{_fmt_pct(rend_pct)}</td>'
-            f'<td class="col-r">{_fmt_moeda_delta(lucro_rs)}</td>'
+            f'<td class="col-r"><div>Pago: {_moeda_priv(row["pago"], ocultar)}</div>'
+            f'<div class="ft-sub-r">Atual: <strong>{_moeda_priv(row["atual"], ocultar)}</strong></div></td>'
+            f'<td class="col-r"><div>{_fmt_pct(rend_pct)}</div>'
+            f'<div class="ft-sub-r">{_fmt_moeda_delta_priv(lucro_rs, ocultar)}</div></td>'
+            f'<td class="col-c">{badge_radar}</td>'
+            f'<td class="col-r">{_moeda_priv(row["alocado"], ocultar)}</td>'
             f'<td class="col-c">{badge_gatilho}</td>'
             "</tr>"
         )
@@ -144,17 +216,17 @@ def _render_html_tabela_abertas(linhas: list[dict]) -> str:
     return "".join(parts)
 
 
-def _render_html_tabela_encerradas(linhas: list[dict]) -> str:
+def _render_html_tabela_encerradas(linhas: list[dict], ocultar: bool = False) -> str:
     parts = [_render_css_tabela(), '<div class="ft-tab-container"><table class="ft-tab">']
     parts.append(
         "<thead><tr>"
         "<th>Opção / Ativo</th>"
         "<th>Período / Prazo</th>"
-        "<th class=\"col-r\">Preço (Pago ➔ Saída)</th>"
-        "<th class=\"col-r\">Capital (Aloc ➔ Final)</th>"
-        "<th class=\"col-r\">Resultado %</th>"
-        "<th class=\"col-r\">Lucro (R$)</th>"
-        "<th class=\"col-c\">Status</th>"
+        '<th class="col-r">Preço (Pago ➔ Saída)</th>'
+        '<th class="col-r">Capital (Aloc ➔ Final)</th>'
+        '<th class="col-r">Resultado %</th>'
+        '<th class="col-r">Lucro (R$)</th>'
+        '<th class="col-c">Status</th>'
         "</tr></thead><tbody>"
     )
     for row in linhas:
@@ -167,12 +239,12 @@ def _render_html_tabela_encerradas(linhas: list[dict]) -> str:
             f'<div class="ft-sub">{_badge_est(row["estrutura"])} <span>{row["ativo"]}</span></div></td>'
             f'<td><div>{row["inicio"]} &rarr; {row["fim"]}</div>'
             f'<div class="ft-sub">{row["dias"]} dias &bull; {row["qtd"]:,} un</div></td>'
-            f'<td class="col-r"><div>Pago: {_moeda(row["pago"])}</div>'
-            f'<div class="ft-sub-r">Saída: <strong>{_moeda(row["recebido"])}</strong></div></td>'
-            f'<td class="col-r"><div>Aloc: {_moeda(row["alocado"])}</div>'
-            f'<div class="ft-sub-r">Final: {_moeda(row["final"])}</div></td>'
+            f'<td class="col-r"><div>Pago: {_moeda_priv(row["pago"], ocultar)}</div>'
+            f'<div class="ft-sub-r">Saída: <strong>{_moeda_priv(row["recebido"], ocultar)}</strong></div></td>'
+            f'<td class="col-r"><div>Aloc: {_moeda_priv(row["alocado"], ocultar)}</div>'
+            f'<div class="ft-sub-r">Final: {_moeda_priv(row["final"], ocultar)}</div></td>'
             f'<td class="col-r">{_fmt_pct(res_pct)}</td>'
-            f'<td class="col-r">{_fmt_moeda_delta(res_fin)}</td>'
+            f'<td class="col-r">{_fmt_moeda_delta_priv(res_fin, ocultar)}</td>'
             f'<td class="col-c">{st_badge}</td>'
             "</tr>"
         )
@@ -180,17 +252,17 @@ def _render_html_tabela_encerradas(linhas: list[dict]) -> str:
     return "".join(parts)
 
 
-def _render_html_tabela_completa(linhas: list[dict]) -> str:
+def _render_html_tabela_completa(linhas: list[dict], ocultar: bool = False) -> str:
     parts = [_render_css_tabela(), '<div class="ft-tab-container"><table class="ft-tab">']
     parts.append(
         "<thead><tr>"
         "<th>Opção / Ativo</th>"
         "<th>Período / Prazo</th>"
-        "<th class=\"col-r\">Preço (Pago ➔ Saída/Atual)</th>"
-        "<th class=\"col-r\">Capital (Aloc ➔ Final)</th>"
-        "<th class=\"col-r\">Resultado %</th>"
-        "<th class=\"col-r\">Lucro (R$)</th>"
-        "<th class=\"col-c\">Status</th>"
+        '<th class="col-r">Preço (Pago ➔ Saída/Atual)</th>'
+        '<th class="col-r">Capital (Aloc ➔ Final)</th>'
+        '<th class="col-r">Resultado %</th>'
+        '<th class="col-r">Lucro (R$)</th>'
+        '<th class="col-c">Status</th>'
         "</tr></thead><tbody>"
     )
     for row in linhas:
@@ -198,18 +270,28 @@ def _render_html_tabela_completa(linhas: list[dict]) -> str:
         lucro_val = row["lucro_val"]
         st_badge = f'<span class="ft-status-{row["status"].lower()}">{row["status"].capitalize()}</span>'
         fim_txt = row["fim"] if row["status"] != "aberta" else "Em aberto"
+        
+        if row["status"] == "aberta":
+            preco_str = f"{_moeda_priv(row['atual'], ocultar)} (atual)"
+            final_str = "—"
+            lucro_str = "—"
+        else:
+            preco_str = _moeda_priv(row["recebido"], ocultar)
+            final_str = _moeda_priv(row["final"], ocultar)
+            lucro_str = _fmt_moeda_delta_priv(lucro_val, ocultar)
+
         parts.append(
             "<tr>"
             f'<td><div><span class="ft-ticker">{row["codigo"]}</span></div>'
             f'<div class="ft-sub">{_badge_est(row["estrutura"])} <span>{row["ativo"]}</span></div></td>'
             f'<td><div>{row["inicio"]} &rarr; {fim_txt}</div>'
             f'<div class="ft-sub">{row["dias"]} dias &bull; {row["qtd"]:,} un</div></td>'
-            f'<td class="col-r"><div>Pago: {_moeda(row["pago"])}</div>'
-            f'<div class="ft-sub-r">Saída/Atual: <strong>{row["preco_col_str"]}</strong></div></td>'
-            f'<td class="col-r"><div>Aloc: {_moeda(row["alocado"])}</div>'
-            f'<div class="ft-sub-r">Final: {_moeda(row["final"]) if row["status"] != "aberta" else "—"}</div></td>'
+            f'<td class="col-r"><div>Pago: {_moeda_priv(row["pago"], ocultar)}</div>'
+            f'<div class="ft-sub-r">Saída/Atual: <strong>{preco_str}</strong></div></td>'
+            f'<td class="col-r"><div>Aloc: {_moeda_priv(row["alocado"], ocultar)}</div>'
+            f'<div class="ft-sub-r">Final: {final_str}</div></td>'
             f'<td class="col-r">{_fmt_pct(res_pct)}</td>'
-            f'<td class="col-r">{_fmt_moeda_delta(lucro_val) if row["status"] != "aberta" else "—"}</td>'
+            f'<td class="col-r">{lucro_str}</td>'
             f'<td class="col-c">{st_badge}</td>'
             "</tr>"
         )
@@ -633,6 +715,23 @@ def pagina_diario_opcoes() -> None:
     conexao = paginas.obter_conexao()
     usuario_id = int(st.session_state["usuario_id"])
 
+    # Controle do Modo Print / Privacidade (Ocultar R$)
+    if "opcoes_ocultar_moeda" not in st.session_state:
+        st.session_state["opcoes_ocultar_moeda"] = False
+    ocultar_moeda = bool(st.session_state["opcoes_ocultar_moeda"])
+
+    # Barra Superior de Ações Globais: Modo Print (Olho 👁️ / 🙈)
+    c_top1, c_top2 = st.columns([3.6, 1.4])
+    with c_top1:
+        if ocultar_moeda:
+            st.info("👁️ **Modo Print Ativo**: Valores em R$ estão ocultos com `*****`. Percentuais, rentabilidades e dados analíticos continuam visíveis para você tirar prints e compartilhar com segurança.")
+    with c_top2:
+        btn_txt = "🙈 Exibir R$ (Print Ativo)" if ocultar_moeda else "👁️ Ocultar R$ (Modo Print)"
+        btn_tipo = "primary" if ocultar_moeda else "secondary"
+        if st.button(btn_txt, key="btn_toggle_print_opcoes", type=btn_tipo, use_container_width=True, help="Oculta valores em R$ para você tirar print mantendo apenas as porcentagens e dados analíticos"):
+            st.session_state["opcoes_ocultar_moeda"] = not ocultar_moeda
+            st.rerun()
+
     ops = bd.listar_opcoes_operacoes(conexao, usuario_id)
 
     # 1. Onboarding se o diário estiver vazio
@@ -675,12 +774,12 @@ def pagina_diario_opcoes() -> None:
 
     tema.kpis([
         {"rotulo": "Taxa de Acerto (Win Rate)", "valor": f"{win_rate:.1f}%", "icone": "🎯"},
-        {"rotulo": "Lucro Realizado Total", "valor": _moeda(lucro_total), "icone": "💰"},
+        {"rotulo": "Lucro Realizado Total", "valor": _moeda_priv(lucro_total, ocultar_moeda), "icone": "💰"},
         {"rotulo": "Rentabilidade Acumulada (%)", "valor": f"{pct_acumulada:+.1f}%", "icone": "📈"},
         {"rotulo": "Retorno s/ Capital Alocado", "valor": f"{retorno_sobre_capital:+.1f}%", "icone": "🚀"},
     ])
     tema.kpis([
-        {"rotulo": "Capital Alocado em Aberto", "valor": _moeda(capital_aberto), "icone": "🛡️"},
+        {"rotulo": "Capital Alocado em Aberto", "valor": _moeda_priv(capital_aberto, ocultar_moeda), "icone": "🛡️"},
         {"rotulo": f"Posições Prontas p/ Rolar (≥{gatilho_global:.0f}%)", "valor": f"{len(rolagens_prontas)} alerta(s)", "icone": "🚨"},
     ])
 
@@ -694,7 +793,9 @@ def pagina_diario_opcoes() -> None:
             for op_pronta, rend_pct in rolagens_prontas:
                 c_al1, c_al2 = st.columns([3, 1])
                 with c_al1:
-                    st.markdown(f"**{op_pronta['codigo']}** ({op_pronta.get('estrutura')}) — Entrada: `{_moeda(op_pronta['preco_pago'])}` | Atual: `{_moeda(op_pronta['preco_atual'])}` | Rendimento: **+{rend_pct:.1f}%** 🚀")
+                    p_pago_str = _moeda_priv(op_pronta['preco_pago'], ocultar_moeda)
+                    p_atual_str = _moeda_priv(op_pronta['preco_atual'], ocultar_moeda)
+                    st.markdown(f"**{op_pronta['codigo']}** ({op_pronta.get('estrutura')}) — Entrada: `{p_pago_str}` | Atual: `{p_atual_str}` | Rendimento: **+{rend_pct:.1f}%** 🚀")
                 with c_al2:
                     if st.button(f"🔄 Rolar {op_pronta['codigo']}", key=f"btn_alerta_rol_{op_pronta['id']}", type="primary", use_container_width=True):
                         modal_rolar_opcao(op_pronta)
@@ -757,7 +858,11 @@ def pagina_diario_opcoes() -> None:
 
             st.caption(f"Exibindo {len(abertas_filtradas)} de {len(abertas)} opções abertas.")
 
-            # Montagem das linhas para a tabela limpa
+            # Pré-busca quantitativa de radar para os ativos únicos em aberto (cache interno de 10 min)
+            ativos_sub_unicos = {str(x.get("ativo_subjacente") or x["codigo"][:4]) for x in abertas_filtradas}
+            radares_map = {at: bd.obter_radar_tendencia_ativo(at) for at in ativos_sub_unicos}
+
+            # Montagem das linhas para a tabela slim com Radar de Tendência
             linhas_abertas = []
             for op in abertas_filtradas:
                 p_pago = float(op["preco_pago"])
@@ -768,11 +873,15 @@ def pagina_diario_opcoes() -> None:
                 lucro_rs = alocado_op * (rend_pct / 100.0)
                 atingiu = rend_pct >= gatilho_global
                 dias_op = op.get("dias") or bd._calcular_dias_operacao(op["data_inicio"])
+                ativo_nome = str(op.get("ativo_subjacente") or op["codigo"][:4])
+
+                dados_radar = radares_map.get(ativo_nome, {})
+                sinal_radar = _avaliar_sinal_radar(dados_radar, op.get("estrutura", ""))
 
                 linhas_abertas.append({
                     "id": op["id"],
                     "codigo": op["codigo"],
-                    "ativo": op.get("ativo_subjacente") or op["codigo"][:4],
+                    "ativo": ativo_nome,
                     "estrutura": op.get("estrutura", "—"),
                     "inicio": _p_data(op["data_inicio"]),
                     "dias": int(dias_op),
@@ -783,17 +892,18 @@ def pagina_diario_opcoes() -> None:
                     "lucro_rs": lucro_rs,
                     "alocado": alocado_op,
                     "atingiu": atingiu,
+                    "badge_radar": sinal_radar["badge_html"],
                 })
 
             opcoes_dict = {
-                o["id"]: f"{o['codigo']} ({o.get('estrutura')}) — Pago {_moeda(o['preco_pago'])} | Atual {_moeda(o.get('preco_atual') or o['preco_pago'])}"
+                o["id"]: f"{o['codigo']} ({o.get('estrutura')}) — Pago {_moeda_priv(o['preco_pago'], ocultar_moeda)} | Atual {_moeda_priv(o.get('preco_atual') or o['preco_pago'], ocultar_moeda)}"
                 for o in abertas_filtradas
             }
 
             if not linhas_abertas:
                 st.info("Nenhuma posição aberta encontrada com os filtros selecionados.")
             else:
-                _exibir_html(_render_html_tabela_abertas(linhas_abertas))
+                _exibir_html(_render_html_tabela_abertas(linhas_abertas, ocultar=ocultar_moeda))
 
                 # Barra de Ações Rápidas por Opção
                 if opcoes_dict:
@@ -906,14 +1016,14 @@ def pagina_diario_opcoes() -> None:
                 })
 
             enc_dict = {
-                o["id"]: f"{o['codigo']} ({_p_data(o['data_inicio'])} a {_p_data(o.get('data_fim'))}) — Lucro: {_moeda(o.get('resultado_financeiro', 0))}"
+                o["id"]: f"{o['codigo']} ({_p_data(o['data_inicio'])} a {_p_data(o.get('data_fim'))}) — Lucro: {_moeda_priv(o.get('resultado_financeiro', 0), ocultar_moeda)}"
                 for o in encerradas_filtradas
             }
 
             if not linhas_enc:
                 st.info("Nenhuma operação encerrada encontrada com os filtros selecionados.")
             else:
-                _exibir_html(_render_html_tabela_encerradas(linhas_enc))
+                _exibir_html(_render_html_tabela_encerradas(linhas_enc, ocultar=ocultar_moeda))
 
                 # Ações de Edição e Exclusão Individual
                 if enc_dict:
@@ -987,14 +1097,8 @@ def pagina_diario_opcoes() -> None:
 
             if st_op == "aberta":
                 res_pct = ((p_atual - p_pago) / p_pago * 100) if p_pago > 0 else 0.0
-                preco_col = _moeda(p_atual) + " (atual)"
-                lucro_col = "—"
-                fin_col = "—"
             else:
                 res_pct = float(o.get("resultado_pct") or 0.0)
-                preco_col = _moeda(p_rec)
-                lucro_col = _moeda(res_fin)
-                fin_col = _moeda(v_fin)
 
             dias_op = o.get("dias") or bd._calcular_dias_operacao(o["data_inicio"], o.get("data_fim"))
 
@@ -1008,7 +1112,8 @@ def pagina_diario_opcoes() -> None:
                 "dias": int(dias_op),
                 "qtd": int(qtd_op),
                 "pago": p_pago,
-                "preco_col_str": preco_col,
+                "recebido": p_rec,
+                "atual": p_atual,
                 "res_pct": res_pct,
                 "lucro_val": res_fin,
                 "alocado": aloc,
@@ -1018,14 +1123,14 @@ def pagina_diario_opcoes() -> None:
             })
 
         comp_dict = {
-            o["id"]: f"#{o['id']} {o['codigo']} ({str(o.get('status', '')).upper()}) — Entrada: {_p_data(o['data_inicio'])} Pago {_moeda(o['preco_pago'])}"
+            o["id"]: f"#{o['id']} {o['codigo']} ({str(o.get('status', '')).upper()}) — Entrada: {_p_data(o['data_inicio'])} Pago {_moeda_priv(o['preco_pago'], ocultar_moeda)}"
             for o in ops_vis
         }
 
         if not linhas_comp:
             st.info("Nenhuma operação encontrada com os filtros selecionados.")
         else:
-            _exibir_html(_render_html_tabela_completa(linhas_comp))
+            _exibir_html(_render_html_tabela_completa(linhas_comp, ocultar=ocultar_moeda))
 
             # Gestor individual
             if comp_dict:

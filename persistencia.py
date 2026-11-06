@@ -2200,6 +2200,117 @@ def sincronizar_cotacoes_opcoes(conexao: sqlite3.Connection, usuario_id: int) ->
     return 0, "Não foi possível obter novas cotações da B3 neste momento. Verifique a conexão com a internet."
 
 
+_CACHE_RADAR_TENDENCIA: dict[str, tuple[float, dict]] = {}
+
+def obter_radar_tendencia_ativo(ticker: str) -> dict:
+    """
+    Motor quantitativo proprietário de rastreamento de tendência.
+    Roda algoritmo de médias móveis de limites (13 períodos) de forma 100% oculta no backend.
+    Retorna estado da tendência ('alta' ou 'baixa'), virada recente e aproximação de gatilho.
+    """
+    import urllib.request, json, time
+    sym = (ticker or "").upper().strip()
+    if not sym:
+        return {"status": "indisponivel"}
+
+    # Cache em memória de 10 minutos (600s)
+    agora_ts = time.time()
+    if sym in _CACHE_RADAR_TENDENCIA:
+        ts_cached, res_cached = _CACHE_RADAR_TENDENCIA[sym]
+        if agora_ts - ts_cached < 600:
+            return res_cached
+
+    # Normaliza código do ativo subjacente (ex: PETR4, CSNA3, BOVA11)
+    if not any(sym.endswith(sfx) for sfx in ("3", "4", "5", "6", "11")):
+        sym_yf = f"{sym}4.SA"
+    else:
+        sym_yf = f"{sym}.SA"
+
+    highs, lows, closes = [], [], []
+
+    # 1. Fonte Primária: Yahoo Finance
+    url_yf = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym_yf}?interval=1d&range=2mo"
+    try:
+        req = urllib.request.Request(url_yf, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            dados = json.loads(r.read().decode("utf-8"))
+            res = dados.get("chart", {}).get("result", [])
+            if res:
+                q = res[0].get("indicators", {}).get("quote", [{}])[0]
+                highs = [float(h) for h in q.get("high", []) if h is not None]
+                lows = [float(l) for l in q.get("low", []) if l is not None]
+                closes = [float(c) for c in q.get("close", []) if c is not None]
+    except Exception:
+        pass
+
+    # 2. Fonte Secundária: Brapi
+    if len(closes) < 15:
+        try:
+            token = "tRt1KUYAaiv1JJdjGaEJhu"
+            url_bp = f"https://brapi.dev/api/quote/{sym}?range=2mo&interval=1d"
+            req2 = urllib.request.Request(url_bp, headers={"Authorization": f"Bearer {token}", "User-Agent": "FiscoTrade/1.0"})
+            with urllib.request.urlopen(req2, timeout=5) as r2:
+                d2 = json.loads(r2.read().decode("utf-8"))
+                hist = d2.get("results", [{}])[0].get("historicalDataPrice", [])
+                highs = [float(item["high"]) for item in hist if item.get("high") is not None]
+                lows = [float(item["low"]) for item in hist if item.get("low") is not None]
+                closes = [float(item["close"]) for item in hist if item.get("close") is not None]
+        except Exception:
+            pass
+
+    period = 13
+    if len(closes) < period + 2 or len(highs) < period + 2 or len(lows) < period + 2:
+        res_ind = {"status": "indisponivel", "tendencia": "indefinida", "sinal": "normal"}
+        _CACHE_RADAR_TENDENCIA[sym] = (agora_ts, res_ind)
+        return res_ind
+
+    state = "alta" if closes[period - 1] > (sum(lows[:period]) / period) else "baixa"
+    hilo_values = []
+    states = []
+
+    for i in range(period, len(closes)):
+        sma_high = sum(highs[i - period:i]) / period
+        sma_low = sum(lows[i - period:i]) / period
+        c = closes[i]
+
+        if state == "alta":
+            if c < sma_low:
+                state = "baixa"
+                hilo_val = sma_high
+            else:
+                hilo_val = sma_low
+        else:
+            if c > sma_high:
+                state = "alta"
+                hilo_val = sma_low
+            else:
+                hilo_val = sma_high
+
+        hilo_values.append(hilo_val)
+        states.append(state)
+
+    ult_close = closes[-1]
+    ult_hilo = hilo_values[-1]
+    ult_state = states[-1]
+    penult_state = states[-2] if len(states) >= 2 else ult_state
+
+    dist_pct = abs(ult_close - ult_hilo) / ult_close * 100 if ult_close > 0 else 0.0
+    virada_recente = (ult_state != penult_state)
+    possivel_virada = (dist_pct <= 1.2) and not virada_recente
+
+    resultado = {
+        "status": "ok",
+        "ativo": sym,
+        "tendencia": ult_state,            # 'alta' ou 'baixa'
+        "virada_recente": virada_recente,  # True se virou hoje
+        "possivel_virada": possivel_virada,# True se está a <= 1.2% do gatilho
+        "distancia_pct": round(dist_pct, 1),
+        "preco_ref": round(ult_close, 2),
+    }
+    _CACHE_RADAR_TENDENCIA[sym] = (agora_ts, resultado)
+    return resultado
+
+
 def atualizar_modulos_usuario(conexao: sqlite3.Connection, usuario_id: int,
                              modulo_fiscal: bool, modulo_opcoes: bool) -> None:
     """Ativa ou desativa os módulos de um usuário."""
@@ -2641,5 +2752,5 @@ __all__ = [
     "excluir_opcao_operacao", "atualizar_modulos_usuario", "importar_opcoes_google_sheet",
     "importar_opcoes_arquivo", "gerar_modelo_planilha_opcoes",
     "obter_config_api_cotacoes", "salvar_config_api_cotacoes", "testar_conexao_api_cotacoes",
-    "sincronizar_cotacoes_opcoes", "obter_cotacao_opcao_mercado",
+    "sincronizar_cotacoes_opcoes", "obter_cotacao_opcao_mercado", "obter_radar_tendencia_ativo",
 ]
