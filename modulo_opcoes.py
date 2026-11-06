@@ -754,35 +754,6 @@ def pagina_diario_opcoes() -> None:
     win_rate = (vitoriosas / len(encerradas) * 100) if encerradas else 0.0
     lucro_total = sum(float(o["resultado_financeiro"]) for o in encerradas)
 
-    # Reconciliação com a métrica oficial do Profit para posições em aberto:
-    custo_compras_ab = 0.0
-    credito_vendas_ab = 0.0
-    total_posicionado = 0.0
-    res_aberto = 0.0
-
-    for o in abertas:
-        pago = float(o["preco_pago"])
-        rec = float(o.get("preco_recebido") or pago)
-        atual = float(o.get("preco_atual") or pago)
-        qtd = int(o["quantidade"])
-        est = o.get("estrutura", "")
-
-        if "VENDA" in est:
-            credito_vendas_ab += rec * qtd
-            val_pos = - (atual * qtd)
-            res = (rec - atual) * qtd
-        else:
-            custo_compras_ab += pago * qtd
-            val_pos = atual * qtd
-            res = (atual - pago) * qtd
-
-        total_posicionado += val_pos
-        res_aberto += res
-
-    custo_liquido_aberto = custo_compras_ab - credito_vendas_ab
-    vol_bruto_aberto = custo_compras_ab + credito_vendas_ab
-    pct_res_aberto = (res_aberto / vol_bruto_aberto * 100) if vol_bruto_aberto > 0 else 0.0
-
     # Capital Inicial da Carteira (editável pelo usuário e persistido no banco)
     chave_cap_sessao = "opcoes_capital_inicial"
     if chave_cap_sessao not in st.session_state:
@@ -875,27 +846,16 @@ def pagina_diario_opcoes() -> None:
             "tom": "pos" if retorno_sobre_capital >= 0 else "neg",
         },
     ])
-    tema.kpis([
-        {
-            "rotulo": "Total Posicionado (A Mercado)",
-            "valor": _moeda_priv(total_posicionado, ocultar_moeda),
-            "icone": "💼",
-            "delta": f"Custo Desembolsado: {_moeda_priv(custo_liquido_aberto, ocultar_moeda)}",
-        },
-        {
-            "rotulo": "Resultado em Aberto (Flutuante)",
-            "valor": f"{_moeda_priv(res_aberto, ocultar_moeda)} ({pct_res_aberto:+.1f}%)",
-            "icone": "📊",
-            "tom": "pos" if res_aberto >= 0 else "neg",
-            "delta": f"{len(abertas)} opções em carteira",
-        },
-        {
-            "rotulo": f"Posições Prontas p/ Rolar (≥{gatilho_global:.0f}%)",
-            "valor": f"{len(rolagens_prontas)} alerta(s)",
-            "icone": "🚨",
-            "tom": "pos" if rolagens_prontas else "neg",
-        },
-    ])
+
+    if rolagens_prontas:
+        tema.kpis([
+            {
+                "rotulo": f"Posições Prontas p/ Rolar (≥{gatilho_global:.0f}%)",
+                "valor": f"{len(rolagens_prontas)} alerta(s)",
+                "icone": "🚨",
+                "tom": "pos",
+            },
+        ])
 
     # 3. Alerta de Destaque para Rolagem
     if rolagens_prontas:
