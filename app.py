@@ -68,14 +68,17 @@ st.set_page_config(
 
 tema.aplicar()
 
-# Interceptador de Link Temporário da Aula para Alunos (Válido por 20 horas sem login)
+# Interceptador de Link Temporário da Aula para Alunos (Acesso Privado: Requer Conta Gratuita ou PRO)
 token_aula = st.query_params.get("token")
 view_param = st.query_params.get("view")
 if view_param == "print_aula" and token_aula:
-    import modulo_opcoes
     conexao = paginas.obter_conexao()
-    modulo_opcoes.pagina_publica_print_aula(conexao, str(token_aula))
-    st.stop()
+    if not st.session_state.get("autenticado"):
+        st.info("🎓 **Acesso Exclusivo à Sala de Aula** — Para acompanhar a planilha da aula ao vivo, entre com sua conta ou faça um cadastro gratuito abaixo em menos de 1 minuto.")
+    else:
+        import modulo_opcoes
+        modulo_opcoes.pagina_publica_print_aula(conexao, str(token_aula))
+        st.stop()
 
 
 

@@ -1,3 +1,4 @@
+
 """
 Módulo de Gestão e Diário de Operações de Opções — FiscoTrade.
 
@@ -15,6 +16,21 @@ import streamlit as st
 
 import paginas
 import persistencia as bd
+
+
+def _obter_base_url_site() -> str:
+    """Retorna o endereço base do site (protocolo + host) para geração de links completos."""
+    try:
+        if hasattr(st, "context"):
+            headers = getattr(st.context, "headers", {}) or {}
+            host = headers.get("host") or headers.get("x-forwarded-host")
+            proto = headers.get("x-forwarded-proto") or ("https" if host and "localhost" not in str(host) else "http")
+            if host:
+                return f"{proto}://{host}"
+    except Exception:
+        pass
+    return ""
+
 import tema
 
 
@@ -137,11 +153,12 @@ def _fmt_moeda_delta_priv(val: float, ocultar: bool = False) -> str:
 
 def _badge_est(est: str | None) -> str:
     est_u = (est or "").upper()
+    trava_tag = ' <span style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;padding:1px 5px;border-radius:4px;font-size:0.65rem;font-weight:700;">TRAVA</span>' if "TRAVA" in est_u else ""
     if "PUT" in est_u:
-        return '<span class="ft-badge-put">PUT</span>'
+        return f'<span class="ft-badge-put">PUT</span>{trava_tag}'
     elif "CALL" in est_u:
-        return '<span class="ft-badge-call">CALL</span>'
-    return f'<span class="ft-badge-call">{est or "—"}</span>'
+        return f'<span class="ft-badge-call">CALL</span>{trava_tag}'
+    return f'<span class="ft-badge-call">{est or "—"}</span>{trava_tag}'
 
 
 def _avaliar_sinal_radar(radar: dict, estrutura: str) -> dict:
@@ -381,7 +398,13 @@ def _render_html_tabela_abertas_modo_aula(linhas: list[dict]) -> str:
             if atingiu
             else '<span class="ft-val-neu">Normal</span>'
         )
-        badge_radar = row.get("radar") or row.get("badge_radar") or '<span class="ft-radar-ind">⚪ Em Análise</span>' 
+        badge_val = row.get("badge_radar") or row.get("radar")
+        if isinstance(badge_val, dict):
+            badge_radar = badge_val.get("badge_html", '<span class="ft-radar-ind">⚪ Em Análise</span>')
+        elif isinstance(badge_val, str) and badge_val:
+            badge_radar = badge_val
+        else:
+            badge_radar = '<span class="ft-radar-ind">⚪ Em Análise</span>' 
         rot_pr = "Rec:" if "VENDA" in str(row.get("estrutura", "")).upper() else "Pago:"
 
         destaque = row.get("destaque_dia")
@@ -410,24 +433,35 @@ def _render_html_tabela_abertas_modo_aula(linhas: list[dict]) -> str:
 
 def _render_html_planilha_sala_aula(nome_sala: str, data_hora_aula: str, linhas: list[dict], zoom_pct: str = "100%") -> str:
     """Renderiza a planilha idêntica ao modelo de apresentação do professor (ex: SALA AO VIVO)."""
+    try:
+        z_factor = float(str(zoom_pct).replace("%", "").strip()) / 100.0
+    except Exception:
+        z_factor = 1.0
+
+    font_sz = f"{0.82 * z_factor:.2f}rem"
+    font_th = f"{0.72 * z_factor:.2f}rem"
+    th_pad = f"{round(8 * z_factor)}px {round(10 * z_factor)}px"
+    td_pad = f"{round(6 * z_factor)}px {round(10 * z_factor)}px"
+    title_sz = f"{1.6 * min(1.2, max(0.85, z_factor)):.2f}rem"
+
     css_sala = f"""
     <style>
     @media print {{
         body {{ margin: 0; padding: 10px; background: #ffffff !important; }}
         .no-print {{ display: none !important; }}
-        .sala-box {{ box-shadow: none !important; border: 1px solid #000 !important; zoom: 100% !important; }}
+        .sala-box {{ box-shadow: none !important; border: 1px solid #000 !important; }}
         .sala-header {{ background: #000000 !important; color: #22c55e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
         .sala-row-verde {{ background-color: #dcfce7 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
         .sala-row-vermelho {{ background-color: #fecaca !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
     }}
     .sala-wrapper {{ width: 100%; overflow-x: auto; margin: 10px 0 20px 0; }}
-    .sala-box {{ width: 100%; border: 2px solid #1e293b; border-radius: 8px; overflow: hidden; background: #ffffff; box-shadow: 0 4px 12px rgba(0,0,0,0.08); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; zoom: {zoom_pct}; }}
+    .sala-box {{ width: 100%; border: 2px solid #1e293b; border-radius: 8px; overflow: hidden; background: #ffffff; box-shadow: 0 4px 12px rgba(0,0,0,0.08); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }}
     .sala-header {{ background: #000000; color: #22c55e; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #22c55e; }}
-    .sala-title {{ font-size: 1.6rem; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: #22c55e; text-shadow: 0 0 10px rgba(34,197,94,0.4); }}
+    .sala-title {{ font-size: {title_sz}; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: #22c55e; text-shadow: 0 0 10px rgba(34,197,94,0.4); }}
     .sala-sub {{ font-size: 0.85rem; color: #94a3b8; font-weight: 600; }}
-    .sala-table {{ width: 100%; border-collapse: collapse; font-size: 0.82rem; }}
-    .sala-table th {{ background: #f8fafc; color: #0f172a; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; padding: 8px 10px; border: 1px solid #cbd5e1; text-align: center; }}
-    .sala-table td {{ padding: 6px 10px; border: 1px solid #cbd5e1; vertical-align: middle; }}
+    .sala-table {{ width: 100%; border-collapse: collapse; font-size: {font_sz}; }}
+    .sala-table th {{ background: #f8fafc; color: #0f172a; font-weight: 800; font-size: {font_th}; text-transform: uppercase; padding: {th_pad}; border: 1px solid #cbd5e1; text-align: center; }}
+    .sala-table td {{ padding: {td_pad}; border: 1px solid #cbd5e1; vertical-align: middle; }}
     .sala-table td.col-r {{ text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
     .sala-table td.col-c {{ text-align: center; }}
     .sala-row-verde {{ background-color: #dcfce7 !important; color: #14532d; font-weight: 600; }}
@@ -502,6 +536,35 @@ def _render_html_planilha_sala_aula(nome_sala: str, data_hora_aula: str, linhas:
 
     parts.append("</tbody></table></div></div></div>")
     return "".join(parts)
+
+
+def dimensionar_lote_opcao(alvo_reais: float, preco_unitario: float) -> tuple[int, float]:
+    """
+    Calcula a quantidade ideal de opcoes em multiplos de 100 unidades (lote padrao B3, minimo 100 un).
+    Escolhe o lote de 100 cujo valor financeiro seja o mais proximo do estipulado.
+    Se a diferenca for igual ou menor para o lote inferior, prioriza fechar para menos.
+    Retorna (quantidade_unidades, valor_alocado_reais).
+    """
+    if preco_unitario <= 0 or alvo_reais <= 0:
+        return (100, round(100 * max(0.01, preco_unitario), 2))
+
+    qtd_teorica = alvo_reais / preco_unitario
+    lote_base = int(qtd_teorica // 100) * 100
+    if lote_base < 100:
+        return (100, round(100 * preco_unitario, 2))
+
+    lote_inf = lote_base
+    lote_sup = lote_base + 100
+
+    custo_inf = lote_inf * preco_unitario
+    custo_sup = lote_sup * preco_unitario
+
+    diff_inf = abs(custo_inf - alvo_reais)
+    diff_sup = abs(custo_sup - alvo_reais)
+
+    if diff_inf <= diff_sup:
+        return (int(lote_inf), round(custo_inf, 2))
+    return (int(lote_sup), round(custo_sup, 2))
 
 
 @st.dialog("🔄 Rolar Opção com Preservação de Capital")
@@ -908,10 +971,18 @@ def modal_editar_operacao(op: dict) -> None:
     with c1:
         novo_cod = st.text_input("Código", value=str(op["codigo"]), key="edt_cod").strip().upper()
     with c2:
-        estruturas = ["COMPRA DE CALL", "COMPRA DE PUT", "VENDA DE CALL", "VENDA DE PUT", "TRAVA", "OUTRA"]
         est_atual = str(op.get("estrutura") or "COMPRA DE CALL").upper()
-        idx_est = estruturas.index(est_atual) if est_atual in estruturas else 0
-        nova_est = st.selectbox("Estrutura", estruturas, index=idx_est, key="edt_est")
+        is_trava_atual = "TRAVA" in est_atual
+        est_limpa = est_atual.replace("(TRAVA)", "").replace("TRAVA", "").strip() or "COMPRA DE CALL"
+        estruturas_base = ["COMPRA DE CALL", "COMPRA DE PUT", "VENDA DE CALL", "VENDA DE PUT", "OUTRA"]
+        idx_est = estruturas_base.index(est_limpa) if est_limpa in estruturas_base else 0
+        c_ed1, c_ed2 = st.columns([1.6, 1.2])
+        with c_ed1:
+            nova_est_base = st.selectbox("Estrutura", estruturas_base, index=idx_est, key="edt_est_base")
+        with c_ed2:
+            st.write("")
+            nova_is_trava = st.checkbox("Pertence a Trava", value=is_trava_atual, key="edt_trava_check")
+        nova_est = f"{nova_est_base} (TRAVA)" if nova_is_trava else nova_est_base
     with c3:
         status_opts = ["aberta", "encerrada", "rolada", "virada"]
         st_atual = str(op.get("status") or "aberta").lower()
@@ -1134,78 +1205,12 @@ def _secao_ambiente_modo_aula(
                         modal_rolar_opcao(op_pronta)
 
     # Configurações Completas da Sala, Textos e Metodologia (Editável pelo Dono)
-    with st.expander("⚙️ Personalizar Informações da Sala, Textos e Metodologia"):
-        st.caption("Personalize o nome da sala, os textos exibidos no banner superior, data/hora da aula e regras didáticas de rolagem:")
-
-        c_cf1, c_cf2 = st.columns([2, 1.2])
-        with c_cf1:
-            nome_sala_in = st.text_input("Nome da Sala / Aula", value=nome_sala_atual, key="cfg_sala_nome").strip()
-        with c_cf2:
-            gatilho_rol_in = st.number_input("Alvo de Rolagem (%)", min_value=10.0, max_value=500.0, value=gatilho_aula_atual, step=10.0, key="cfg_sala_gatilho_rol")
-
-        subtitulo_in = st.text_input(
-            "Subtítulo / Descrição da Metodologia (Exibido abaixo do nome da sala no banner)",
-            value=subtitulo_atual,
-            key="cfg_sala_subtitulo",
-            help="Texto explicativo que aparece logo abaixo do nome da sala no banner superior."
-        ).strip()
-
-        criterio_rol_in = st.text_area(
-            "Critério Didático de Rolagem (Texto exibido no alerta)",
-            value=criterio_atual,
-            key="cfg_sala_criterio_rol",
-            help="Mensagem que explica a regra de rolagem aos alunos quando o gatilho é atingido."
-        ).strip()
-
-        c_dh1, c_dh2 = st.columns([1.5, 2])
-        with c_dh1:
-            modo_dh_opcoes = ["🕒 Data/Hora Automática (Ao vivo)", "✏️ Data/Hora Personalizada"]
-            idx_modo_dh = 1 if modo_dh_atual == "manual" else 0
-            sel_modo_dh = st.radio("Exibição da Data e Hora:", modo_dh_opcoes, index=idx_modo_dh, key="cfg_sala_modo_dh")
-            novo_modo_dh = "manual" if "Personalizada" in sel_modo_dh else "auto"
-        with c_dh2:
-            dh_pers_in = st.text_input(
-                "Data e Hora Customizada da Aula",
-                value=dh_pers_atual if dh_pers_atual else data_hora_exibida,
-                disabled=(novo_modo_dh == "auto"),
-                key="cfg_sala_dh_pers",
-                help="Exemplo: 07/11/2026 às 00:50 ou 06/11/2026 às 20:00"
-            ).strip()
-
-        c_par1, c_par2 = st.columns(2)
-        with c_par1:
-            aloc_padrao_in = st.number_input("Risco por Opção (%)", min_value=0.1, max_value=20.0, value=aloc_pct_atual, step=0.5, key="cfg_sala_aloc")
-        with c_par2:
-            cap_sim_in = st.number_input("Capital Simulado Padrão (R$)", min_value=100.0, max_value=1_000_000.0, value=cap_sim_atual, step=1000.0, key="cfg_sala_cap")
-
-        cur_u = conexao.execute("SELECT usuario, nome FROM usuarios WHERE id = ?", (int(usuario_id),))
-        u_row = cur_u.fetchone()
-        prof_nome = (u_row[1] if u_row and u_row[1] else (u_row[0] if u_row else "Professor"))
-
-        if st.button("💾 Salvar Personalizações da Sala", type="primary", icon=":material/save:"):
-            bd.atualizar_config_sala_aula(
-                conexao,
-                sala["id"],
-                nome_sala_in,
-                aloc_padrao_in,
-                cap_sim_in,
-                subtitulo_in,
-                criterio_rol_in,
-                novo_modo_dh,
-                dh_pers_in,
-                gatilho_rol_in,
-                usuario_id,
-                prof_nome
-            )
-            st.success("Configurações e textos da sala atualizados com sucesso!")
-            st.rerun()
-
-    # Abas do Modo Aula
-    aba_aula_abertas, aba_aula_print, aba_aula_simulador, aba_aula_equipe = st.tabs([
+        # Abas do Modo Aula
+    aba_aula_abertas, aba_aula_print, aba_aula_simulador, aba_aula_admin = st.tabs([
         f"🟢 Posições da Turma ({len(abertas)})",
         "📸 Print para Alunos (Visão Planilha)",
-        "🧮 Simulador de Capital (Regra 1%)",
-        "👥 Professores & Auditoria",
+        "🧮 Simulador de Capital",
+        "⚙️ Administração da Sala & Professores",
     ])
 
     # 1. ABA: POSIÇÕES DA TURMA (VISUAL LIMPO SEM QUANTIDADES E SEM R$)
@@ -1338,14 +1343,15 @@ def _secao_ambiente_modo_aula(
                 res_pct = ((p_atual - p_pago) / p_pago * 100) if p_pago > 0 else 0.0
 
             d_ini = _extrair_iso_data(o.get("data_inicio"))
-            # Aberta no dia de alteração -> Verde! Mantida de dias anteriores -> Sem destaque
             destaque = "verde" if (d_ini and d_ini == data_mais_recente_carteira) else None
 
             linhas_planilha.append({
                 "codigo": o["codigo"],
                 "estrutura": o.get("estrutura", "—"),
                 "inicio": _p_data(o.get("data_inicio")),
+                "inicio_iso": d_ini or "9999-99-99",
                 "fim": "",
+                "fim_iso": "",
                 "dias": int(dias_op),
                 "pago": p_pago,
                 "recebido": p_atual,
@@ -1357,83 +1363,83 @@ def _secao_ambiente_modo_aula(
 
         for o in encerradas:
             d_fim = _extrair_iso_data(o.get("data_fim"))
-            # Apenas encerramentos do dia!
             if d_fim and d_fim == data_mais_recente_carteira:
                 p_pago = float(o.get("preco_pago") or 0.0)
                 p_rec = float(o.get("preco_recebido") or 0.0)
                 dias_op = o.get("dias") or bd._calcular_dias_operacao(o.get("data_inicio"), o.get("data_fim"))
                 res_pct = float(o.get("resultado_pct") or 0.0)
+                d_ini = _extrair_iso_data(o.get("data_inicio"))
 
                 linhas_planilha.append({
                     "codigo": o["codigo"],
                     "estrutura": o.get("estrutura", "—"),
                     "inicio": _p_data(o.get("data_inicio")),
+                    "inicio_iso": d_ini or "9999-99-99",
                     "fim": _p_data(o.get("data_fim")),
+                    "fim_iso": d_fim or "",
                     "dias": int(dias_op),
                     "pago": p_pago,
                     "recebido": p_rec,
                     "res_pct": res_pct,
                     "sucesso": o.get("sucesso", "s" if res_pct > 0 else "n"),
-                    "status": o.get("status", "encerrada"),
+                    "status": "encerrada",
                     "destaque_dia": "vermelho",
                 })
 
-        # Ordenar por código
-        linhas_planilha.sort(key=lambda x: (0 if str(x.get("status")).lower() == "aberta" else 1, str(x.get("codigo")).upper()))
+        # ORDENAÇÃO CRONOLÓGICA (DA MAIS ANTIGA PARA A MAIS NOVA OPERAÇÃO)
+        # Na mesma data, operações encerradas (venda/rolagem) aparecem antes de novas entradas
+        linhas_planilha.sort(key=lambda x: (
+            x.get("inicio_iso", "9999-99-99"),
+            0 if x.get("status") == "encerrada" else 1,
+            str(x.get("codigo", "")).upper()
+        ))
 
-        # Controles de Zoom e Link Temporário
-        c_zoom, c_link = st.columns([2.5, 2])
+        # Controles: Validade do Link, Zoom e Botão de Gerar Link
+        c_zoom, c_val, c_btn = st.columns([1.8, 1.4, 2])
         with c_zoom:
             zoom_sel = st.select_slider(
-                "🔍 Escala / Zoom da Planilha (Ajuste para Caber na Tela da Live):",
+                "🔍 Zoom / Escala da Planilha:",
                 options=["70%", "80%", "85%", "90%", "95%", "100%", "110%", "120%"],
                 value="100%",
                 key="slider_zoom_aula_planilha"
             )
-        with c_link:
-            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-            if st.button("🔗 Gerar Link Temporário para Alunos (Válido 20h)", type="secondary", icon=":material/share:", use_container_width=True):
-                novo_token = bd.criar_link_temporario_aula(conexao, sala["id"], usuario_id, horas_validade=20)
+        with c_val:
+            val_opcoes = [12, 24, 48, 72, 168]
+            horas_sel = st.selectbox(
+                "Validade do Link:",
+                val_opcoes,
+                index=1,
+                format_func=lambda h: f"{h} horas" if h < 168 else "7 dias (168h)",
+                key="sel_validade_link_aula"
+            )
+        with c_btn:
+            st.write("")
+            if st.button("🔗 Gerar Link Temporário para Alunos", type="secondary", icon=":material/share:", use_container_width=True):
+                novo_token = bd.criar_link_temporario_aula(conexao, sala["id"], usuario_id, horas_validade=horas_sel)
                 st.session_state["ultimo_token_aula"] = novo_token
+                st.session_state["ultimas_horas_aula"] = horas_sel
 
         if "ultimo_token_aula" in st.session_state:
             tok = st.session_state["ultimo_token_aula"]
-            link_alunos = f"?view=print_aula&token={tok}"
-            st.success("✅ **Link Temporário Gerado com Sucesso! Válido por 20 horas.**")
-            st.info("Copie e envie aos alunos para que eles abram a planilha ao vivo em tela cheia e tirem prints diretamente:")
-            st.code(link_alunos, language="text")
+            h_valid = st.session_state.get("ultimas_horas_aula", 24)
+            base_url = _obter_base_url_site()
+            link_completo = f"{base_url}/?view=print_aula&token={tok}" if base_url else f"?view=print_aula&token={tok}"
+            st.success(f"✅ **Link Temporário Gerado com Sucesso! Válido por {h_valid} horas.**")
+            st.info("Copie o link abaixo para enviar aos alunos. O acesso é exclusivo para alunos cadastrados (gratuito ou PRO):")
+            st.code(link_completo, language="text")
 
         # Exibição da Planilha Sala de Aula
         _exibir_html(_render_html_planilha_sala_aula(nome_sala_atual, data_hora_exibida, linhas_planilha, zoom_pct=zoom_sel))
 
-        # Texto pronto para copiar para o grupo de alunos
-        with st.expander("📋 Texto Pronto para Copiar p/ Alunos (Telegram / WhatsApp)"):
-            tot_ab = len(abertas)
-            vitoriosas_enc = len([o for o in encerradas if o.get("sucesso") == "s"])
-            win_rate_calc = (vitoriosas_enc / len(encerradas) * 100) if encerradas else 100.0
-
-            resumo_zap = f"""🚀 *AULA AO VIVO — {sala['nome']}*
-📅 *Data:* {dt_hoje_str} às {hora_atual_str}
-
-📊 *STATUS DA CARTEIRA DIDÁTICA:*
-• Posições Abertas Ativas: {tot_ab} opções
-• Operações Encerradas no Método: {len(encerradas)} trades
-• Taxa de Acerto (Win Rate): {win_rate_calc:.1f}%
-
-🎯 *REGRAS DA METODOLOGIA:*
-1. Alocação disciplinada de {sala.get('alocacao_pct_padrao', 1.0):.1f}% do capital por opção.
-2. Rolagem de preservação com 50% de lucro garantido no bolso.
-3. Virada de tendência quando o radar quantitativo sinalizar inversão."""
-            st.code(resumo_zap, language="text")
-
-    # 3. ABA: SIMULADOR DE CAPITAL DO ALUNO (COMPOSTAGEM DIDÁTICA E DINÂMICA DE CAIXA)
+    # 3. ABA: SIMULADOR DE CAPITAL DO ALUNO
     with aba_aula_simulador:
-        st.markdown("#### 🧮 Simulador de Crescimento de Carteira do Aluno")
+        st.markdown("#### 🧮 Simulador de Capital do Aluno")
         st.info(
             f"💡 **Dinâmica Didática de Alocação e Gestão de Caixa**: "
-            "Defina o capital total do aluno (ex: R$ 20.000,00) e o limite de risco (ex: 1% por opção). "
-            "A cada entrada, o aluno desembolsa o valor correspondente (ex: R$ 200,00 por trade). "
-            "Ao encerrar uma opção, o capital investido retorna ao caixa somado ao lucro ou deduzido do prejuízo obtido."
+            "Defina o capital total do aluno (ex: R$ 20.000,00) e o risco por opção (ex: 1% por trade). "
+            "As opções no Brasil são negociadas em lotes de 100 em 100 contratos (mínimo 100 un). "
+            "O simulador dimensiona com inteligência o lote de 100 mais próximo do valor alvo estipulado. "
+            "Os lucros realizados retornam para o caixa do aluno, expandindo seu saldo enquanto o risco base de 1% é rigorosamente preservado."
         )
 
         scol1, scol2 = st.columns(2)
@@ -1449,7 +1455,7 @@ def _secao_ambiente_modo_aula(
             )
         with scol2:
             sim_pct_risco = st.number_input(
-                "Risco / Alocação por Opção (%)",
+                "Risco / Alocação Alvo por Opção (%)",
                 min_value=0.1,
                 max_value=20.0,
                 value=float(sala.get("alocacao_pct_padrao", 1.0)),
@@ -1460,6 +1466,34 @@ def _secao_ambiente_modo_aula(
 
         aloc_por_trade = sim_cap_inicial * (sim_pct_risco / 100.0)
 
+        # Cálculo do Período da Simulação em Meses (da operação mais antiga à mais recente)
+        todas_datas = []
+        for o in list(encerradas) + list(abertas):
+            d_i = _extrair_iso_data(o.get("data_inicio"))
+            d_f = _extrair_iso_data(o.get("data_fim"))
+            if d_i:
+                todas_datas.append(d_i)
+            if d_f:
+                todas_datas.append(d_f)
+
+        if todas_datas:
+            todas_datas.sort()
+            d_min_str = todas_datas[0]
+            d_max_str = todas_datas[-1]
+            try:
+                d1 = datetime.strptime(d_min_str, "%Y-%m-%d").date()
+                d2 = datetime.strptime(d_max_str, "%Y-%m-%d").date()
+                diff_dias = max(1, (d2 - d1).days)
+                diff_meses = max(1, round(diff_dias / 30.4375))
+                periodo_txt = f"{diff_meses} meses" if diff_meses > 1 else "1 mês"
+                periodo_sub = f"{d1.strftime('%d/%m/%y')} a {d2.strftime('%d/%m/%y')}"
+            except Exception:
+                periodo_txt = "—"
+                periodo_sub = ""
+        else:
+            periodo_txt = "—"
+            periodo_sub = ""
+
         # Ordenação cronológica das operações fechadas (do início ao fim)
         enc_cron = list(encerradas)
         enc_cron.sort(key=lambda x: (_extrair_iso_data(x.get("data_fim")) or _extrair_iso_data(x.get("data_inicio")) or "", x.get("id", 0)))
@@ -1469,9 +1503,16 @@ def _secao_ambiente_modo_aula(
         lucro_realizado_total_sim = 0.0
 
         for i, op in enumerate(enc_cron, 1):
+            p_pago = float(op.get("preco_pago") or 0.0)
+            p_rec = float(op.get("preco_recebido") or 0.0)
+            p_ref = p_pago if p_pago > 0 else (p_rec if p_rec > 0 else 0.50)
+
+            # Dimensionamento do lote de 100 em 100 contratos com fechamento prioritário para menos
+            lote_unidades, custo_alocado = dimensionar_lote_opcao(aloc_por_trade, p_ref)
+
             res_pct = float(op.get("resultado_pct") or 0.0)
-            lucro_trade = aloc_por_trade * (res_pct / 100.0)
-            retorno_caixa = aloc_por_trade + lucro_trade
+            lucro_trade = custo_alocado * (res_pct / 100.0)
+            retorno_caixa = custo_alocado + lucro_trade
             saldo_caixa += lucro_trade
             lucro_realizado_total_sim += lucro_trade
 
@@ -1480,31 +1521,36 @@ def _secao_ambiente_modo_aula(
                 "Opção": op["codigo"],
                 "Estrutura": op.get("estrutura", "—"),
                 "Data Saída": _p_data(op.get("data_fim")),
-                "Alocado (1%)": f"R$ {aloc_por_trade:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                "Lote": f"{lote_unidades:,.0f} un".replace(",", "."),
+                "Alocado Real": f"R$ {custo_alocado:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
                 "Resultado (%)": f"{res_pct:+.1f}%",
-                "Lucro do Aluno": f"{'+' if lucro_trade >= 0 else '-'}R$ {abs(lucro_trade):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                "Lucro / Prejuízo": f"{'+' if lucro_trade >= 0 else '-'}R$ {abs(lucro_trade):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
                 "Retorno ao Caixa": f"R$ {retorno_caixa:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
                 "Caixa Acumulado": f"R$ {saldo_caixa:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
             })
 
-        # Alocação atual em aberto
-        total_alocado_aberto = len(abertas) * aloc_por_trade
-        caixa_livre_hoje = max(0.0, saldo_caixa - total_alocado_aberto)
-
-        # Flutuante em aberto
+        # Alocação atual em aberto com lotes de 100 contratos
+        total_alocado_aberto = 0.0
         lucro_flutuante_aberto = 0.0
         for op in abertas:
             p_pago = float(op.get("preco_pago") or 0.0)
             p_atual = float(op.get("preco_atual") or p_pago)
+            p_ref = p_pago if p_pago > 0 else 0.50
+            lote_ab, custo_ab = dimensionar_lote_opcao(aloc_por_trade, p_ref)
+            total_alocado_aberto += custo_ab
             if p_pago > 0:
-                rend_ab = ((p_atual - p_pago) / p_pago) if "VENDA" not in str(op.get("estrutura", "")).upper() else ((p_pago - p_atual) / p_pago)
-                lucro_flutuante_aberto += (aloc_por_trade * rend_ab)
+                if "VENDA" in str(op.get("estrutura", "")).upper():
+                    rend_ab = (p_pago - p_atual) / p_pago
+                else:
+                    rend_ab = (p_atual - p_pago) / p_pago
+                lucro_flutuante_aberto += (custo_ab * rend_ab)
 
+        caixa_livre_hoje = max(0.0, saldo_caixa - total_alocado_aberto)
         patrimonio_total_sim = saldo_caixa + lucro_flutuante_aberto
         lucro_liquido_total_sim = patrimonio_total_sim - sim_cap_inicial
         pct_total_sim = (lucro_liquido_total_sim / sim_cap_inicial * 100) if sim_cap_inicial > 0 else 0.0
 
-        # Cards com layout amplo em CSS responsivo (sem truncamento '10.000,...')
+        # Formatação limpa dos cards
         c_ini_fmt = f"R$ {sim_cap_inicial:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         aloc_fmt = f"R$ {aloc_por_trade:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
         caixa_fmt = f"R$ {caixa_livre_hoje:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -1514,35 +1560,35 @@ def _secao_ambiente_modo_aula(
 
         st.markdown(f"""
         <div style="display:flex;gap:12px;flex-wrap:wrap;margin:15px 0 20px 0;">
-            <div style="flex:1;min-width:180px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.04);">
-                <div style="font-size:0.75rem;font-weight:700;color:#64748b;text-transform:uppercase;">💼 Capital Inicial</div>
+            <div style="flex:1;min-width:160px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.04);">
+                <div style="font-size:0.72rem;font-weight:700;color:#64748b;text-transform:uppercase;">💼 Capital Inicial</div>
                 <div style="font-size:1.25rem;font-weight:900;color:#0f172a;white-space:nowrap;margin-top:4px;">{c_ini_fmt}</div>
-                <div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">Base de partida</div>
+                <div style="font-size:0.72rem;color:#94a3b8;margin-top:2px;">Base de partida</div>
             </div>
-            <div style="flex:1;min-width:180px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.04);">
-                <div style="font-size:0.75rem;font-weight:700;color:#64748b;text-transform:uppercase;">🎯 Entrada por Opção ({sim_pct_risco:.1f}%)</div>
+            <div style="flex:1;min-width:160px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.04);">
+                <div style="font-size:0.72rem;font-weight:700;color:#64748b;text-transform:uppercase;">🎯 Alvo Entrada ({sim_pct_risco:.1f}%)</div>
                 <div style="font-size:1.25rem;font-weight:900;color:#0d9488;white-space:nowrap;margin-top:4px;">{aloc_fmt}</div>
-                <div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">Desembolso por trade</div>
+                <div style="font-size:0.72rem;color:#94a3b8;margin-top:2px;">Lotes de 100 contratos</div>
             </div>
-            <div style="flex:1;min-width:180px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.04);">
-                <div style="font-size:0.75rem;font-weight:700;color:#64748b;text-transform:uppercase;">💵 Caixa Livre Disponível</div>
+            <div style="flex:1;min-width:160px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.04);">
+                <div style="font-size:0.72rem;font-weight:700;color:#64748b;text-transform:uppercase;">⏱️ Período Simulado</div>
+                <div style="font-size:1.25rem;font-weight:900;color:#7c3aed;white-space:nowrap;margin-top:4px;">{periodo_txt}</div>
+                <div style="font-size:0.72rem;color:#94a3b8;margin-top:2px;">{periodo_sub}</div>
+            </div>
+            <div style="flex:1;min-width:160px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.04);">
+                <div style="font-size:0.72rem;font-weight:700;color:#64748b;text-transform:uppercase;">💵 Caixa Livre Disponível</div>
                 <div style="font-size:1.25rem;font-weight:900;color:#1e293b;white-space:nowrap;margin-top:4px;">{caixa_fmt}</div>
-                <div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">Disponível para compras</div>
+                <div style="font-size:0.72rem;color:#94a3b8;margin-top:2px;">{aloc_ab_fmt} em {len(abertas)} abertas</div>
             </div>
-            <div style="flex:1;min-width:180px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.04);">
-                <div style="font-size:0.75rem;font-weight:700;color:#64748b;text-transform:uppercase;">📊 Alocado em Aberto</div>
-                <div style="font-size:1.25rem;font-weight:900;color:#3b82f6;white-space:nowrap;margin-top:4px;">{aloc_ab_fmt}</div>
-                <div style="font-size:0.75rem;color:#94a3b8;margin-top:2px;">{len(abertas)} opções ativas</div>
-            </div>
-            <div style="flex:1;min-width:180px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.04);">
-                <div style="font-size:0.75rem;font-weight:700;color:#64748b;text-transform:uppercase;">💰 Lucro Realizado</div>
+            <div style="flex:1;min-width:160px;background:#ffffff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 2px 6px rgba(0,0,0,0.04);">
+                <div style="font-size:0.72rem;font-weight:700;color:#64748b;text-transform:uppercase;">💰 Lucro Realizado</div>
                 <div style="font-size:1.25rem;font-weight:900;color:#16a34a;white-space:nowrap;margin-top:4px;">{lucro_fmt}</div>
-                <div style="font-size:0.75rem;color:#16a34a;margin-top:2px;font-weight:700;">{len(enc_cron)} trades fechados</div>
+                <div style="font-size:0.72rem;color:#16a34a;margin-top:2px;font-weight:700;">{len(enc_cron)} trades fechados</div>
             </div>
-            <div style="flex:1;min-width:180px;background:#ffffff;border:2px solid #16a34a;border-radius:10px;padding:14px 16px;box-shadow:0 2px 6px rgba(22,163,74,0.12);">
-                <div style="font-size:0.75rem;font-weight:700;color:#16a34a;text-transform:uppercase;">🚀 Patrimônio Total</div>
+            <div style="flex:1;min-width:160px;background:#ffffff;border:2px solid #16a34a;border-radius:10px;padding:14px 16px;box-shadow:0 2px 6px rgba(22,163,74,0.12);">
+                <div style="font-size:0.72rem;font-weight:700;color:#16a34a;text-transform:uppercase;">🚀 Patrimônio Total</div>
                 <div style="font-size:1.25rem;font-weight:900;color:#0f172a;white-space:nowrap;margin-top:4px;">{patr_fmt}</div>
-                <div style="font-size:0.75rem;color:#16a34a;margin-top:2px;font-weight:700;">{pct_total_sim:+.1f}% de crescimento</div>
+                <div style="font-size:0.72rem;color:#16a34a;margin-top:2px;font-weight:700;">{pct_total_sim:+.1f}% acumulado</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1553,8 +1599,77 @@ def _secao_ambiente_modo_aula(
             st.markdown("##### 📜 Histórico de Retornos das Operações Encerradas do Aluno")
             tema.tabela(pd.DataFrame(tabela_simulada))
 
-    # 4. ABA: PROFESSORES & AUDITORIA
-    with aba_aula_equipe:
+    # 4. ABA: ADMINISTRAÇÃO DA SALA & PROFESSORES
+    with aba_aula_admin:
+        # Configurações Completas da Sala, Textos e Metodologia (Editável pelo Dono)
+        with st.expander("⚙️ Personalizar Informações da Sala, Textos e Metodologia"):
+            st.caption("Personalize o nome da sala, os textos exibidos no banner superior, data/hora da aula e regras didáticas de rolagem:")
+    
+            c_cf1, c_cf2 = st.columns([2, 1.2])
+            with c_cf1:
+                nome_sala_in = st.text_input("Nome da Sala / Aula", value=nome_sala_atual, key="cfg_sala_nome").strip()
+            with c_cf2:
+                gatilho_rol_in = st.number_input("Alvo de Rolagem (%)", min_value=10.0, max_value=500.0, value=gatilho_aula_atual, step=10.0, key="cfg_sala_gatilho_rol")
+    
+            subtitulo_in = st.text_input(
+                "Subtítulo / Descrição da Metodologia (Exibido abaixo do nome da sala no banner)",
+                value=subtitulo_atual,
+                key="cfg_sala_subtitulo",
+                help="Texto explicativo que aparece logo abaixo do nome da sala no banner superior."
+            ).strip()
+    
+            criterio_rol_in = st.text_area(
+                "Critério Didático de Rolagem (Texto exibido no alerta)",
+                value=criterio_atual,
+                key="cfg_sala_criterio_rol",
+                help="Mensagem que explica a regra de rolagem aos alunos quando o gatilho é atingido."
+            ).strip()
+    
+            c_dh1, c_dh2 = st.columns([1.5, 2])
+            with c_dh1:
+                modo_dh_opcoes = ["🕒 Data/Hora Automática (Ao vivo)", "✏️ Data/Hora Personalizada"]
+                idx_modo_dh = 1 if modo_dh_atual == "manual" else 0
+                sel_modo_dh = st.radio("Exibição da Data e Hora:", modo_dh_opcoes, index=idx_modo_dh, key="cfg_sala_modo_dh")
+                novo_modo_dh = "manual" if "Personalizada" in sel_modo_dh else "auto"
+            with c_dh2:
+                dh_pers_in = st.text_input(
+                    "Data e Hora Customizada da Aula",
+                    value=dh_pers_atual if dh_pers_atual else data_hora_exibida,
+                    disabled=(novo_modo_dh == "auto"),
+                    key="cfg_sala_dh_pers",
+                    help="Exemplo: 07/11/2026 às 00:50 ou 06/11/2026 às 20:00"
+                ).strip()
+    
+            c_par1, c_par2 = st.columns(2)
+            with c_par1:
+                aloc_padrao_in = st.number_input("Risco por Opção (%)", min_value=0.1, max_value=20.0, value=aloc_pct_atual, step=0.5, key="cfg_sala_aloc")
+            with c_par2:
+                cap_sim_in = st.number_input("Capital Simulado Padrão (R$)", min_value=100.0, max_value=1_000_000.0, value=cap_sim_atual, step=1000.0, key="cfg_sala_cap")
+    
+            cur_u = conexao.execute("SELECT usuario, nome FROM usuarios WHERE id = ?", (int(usuario_id),))
+            u_row = cur_u.fetchone()
+            prof_nome = (u_row[1] if u_row and u_row[1] else (u_row[0] if u_row else "Professor"))
+    
+            if st.button("💾 Salvar Personalizações da Sala", type="primary", icon=":material/save:"):
+                bd.atualizar_config_sala_aula(
+                    conexao,
+                    sala["id"],
+                    nome_sala_in,
+                    aloc_padrao_in,
+                    cap_sim_in,
+                    subtitulo_in,
+                    criterio_rol_in,
+                    novo_modo_dh,
+                    dh_pers_in,
+                    gatilho_rol_in,
+                    usuario_id,
+                    prof_nome
+                )
+                st.success("Configurações e textos da sala atualizados com sucesso!")
+                st.rerun()
+    
+        st.markdown("<div style='height: 15px;'></div>", unsafe_allow_html=True)
+
         st.markdown(f"#### 👥 Equipe de Professores da {sala['nome']}")
         st.caption("Acesso compartilhado entre professores da sala. Registro oficial por nome completo e data de ingresso.")
 
@@ -2272,10 +2387,17 @@ def pagina_diario_opcoes() -> None:
             with r1:
                 cod_in = st.text_input("Código da Opção", placeholder="Ex: BEEFX400").strip().upper()
             with r2:
-                estrutura_in = st.selectbox(
-                    "Estrutura",
-                    ["COMPRA DE CALL", "COMPRA DE PUT", "VENDA DE CALL", "VENDA DE PUT", "TRAVA", "OUTRA"]
-                )
+                c_est1, c_est2 = st.columns([1.6, 1.2])
+                with c_est1:
+                    estrutura_base = st.selectbox(
+                        "Estrutura",
+                        ["COMPRA DE CALL", "COMPRA DE PUT", "VENDA DE CALL", "VENDA DE PUT", "OUTRA"],
+                        key="nova_op_est_base"
+                    )
+                with c_est2:
+                    st.write("")
+                    pertence_trava = st.checkbox("Pertence a Trava", value=False, key="nova_op_is_trava")
+                estrutura_in = f"{estrutura_base} (TRAVA)" if pertence_trava else estrutura_base
             with r3:
                 dt_in = st.date_input("Data Início", value=date.today())
 
@@ -2484,7 +2606,9 @@ def pagina_publica_print_aula(conexao, token: str) -> None:
             "codigo": o["codigo"],
             "estrutura": o.get("estrutura", "—"),
             "inicio": _p_data(o.get("data_inicio")),
+            "inicio_iso": d_ini or "9999-99-99",
             "fim": "",
+            "fim_iso": "",
             "dias": int(dias_op),
             "pago": p_pago,
             "recebido": p_atual,
@@ -2502,11 +2626,14 @@ def pagina_publica_print_aula(conexao, token: str) -> None:
             dias_op = o.get("dias") or bd._calcular_dias_operacao(o.get("data_inicio"), o.get("data_fim"))
             res_pct = float(o.get("resultado_pct") or 0.0)
 
+            d_ini = _extrair_iso_data(o.get("data_inicio"))
             linhas_planilha.append({
                 "codigo": o["codigo"],
                 "estrutura": o.get("estrutura", "—"),
                 "inicio": _p_data(o.get("data_inicio")),
+                "inicio_iso": d_ini or "9999-99-99",
                 "fim": _p_data(o.get("data_fim")),
+                "fim_iso": d_fim or "",
                 "dias": int(dias_op),
                 "pago": p_pago,
                 "recebido": p_rec,
@@ -2516,7 +2643,12 @@ def pagina_publica_print_aula(conexao, token: str) -> None:
                 "destaque_dia": "vermelho",
             })
 
-    linhas_planilha.sort(key=lambda x: (0 if str(x.get("status")).lower() == "aberta" else 1, str(x.get("codigo")).upper()))
+    # Ordenação cronológica das operações para os alunos
+    linhas_planilha.sort(key=lambda x: (
+        x.get("inicio_iso", "9999-99-99"),
+        0 if x.get("status") == "encerrada" else 1,
+        str(x.get("codigo", "")).upper()
+    ))
 
     cur_s = conexao.execute("SELECT * FROM salas_aula WHERE id = ?", (int(dados_link["sala_id"]),))
     row_s = cur_s.fetchone()
@@ -2531,6 +2663,12 @@ def pagina_publica_print_aula(conexao, token: str) -> None:
         expira_fmt = datetime.fromisoformat(dados_link["expira_em"]).strftime("%d/%m/%Y às %H:%M")
     except Exception:
         pass
+
+    c_topo_nav1, c_topo_nav2 = st.columns([2.5, 4])
+    with c_topo_nav1:
+        if st.button("⬅️ Sair da Aula e Ir p/ Meu Painel", icon=":material/arrow_back:", type="secondary"):
+            st.query_params.clear()
+            st.rerun()
 
     st.markdown(f"""
     <div style="background:linear-gradient(135deg, #090d16 0%, #111827 100%);border:2px solid #22c55e;border-radius:12px;padding:16px 20px;margin-bottom:15px;">
