@@ -408,39 +408,39 @@ def _render_html_tabela_abertas_modo_aula(linhas: list[dict]) -> str:
     return "".join(parts)
 
 
-def _render_html_planilha_sala_nitro(nome_sala: str, data_hora_aula: str, linhas: list[dict], zoom_pct: str = "100%") -> str:
-    """Renderiza a planilha idêntica ao modelo de apresentação do professor (ex: SALA NITRO)."""
-    css_nitro = f"""
+def _render_html_planilha_sala_aula(nome_sala: str, data_hora_aula: str, linhas: list[dict], zoom_pct: str = "100%") -> str:
+    """Renderiza a planilha idêntica ao modelo de apresentação do professor (ex: SALA AO VIVO)."""
+    css_sala = f"""
     <style>
     @media print {{
         body {{ margin: 0; padding: 10px; background: #ffffff !important; }}
         .no-print {{ display: none !important; }}
-        .nitro-box {{ box-shadow: none !important; border: 1px solid #000 !important; zoom: 100% !important; }}
-        .nitro-header {{ background: #000000 !important; color: #22c55e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
-        .nitro-row-verde {{ background-color: #dcfce7 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
-        .nitro-row-vermelho {{ background-color: #fecaca !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+        .sala-box {{ box-shadow: none !important; border: 1px solid #000 !important; zoom: 100% !important; }}
+        .sala-header {{ background: #000000 !important; color: #22c55e !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+        .sala-row-verde {{ background-color: #dcfce7 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+        .sala-row-vermelho {{ background-color: #fecaca !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
     }}
-    .nitro-wrapper {{ width: 100%; overflow-x: auto; margin: 10px 0 20px 0; }}
-    .nitro-box {{ width: 100%; border: 2px solid #1e293b; border-radius: 8px; overflow: hidden; background: #ffffff; box-shadow: 0 4px 12px rgba(0,0,0,0.08); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; zoom: {zoom_pct}; }}
-    .nitro-header {{ background: #000000; color: #22c55e; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #22c55e; }}
-    .nitro-title {{ font-size: 1.6rem; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: #22c55e; text-shadow: 0 0 10px rgba(34,197,94,0.4); }}
-    .nitro-sub {{ font-size: 0.85rem; color: #94a3b8; font-weight: 600; }}
-    .nitro-table {{ width: 100%; border-collapse: collapse; font-size: 0.82rem; }}
-    .nitro-table th {{ background: #f8fafc; color: #0f172a; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; padding: 8px 10px; border: 1px solid #cbd5e1; text-align: center; }}
-    .nitro-table td {{ padding: 6px 10px; border: 1px solid #cbd5e1; vertical-align: middle; }}
-    .nitro-table td.col-r {{ text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
-    .nitro-table td.col-c {{ text-align: center; }}
-    .nitro-row-verde {{ background-color: #dcfce7 !important; color: #14532d; font-weight: 600; }}
-    .nitro-row-vermelho {{ background-color: #fecaca !important; color: #7f1d1d; font-weight: 600; }}
-    .nitro-row-roxa {{ background-color: #ede9fe !important; color: #4c1d95; font-weight: 600; }}
+    .sala-wrapper {{ width: 100%; overflow-x: auto; margin: 10px 0 20px 0; }}
+    .sala-box {{ width: 100%; border: 2px solid #1e293b; border-radius: 8px; overflow: hidden; background: #ffffff; box-shadow: 0 4px 12px rgba(0,0,0,0.08); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; zoom: {zoom_pct}; }}
+    .sala-header {{ background: #000000; color: #22c55e; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #22c55e; }}
+    .sala-title {{ font-size: 1.6rem; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; color: #22c55e; text-shadow: 0 0 10px rgba(34,197,94,0.4); }}
+    .sala-sub {{ font-size: 0.85rem; color: #94a3b8; font-weight: 600; }}
+    .sala-table {{ width: 100%; border-collapse: collapse; font-size: 0.82rem; }}
+    .sala-table th {{ background: #f8fafc; color: #0f172a; font-weight: 800; font-size: 0.72rem; text-transform: uppercase; padding: 8px 10px; border: 1px solid #cbd5e1; text-align: center; }}
+    .sala-table td {{ padding: 6px 10px; border: 1px solid #cbd5e1; vertical-align: middle; }}
+    .sala-table td.col-r {{ text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
+    .sala-table td.col-c {{ text-align: center; }}
+    .sala-row-verde {{ background-color: #dcfce7 !important; color: #14532d; font-weight: 600; }}
+    .sala-row-vermelho {{ background-color: #fecaca !important; color: #7f1d1d; font-weight: 600; }}
+    .sala-row-roxa {{ background-color: #ede9fe !important; color: #4c1d95; font-weight: 600; }}
     </style>
     """
-    parts = [css_nitro, '<div class="nitro-wrapper"><div class="nitro-box">']
+    parts = [css_sala, '<div class="sala-wrapper"><div class="sala-box">']
     parts.append(f"""
-    <div class="nitro-header">
+    <div class="sala-header">
         <div>
-            <div class="nitro-title">{nome_sala}</div>
-            <div class="nitro-sub">📅 {data_hora_aula} • 🟢 CARTEIRA ATUALIZADA</div>
+            <div class="sala-title">{nome_sala}</div>
+            <div class="sala-sub">📅 {data_hora_aula} • 🟢 CARTEIRA ATUALIZADA</div>
         </div>
         <div class="no-print" style="display:flex;gap:10px;align-items:center;">
             <button onclick="window.print()" style="cursor:pointer;background:#22c55e;color:#000000;border:none;font-weight:800;font-size:0.75rem;padding:7px 14px;border-radius:6px;box-shadow:0 2px 6px rgba(0,0,0,0.3);">
@@ -449,7 +449,7 @@ def _render_html_planilha_sala_nitro(nome_sala: str, data_hora_aula: str, linhas
         </div>
     </div>
     <div style="overflow-x: auto;">
-    <table class="nitro-table">
+    <table class="sala-table">
         <thead>
             <tr>
                 <th>CÓDIGO</th>
@@ -472,9 +472,9 @@ def _render_html_planilha_sala_nitro(nome_sala: str, data_hora_aula: str, linhas
         st_lower = str(row.get("status", "")).lower()
         cls_tr = ""
         if destaque == "verde" or (st_lower == "aberta" and destaque == "verde"):
-            cls_tr = ' class="nitro-row-verde"'
+            cls_tr = ' class="sala-row-verde"'
         elif destaque == "vermelho" or (st_lower != "aberta" and destaque == "vermelho"):
-            cls_tr = ' class="nitro-row-vermelho"'
+            cls_tr = ' class="sala-row-vermelho"'
 
         fim_str = row.get("fim") or "—"
         if fim_str in ("—", "None", "") and st_lower == "aberta":
@@ -1118,7 +1118,7 @@ def _secao_ambiente_modo_aula(
     with st.expander("⚙️ Configurações da Sala e Metodologia Didática"):
         c_cf1, c_cf2, c_cf3 = st.columns([2, 1.2, 1.2])
         with c_cf1:
-            nome_sala_in = st.text_input("Nome da Sala / Aula", value=str(sala.get("nome", "SALA NITRO")), key="cfg_sala_nome").strip()
+            nome_sala_in = st.text_input("Nome da Sala / Aula", value=str(sala.get("nome", "SALA AO VIVO")), key="cfg_sala_nome").strip()
         with c_cf2:
             aloc_padrao_in = st.number_input("Risco por Opção (%)", min_value=0.1, max_value=20.0, value=float(sala.get("alocacao_pct_padrao", 1.0)), step=0.5, key="cfg_sala_aloc")
         with c_cf3:
@@ -1250,7 +1250,7 @@ def _secao_ambiente_modo_aula(
                     if st.button("✏️ Editar", use_container_width=True, key="btn_aula_edt"):
                         modal_editar_operacao(op_alvo)
 
-    # 2. ABA: PRINT PARA ALUNOS (VISÃO PLANILHA SALA NITRO)
+    # 2. ABA: PRINT PARA ALUNOS (VISÃO PLANILHA SALA AO VIVO)
     with aba_aula_print:
         st.markdown(f"#### 📸 Visão Planilha de Apresentação — {sala['nome']}")
         st.caption("Visão da carteira atualizada para a aula: posições abertas atuais + fechamentos do dia (destaque em cores). Posições antigas já fechadas são filtradas automaticamente.")
@@ -1334,8 +1334,8 @@ def _secao_ambiente_modo_aula(
             st.info("Copie e envie aos alunos para que eles abram a planilha ao vivo em tela cheia e tirem prints diretamente:")
             st.code(link_alunos, language="text")
 
-        # Exibição da Planilha Sala Nitro
-        _exibir_html(_render_html_planilha_sala_nitro(sala["nome"], f"{dt_hoje_str} às {hora_atual_str}", linhas_planilha, zoom_pct=zoom_sel))
+        # Exibição da Planilha Sala de Aula
+        _exibir_html(_render_html_planilha_sala_aula(sala["nome"], f"{dt_hoje_str} às {hora_atual_str}", linhas_planilha, zoom_pct=zoom_sel))
 
         # Texto pronto para copiar para o grupo de alunos
         with st.expander("📋 Texto Pronto para Copiar p/ Alunos (Telegram / WhatsApp)"):
@@ -1653,12 +1653,12 @@ def pagina_diario_opcoes() -> None:
                 "🎓 Ativar Modo Aula",
                 value=st.session_state["modo_aula_ativo"],
                 key="toggle_modo_aula_switch",
-                help="Ativa a visualização didática sem quantidades e sem R$ alocado, com Visão Planilha Sala Nitro e Simulador de 1%."
+                help="Ativa a visualização didática sem quantidades e sem R$ alocado, com Visão Planilha Sala de Aula e Simulador de 1%."
             )
             st.session_state["modo_aula_ativo"] = modo_aula_ativo
 
         if st.session_state["modo_aula_ativo"]:
-            sala = bd.obter_ou_criar_sala_padrao_professor(conexao, usuario_id, "SALA NITRO")
+            sala = bd.obter_ou_criar_sala_padrao_professor(conexao, usuario_id, "SALA AO VIVO")
             _secao_ambiente_modo_aula(
                 conexao,
                 usuario_id,
@@ -2075,7 +2075,7 @@ def pagina_diario_opcoes() -> None:
                             if st.button("🗑️ Excluir Operação", type="secondary", use_container_width=True, key="btn_del_enc"):
                                 modal_excluir_operacao(op_enc_alvo)
 
-    # --- ABA 3: VISÃO COMPLETA (INTEGRALIZADA COMO NA PLANILHA NITRO) ---
+    # --- ABA 3: VISÃO COMPLETA (INTEGRALIZADA COMO NA PLANILHA DE CONTROLE) ---
     with aba_completa:
         st.markdown("#### 📑 Visão Integralizada (Todas as Operações)")
         st.caption(
@@ -2281,6 +2281,8 @@ def pagina_diario_opcoes() -> None:
                     with st.spinner("Processando e cadastrando operações..."):
                         bytes_arquivo = arquivo_subido.getvalue()
                         res = bd.importar_opcoes_arquivo(conexao, usuario_id, bytes_arquivo, arquivo_subido.name)
+                        # Verificação e higienização automática contra duplicatas
+                        bd.sanitizar_duplicatas_opcoes(conexao, usuario_id)
                         origem_txt = "do Nelogica Profit" if res.get("is_profit") else "da planilha modelo"
                         st.success(
                             f"✅ Importação {origem_txt} concluída com sucesso! **{res['importadas']}** nova(s) operação(ões) inserida(s) "
@@ -2375,7 +2377,7 @@ def pagina_publica_print_aula(conexao, token: str) -> None:
         st.error("⏰ **Este link temporário expirou ou é inválido.** Os links para alunos têm validade máxima de 20 horas. Peça ao seu professor um novo link de acesso.")
         return
 
-    sala_nome = dados_link.get("sala_nome", "SALA NITRO")
+    sala_nome = dados_link.get("sala_nome", "SALA AO VIVO")
     dono_usuario_id = int(dados_link["dono_usuario_id"])
 
     ops = bd.listar_opcoes_operacoes(conexao, dono_usuario_id)
@@ -2478,4 +2480,4 @@ def pagina_publica_print_aula(conexao, token: str) -> None:
         key="slider_zoom_pub_aluno"
     )
 
-    _exibir_html(_render_html_planilha_sala_nitro(sala_nome, dt_str, linhas_planilha, zoom_pct=zoom_pub))
+    _exibir_html(_render_html_planilha_sala_aula(sala_nome, dt_str, linhas_planilha, zoom_pct=zoom_pub))

@@ -28,6 +28,7 @@ Uso:
 from __future__ import annotations
 
 import hashlib
+import io
 import secrets
 import sqlite3
 from datetime import datetime, timedelta
@@ -2573,7 +2574,7 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
                             conteudo_bytes: bytes, nome_arquivo: str) -> dict:
     """
     Importa operações de opções a partir de arquivo Excel (.xlsx, .xls) ou CSV anexado pelo usuário.
-    Suporta tanto a planilha modelo padrão / Nitro quanto a exportação nativa do Nelogica Profit.
+    Suporta tanto a planilha modelo padrão quanto a exportação nativa do Nelogica Profit.
     """
     import io, re, unicodedata
     import pandas as pd
@@ -2814,7 +2815,7 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
                 })
                 importadas += 1
     else:
-        # --- PARSER PLANILHA MODELO PADRÃO / NITRO ---
+        # --- PARSER PLANILHA MODELO PADRÃO ---
         col_map = {}
         colunas_lista = list(df_dados.columns)
         for idx, col in enumerate(colunas_lista):
@@ -2983,6 +2984,8 @@ def importar_opcoes_arquivo(conexao: sqlite3.Connection, usuario_id: int,
                 })
                 importadas += 1
 
+    # Tratamento automático contra duplicatas: higieniza a base após qualquer importação
+    sanitizar_duplicatas_opcoes(conexao, usuario_id)
     conexao.commit()
     return {"importadas": importadas, "atualizadas": atualizadas, "is_profit": is_profit, "total": importadas + atualizadas}
 
@@ -3146,8 +3149,8 @@ def inicializar_tabelas_modo_aula(conexao: sqlite3.Connection) -> None:
     conexao.commit()
 
 
-def obter_ou_criar_sala_padrao_professor(conexao: sqlite3.Connection, usuario_id: int, nome_padrao: str = "SALA NITRO") -> dict:
-    """Garante que o professor possua ao menos uma sala de aula criada (ex: SALA NITRO)."""
+def obter_ou_criar_sala_padrao_professor(conexao: sqlite3.Connection, usuario_id: int, nome_padrao: str = "SALA AO VIVO") -> dict:
+    """Garante que o professor possua ao menos uma sala de aula criada (ex: SALA AO VIVO)."""
     inicializar_tabelas_modo_aula(conexao)
     cur = conexao.execute("""
         SELECT s.*, 'dono' AS papel FROM salas_aula s WHERE s.dono_id = ?
