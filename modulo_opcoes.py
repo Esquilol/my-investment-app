@@ -374,14 +374,14 @@ def _render_html_tabela_abertas_modo_aula(linhas: list[dict]) -> str:
         "</tr></thead><tbody>"
     )
     for row in linhas:
-        rend_pct = row["rend_pct"]
-        atingiu = row["atingiu"]
+        rend_pct = float(row.get("rend_pct") or 0.0)
+        atingiu = bool(row.get("atingiu") or row.get("atingiu_rolagem", False))
         badge_gatilho = (
             f'<span class="ft-badge-rolar">🎯 ROLAR (+{rend_pct:.0f}%)</span>'
             if atingiu
             else '<span class="ft-val-neu">Normal</span>'
         )
-        badge_radar = row.get("badge_radar", '<span class="ft-radar-ind">⚪ Em Análise</span>')
+        badge_radar = row.get("radar") or row.get("badge_radar") or '<span class="ft-radar-ind">⚪ Em Análise</span>' 
         rot_pr = "Rec:" if "VENDA" in str(row.get("estrutura", "")).upper() else "Pago:"
 
         destaque = row.get("destaque_dia")
@@ -1049,8 +1049,27 @@ def _secao_ambiente_modo_aula(
     gatilho_global: float
 ) -> None:
     """Ambiente didático e de mentoria ao vivo (Modo Aula)."""
-    dt_hoje_str = date.today().strftime("%d/%m/%Y")
-    hora_atual_str = datetime.now().strftime("%H:%M")
+    # Configurações dinâmicas e editáveis da Sala
+    nome_sala_atual = str(sala.get("nome") or "SALA AO VIVO")
+    aloc_pct_atual = float(sala.get("alocacao_pct_padrao") or 1.0)
+    cap_sim_atual = float(sala.get("capital_simulado_padrao") or 20000.0)
+
+    subtitulo_padrao = f"Ambiente didático ao vivo • Metodologia: {aloc_pct_atual:.1f}% de risco por opção • Rolagem com 50% garantido no bolso"
+    subtitulo_atual = str(sala.get("subtitulo_metodologia") or subtitulo_padrao)
+
+    criterio_padrao = "embolsar 50% do valor final garantido no bolso e reinvestir os outros 50% na opção ATM mais líquida da próxima série."
+    criterio_atual = str(sala.get("criterio_rolagem") or criterio_padrao)
+
+    modo_dh_atual = str(sala.get("data_hora_modo") or "auto")
+    dh_pers_atual = str(sala.get("data_hora_personalizada") or "")
+    gatilho_aula_atual = float(sala.get("gatilho_rolagem_pct") or gatilho_global)
+
+    if modo_dh_atual == "manual" and dh_pers_atual:
+        data_hora_exibida = dh_pers_atual
+    else:
+        dt_hoje_str = date.today().strftime("%d/%m/%Y")
+        hora_atual_str = datetime.now().strftime("%H:%M")
+        data_hora_exibida = f"{dt_hoje_str} às {hora_atual_str}"
 
     # Banner superior da Sala
     st.markdown(f"""
@@ -1058,15 +1077,15 @@ def _secao_ambiente_modo_aula(
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
             <div>
                 <div style="display: flex; align-items: center; gap: 10px;">
-                    <span style="font-size: 1.8rem; font-weight: 900; color: #22c55e; letter-spacing: 1px;">🎓 {sala['nome']}</span>
+                    <span style="font-size: 1.8rem; font-weight: 900; color: #22c55e; letter-spacing: 1px;">🎓 {nome_sala_atual}</span>
                     <span style="background: #22c55e; color: #000; font-weight: 800; font-size: 0.68rem; padding: 2px 8px; border-radius: 4px; text-transform: uppercase;">Modo Aula Ativo</span>
                 </div>
                 <div style="font-size: 0.85rem; color: #94a3b8; margin-top: 4px;">
-                    Ambiente didático ao vivo • Metodologia: <strong>{sala.get('alocacao_pct_padrao', 1.0):.1f}% de risco por opção</strong> • Rolagem com 50% garantido no bolso
+                    {subtitulo_atual}
                 </div>
             </div>
             <div style="text-align: right;">
-                <div style="font-size: 0.95rem; font-weight: 700; color: #f8fafc;">📅 {dt_hoje_str} às {hora_atual_str}</div>
+                <div style="font-size: 0.95rem; font-weight: 700; color: #f8fafc;">📅 {data_hora_exibida}</div>
                 <div style="font-size: 0.72rem; color: #94a3b8;">Papel: <strong>{str(sala.get('papel', 'professor')).upper()}</strong></div>
             </div>
         </div>
@@ -1097,14 +1116,14 @@ def _secao_ambiente_modo_aula(
                 rend = ((float(o.get("preco_recebido") or p_pago) - p_atual) / float(o.get("preco_recebido") or p_pago)) * 100
             else:
                 rend = ((p_atual - p_pago) / p_pago) * 100
-            if rend >= gatilho_global:
+            if rend >= gatilho_aula_atual:
                 rolagens_prontas_aula.append((o, rend))
 
     if rolagens_prontas_aula:
         with st.container():
             st.warning(
-                f"🎯 **Gatilho de Rolagem Atingido na Aula!** {len(rolagens_prontas_aula)} opção(ões) atingiram o alvo configurado (≥{gatilho_global:.0f}%). "
-                "Critério didático da metodologia: **embolsar 50% do valor final garantido no bolso** e **reinvestir os outros 50%** na opção ATM mais líquida da próxima série."
+                f"🎯 **Gatilho de Rolagem Atingido na Aula!** {len(rolagens_prontas_aula)} opção(ões) atingiram o alvo configurado (≥{gatilho_aula_atual:.0f}%). "
+                f"Critério didático da metodologia: **{criterio_atual}**"
             )
             for op_pronta, rend_pct in rolagens_prontas_aula:
                 c_al1, c_al2 = st.columns([3, 1])
@@ -1114,23 +1133,71 @@ def _secao_ambiente_modo_aula(
                     if st.button(f"🔄 Rolar {op_pronta['codigo']}", key=f"btn_aula_rol_{op_pronta['id']}", type="primary", use_container_width=True):
                         modal_rolar_opcao(op_pronta)
 
-    # Configuração da Sala e Gestão de Metodologia
-    with st.expander("⚙️ Configurações da Sala e Metodologia Didática"):
-        c_cf1, c_cf2, c_cf3 = st.columns([2, 1.2, 1.2])
+    # Configurações Completas da Sala, Textos e Metodologia (Editável pelo Dono)
+    with st.expander("⚙️ Personalizar Informações da Sala, Textos e Metodologia"):
+        st.caption("Personalize o nome da sala, os textos exibidos no banner superior, data/hora da aula e regras didáticas de rolagem:")
+
+        c_cf1, c_cf2 = st.columns([2, 1.2])
         with c_cf1:
-            nome_sala_in = st.text_input("Nome da Sala / Aula", value=str(sala.get("nome", "SALA AO VIVO")), key="cfg_sala_nome").strip()
+            nome_sala_in = st.text_input("Nome da Sala / Aula", value=nome_sala_atual, key="cfg_sala_nome").strip()
         with c_cf2:
-            aloc_padrao_in = st.number_input("Risco por Opção (%)", min_value=0.1, max_value=20.0, value=float(sala.get("alocacao_pct_padrao", 1.0)), step=0.5, key="cfg_sala_aloc")
-        with c_cf3:
-            cap_sim_in = st.number_input("Capital Simulado Padrão (R$)", min_value=100.0, max_value=1_000_000.0, value=float(sala.get("capital_simulado_padrao", 20000.0)), step=1000.0, key="cfg_sala_cap")
+            gatilho_rol_in = st.number_input("Alvo de Rolagem (%)", min_value=10.0, max_value=500.0, value=gatilho_aula_atual, step=10.0, key="cfg_sala_gatilho_rol")
+
+        subtitulo_in = st.text_input(
+            "Subtítulo / Descrição da Metodologia (Exibido abaixo do nome da sala no banner)",
+            value=subtitulo_atual,
+            key="cfg_sala_subtitulo",
+            help="Texto explicativo que aparece logo abaixo do nome da sala no banner superior."
+        ).strip()
+
+        criterio_rol_in = st.text_area(
+            "Critério Didático de Rolagem (Texto exibido no alerta)",
+            value=criterio_atual,
+            key="cfg_sala_criterio_rol",
+            help="Mensagem que explica a regra de rolagem aos alunos quando o gatilho é atingido."
+        ).strip()
+
+        c_dh1, c_dh2 = st.columns([1.5, 2])
+        with c_dh1:
+            modo_dh_opcoes = ["🕒 Data/Hora Automática (Ao vivo)", "✏️ Data/Hora Personalizada"]
+            idx_modo_dh = 1 if modo_dh_atual == "manual" else 0
+            sel_modo_dh = st.radio("Exibição da Data e Hora:", modo_dh_opcoes, index=idx_modo_dh, key="cfg_sala_modo_dh")
+            novo_modo_dh = "manual" if "Personalizada" in sel_modo_dh else "auto"
+        with c_dh2:
+            dh_pers_in = st.text_input(
+                "Data e Hora Customizada da Aula",
+                value=dh_pers_atual if dh_pers_atual else data_hora_exibida,
+                disabled=(novo_modo_dh == "auto"),
+                key="cfg_sala_dh_pers",
+                help="Exemplo: 07/11/2026 às 00:50 ou 06/11/2026 às 20:00"
+            ).strip()
+
+        c_par1, c_par2 = st.columns(2)
+        with c_par1:
+            aloc_padrao_in = st.number_input("Risco por Opção (%)", min_value=0.1, max_value=20.0, value=aloc_pct_atual, step=0.5, key="cfg_sala_aloc")
+        with c_par2:
+            cap_sim_in = st.number_input("Capital Simulado Padrão (R$)", min_value=100.0, max_value=1_000_000.0, value=cap_sim_atual, step=1000.0, key="cfg_sala_cap")
 
         cur_u = conexao.execute("SELECT usuario, nome FROM usuarios WHERE id = ?", (int(usuario_id),))
         u_row = cur_u.fetchone()
         prof_nome = (u_row[1] if u_row and u_row[1] else (u_row[0] if u_row else "Professor"))
 
-        if st.button("Salvar Configurações da Sala", type="primary", icon=":material/save:"):
-            bd.atualizar_config_sala_aula(conexao, sala["id"], nome_sala_in, aloc_padrao_in, cap_sim_in, usuario_id, prof_nome)
-            st.success("Configurações da sala salvas com sucesso!")
+        if st.button("💾 Salvar Personalizações da Sala", type="primary", icon=":material/save:"):
+            bd.atualizar_config_sala_aula(
+                conexao,
+                sala["id"],
+                nome_sala_in,
+                aloc_padrao_in,
+                cap_sim_in,
+                subtitulo_in,
+                criterio_rol_in,
+                novo_modo_dh,
+                dh_pers_in,
+                gatilho_rol_in,
+                usuario_id,
+                prof_nome
+            )
+            st.success("Configurações e textos da sala atualizados com sucesso!")
             st.rerun()
 
     # Abas do Modo Aula
@@ -1217,8 +1284,10 @@ def _secao_ambiente_modo_aula(
                     "pago": p_pago,
                     "atual": p_atual,
                     "rend_pct": rend_pct,
+                    "atingiu": atingiu,
                     "atingiu_rolagem": atingiu,
                     "radar": sinal_radar,
+                    "badge_radar": sinal_radar,
                     "destaque_dia": destaque_dia,
                 })
 
@@ -1335,7 +1404,7 @@ def _secao_ambiente_modo_aula(
             st.code(link_alunos, language="text")
 
         # Exibição da Planilha Sala de Aula
-        _exibir_html(_render_html_planilha_sala_aula(sala["nome"], f"{dt_hoje_str} às {hora_atual_str}", linhas_planilha, zoom_pct=zoom_sel))
+        _exibir_html(_render_html_planilha_sala_aula(nome_sala_atual, data_hora_exibida, linhas_planilha, zoom_pct=zoom_sel))
 
         # Texto pronto para copiar para o grupo de alunos
         with st.expander("📋 Texto Pronto para Copiar p/ Alunos (Telegram / WhatsApp)"):
@@ -2449,8 +2518,14 @@ def pagina_publica_print_aula(conexao, token: str) -> None:
 
     linhas_planilha.sort(key=lambda x: (0 if str(x.get("status")).lower() == "aberta" else 1, str(x.get("codigo")).upper()))
 
-    agora_br = datetime.now()
-    dt_str = agora_br.strftime("%d/%m/%Y às %H:%M")
+    cur_s = conexao.execute("SELECT * FROM salas_aula WHERE id = ?", (int(dados_link["sala_id"]),))
+    row_s = cur_s.fetchone()
+    sala_obj = dict(zip([d[0] for d in cur_s.description], row_s)) if row_s else {}
+    if sala_obj.get("data_hora_modo") == "manual" and str(sala_obj.get("data_hora_personalizada") or "").strip():
+        dt_str = str(sala_obj["data_hora_personalizada"]).strip()
+    else:
+        agora_br = datetime.now()
+        dt_str = agora_br.strftime("%d/%m/%Y às %H:%M")
     expira_fmt = ""
     try:
         expira_fmt = datetime.fromisoformat(dados_link["expira_em"]).strftime("%d/%m/%Y às %H:%M")

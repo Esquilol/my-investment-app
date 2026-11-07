@@ -3146,6 +3146,19 @@ def inicializar_tabelas_modo_aula(conexao: sqlite3.Connection) -> None:
             FOREIGN KEY (sala_id) REFERENCES salas_aula (id) ON DELETE CASCADE
         );
     """)
+    # Colunas dinâmicas de customização na tabela salas_aula
+    cur_cols = conexao.execute("PRAGMA table_info(salas_aula)").fetchall()
+    nomes_cols = {c[1] for c in cur_cols}
+    if "subtitulo_metodologia" not in nomes_cols:
+        conexao.execute("ALTER TABLE salas_aula ADD COLUMN subtitulo_metodologia TEXT DEFAULT 'Ambiente didático ao vivo • Metodologia: 1.0% de risco por opção • Rolagem com 50% garantido no bolso'")
+    if "criterio_rolagem" not in nomes_cols:
+        conexao.execute("ALTER TABLE salas_aula ADD COLUMN criterio_rolagem TEXT DEFAULT 'embolsar 50% do valor final garantido no bolso e reinvestir os outros 50% na opção ATM mais líquida da próxima série.'")
+    if "data_hora_modo" not in nomes_cols:
+        conexao.execute("ALTER TABLE salas_aula ADD COLUMN data_hora_modo TEXT DEFAULT 'auto'")
+    if "data_hora_personalizada" not in nomes_cols:
+        conexao.execute("ALTER TABLE salas_aula ADD COLUMN data_hora_personalizada TEXT DEFAULT ''")
+    if "gatilho_rolagem_pct" not in nomes_cols:
+        conexao.execute("ALTER TABLE salas_aula ADD COLUMN gatilho_rolagem_pct REAL DEFAULT 100.0")
     conexao.commit()
 
 
@@ -3198,17 +3211,36 @@ def obter_ou_criar_sala_padrao_professor(conexao: sqlite3.Connection, usuario_id
 
 def atualizar_config_sala_aula(conexao: sqlite3.Connection, sala_id: int, nome: str,
                               alocacao_pct: float, capital_simulado: float,
+                              subtitulo_metodologia: str, criterio_rolagem: str,
+                              data_hora_modo: str, data_hora_personalizada: str,
+                              gatilho_rolagem_pct: float,
                               autor_id: int, autor_nome: str) -> None:
-    """Atualiza as configurações didáticas da sala de aula e registra no log."""
+    """Atualiza todas as configurações didáticas e textos customizados da sala de aula."""
+    inicializar_tabelas_modo_aula(conexao)
     conexao.execute("""
         UPDATE salas_aula SET
             nome = ?,
             alocacao_pct_padrao = ?,
-            capital_simulado_padrao = ?
+            capital_simulado_padrao = ?,
+            subtitulo_metodologia = ?,
+            criterio_rolagem = ?,
+            data_hora_modo = ?,
+            data_hora_personalizada = ?,
+            gatilho_rolagem_pct = ?
         WHERE id = ?
-    """, (str(nome).strip(), float(alocacao_pct), float(capital_simulado), int(sala_id)))
+    """, (
+        str(nome).strip(),
+        float(alocacao_pct),
+        float(capital_simulado),
+        str(subtitulo_metodologia).strip(),
+        str(criterio_rolagem).strip(),
+        str(data_hora_modo).strip(),
+        str(data_hora_personalizada).strip(),
+        float(gatilho_rolagem_pct),
+        int(sala_id)
+    ))
     registrar_log_sala(conexao, sala_id, autor_id, autor_nome, "Configuração da Sala",
-                       detalhes=f"Nome: {nome} | Alocação: {alocacao_pct:.1f}% | Capital: R$ {capital_simulado:.2f}")
+                       detalhes=f"Nome: {nome} | Alocação: {alocacao_pct:.1f}% | Rolagem: {gatilho_rolagem_pct:.0f}% | Horário: {data_hora_modo}")
     conexao.commit()
 
 
